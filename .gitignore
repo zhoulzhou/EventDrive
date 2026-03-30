@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.env.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Test files
+test_*.py
+debug_*.py
+check_*.py
+minimal*.py
+simple*.py
+ultra_simple.py
+direct_start.py
+subprocess_start.py
+start_*.py
+final_*.py
+launch.py
+run_crawl*.py
+check_news.py
+sqlite_query.py
+api_response.json
+"\351\234\200\346\261\202\346\226\207\346\241\243.md"

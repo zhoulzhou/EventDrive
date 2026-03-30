@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}筛选规则 - 新闻抓取应用{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>筛选规则管理</h1>
+</div>
+
+<div class="filter-form-container">
+    <form id="filterForm" class="filter-form">
+        <div class="form-group">
+            <label for="includeKeywords">包含关键词</label>
+            <p class="form-hint">新闻标题或正文中包含这些关键词的新闻将被保留（多个关键词用逗号分隔）</p>
+            <textarea id="includeKeywords" name="include_keywords" rows="4" placeholder="例如：人工智能, 新能源, 5G"></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label for="excludeKeywords">排除关键词</label>
+            <p class="form-hint">新闻标题或正文中包含这些关键词的新闻将被过滤（多个关键词用逗号分隔）</p>
+            <textarea id="excludeKeywords" name="exclude_keywords" rows="4" placeholder="例如：广告, 推广, 娱乐"></textarea>
+        </div>
+        
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">保存规则</button>
+            <button type="button" id="resetBtn" class="btn btn-secondary">重置</button>
+        </div>
+    </form>
+</div>
+
+<div class="preview-section">
+    <h2>规则预览</h2>
+    <div id="rulesPreview" class="rules-preview">
+        <div class="preview-item">
+            <span class="preview-label">当前包含关键词：</span>
+            <span id="previewInclude" class="preview-value">-</span>
+        </div>
+        <div class="preview-item">
+            <span class="preview-label">当前排除关键词：</span>
+            <span id="previewExclude" class="preview-value">-</span>
+        </div>
+    </div>
+</div>
+
+<div id="message" class="message" style="display: none;"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadRules() {
+    try {
+        const response = await fetch('/api/filter/rules');
+        const data = await response.json();
+        document.getElementById('includeKeywords').value = data.include_keywords || '';
+        document.getElementById('excludeKeywords').value = data.exclude_keywords || '';
+        updatePreview(data);
+    } catch (error) {
+        console.error('加载规则失败:', error);
+    }
+}
+
+function updatePreview(data) {
+    document.getElementById('previewInclude').textContent = data.include_keywords || '无';
+    document.getElementById('previewExclude').textContent = data.exclude_keywords || '无';
+}
+
+async function saveRules(event) {
+    event.preventDefault();
+    
+    const includeKeywords = document.getElementById('includeKeywords').value;
+    const excludeKeywords = document.getElementById('excludeKeywords').value;
+    
+    try {
+        const response = await fetch('/api/filter/rules', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                include_keywords: includeKeywords,
+                exclude_keywords: excludeKeywords
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            updatePreview({
+                include_keywords: includeKeywords,
+                exclude_keywords: excludeKeywords
+            });
+            showMessage('保存成功！', 'success');
+        } else {
+            showMessage('保存失败: ' + (data.message || '未知错误'), 'error');
+        }
+    } catch (error) {
+        showMessage('保存失败: ' + error.message, 'error');
+    }
+}
+
+function resetForm() {
+    document.getElementById('includeKeywords').value = '';
+    document.getElementById('excludeKeywords').value = '';
+}
+
+function showMessage(text, type) {
+    const messageEl = document.getElementById('message');
+    messageEl.textContent = text;
+    messageEl.className = 'message ' + type;
+    messageEl.style.display = 'block';
+    
+    setTimeout(() => {
+        messageEl.style.display = 'none';
+    }, 3000);
+}
+
+document.getElementById('filterForm').addEventListener('submit', saveRules);
+document.getElementById('resetBtn').addEventListener('click', resetForm);
+
+loadRules();
+</script>
+{% endblock %}

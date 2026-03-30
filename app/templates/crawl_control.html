@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block title %}抓取控制 - 新闻抓取应用{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>抓取控制</h1>
+</div>
+
+<div class="control-panel">
+    <div class="control-card">
+        <h2>手动抓取</h2>
+        <p>立即开始抓取所有来源的最新新闻</p>
+        <button id="startCrawlBtn" class="btn btn-primary">开始抓取</button>
+    </div>
+    
+    <div class="status-card">
+        <h2>抓取状态</h2>
+        <div id="statusInfo">
+            <div class="status-item">
+                <span class="status-label">当前状态:</span>
+                <span id="crawlStatus" class="status-value">空闲</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">最后抓取时间:</span>
+                <span id="lastCrawlTime" class="status-value">-</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="progress-section" id="progressSection" style="display: none;">
+    <h2>抓取进度</h2>
+    <div class="progress-container">
+        <div class="progress-bar" id="progressBar"></div>
+    </div>
+    <div id="progressText" class="progress-text">0%</div>
+</div>
+
+<div class="sources-status">
+    <h2>各来源抓取状态</h2>
+    <div id="sourcesList" class="sources-grid">
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let isCrawling = false;
+
+async function loadStatus() {
+    try {
+        const response = await fetch('/api/crawl/status');
+        const data = await response.json();
+        updateStatus(data);
+    } catch (error) {
+        console.error('加载状态失败:', error);
+    }
+}
+
+function updateStatus(data) {
+    isCrawling = data.is_crawling;
+    
+    const statusEl = document.getElementById('crawlStatus');
+    const btnEl = document.getElementById('startCrawlBtn');
+    
+    if (isCrawling) {
+        statusEl.textContent = '抓取中...';
+        statusEl.className = 'status-value status-running';
+        btnEl.disabled = true;
+        btnEl.textContent = '抓取中...';
+        document.getElementById('progressSection').style.display = 'block';
+    } else {
+        statusEl.textContent = '空闲';
+        statusEl.className = 'status-value status-idle';
+        btnEl.disabled = false;
+        btnEl.textContent = '开始抓取';
+        document.getElementById('progressSection').style.display = 'none';
+    }
+    
+    if (data.last_crawl_time) {
+        document.getElementById('lastCrawlTime').textContent = formatTime(data.last_crawl_time);
+    }
+    
+    updateSourcesList(data.sources || []);
+}
+
+function updateSourcesList(sources) {
+    const container = document.getElementById('sourcesList');
+    const allSources = ['财联社', '新华网', '东方财富', '36氪', '巨潮资讯'];
+    
+    container.innerHTML = allSources.map(source => {
+        const sourceData = sources.find(s => s.name === source) || {};
+        return `
+            <div class="source-item">
+                <div class="source-name">${source}</div>
+                <div class="source-status ${sourceData.status || 'pending'}">
+                    ${getStatusText(sourceData.status)}
+                </div>
+                ${sourceData.count !== undefined ? `<div class="source-count">抓取: ${sourceData.count}条</div>` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+function getStatusText(status) {
+    const statusMap = {
+        'pending': '等待中',
+        'running': '进行中',
+        'success': '成功',
+        'failed': '失败'
+    };
+    return statusMap[status] || '等待中';
+}
+
+async function startCrawl() {
+    if (isCrawling) return;
+    
+    try {
+        const response = await fetch('/api/crawl/start', {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            pollStatus();
+        } else {
+            alert('启动抓取失败: ' + (data.message || '未知错误'));
+        }
+    } catch (error) {
+        alert('启动抓取失败: ' + error.message);
+    }
+}
+
+let pollInterval;
+
+function pollStatus() {
+    if (pollInterval) clearInterval(pollInterval);
+    
+    pollInterval = setInterval(async () => {
+        await loadStatus();
+        
+        if (!isCrawling) {
+            clearInterval(pollInterval);
+        }
+    }, 1000);
+}
+
+function formatTime(timeStr) {
+    const date = new Date(timeStr);
+    return date.toLocaleString('zh-CN');
+}
+
+document.getElementById('startCrawlBtn').addEventListener('click', startCrawl);
+
+loadStatus();
+</script>
+{% endblock %}

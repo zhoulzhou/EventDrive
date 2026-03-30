@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}抓取日志 - 新闻抓取应用{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>抓取日志</h1>
+</div>
+
+<div id="logsList" class="logs-list">
+</div>
+
+<div id="pagination" class="pagination">
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+const pageSize = 20;
+
+async function loadLogs(page = 1) {
+    currentPage = page;
+    
+    try {
+        const response = await fetch(`/api/logs?page=${page}&page_size=${pageSize}`);
+        const data = await response.json();
+        renderLogsList(data.logs);
+        renderPagination(data.total, data.page, data.page_size);
+    } catch (error) {
+        console.error('加载日志失败:', error);
+    }
+}
+
+function renderLogsList(logs) {
+    const container = document.getElementById('logsList');
+    if (logs.length === 0) {
+        container.innerHTML = '<div class="empty-state">暂无抓取日志</div>';
+        return;
+    }
+    
+    container.innerHTML = logs.map(log => `
+        <div class="log-card">
+            <div class="log-header">
+                <span class="log-source">${log.source}</span>
+                <span class="log-time">${formatTime(log.crawl_time)}</span>
+                <span class="log-status ${log.status}">${log.status === 'success' ? '成功' : '失败'}</span>
+            </div>
+            <div class="log-content">
+                <div class="log-item">
+                    <span class="log-label">抓取数量:</span>
+                    <span class="log-value">${log.news_count} 条</span>
+                </div>
+                ${log.duration !== undefined ? `
+                    <div class="log-item">
+                        <span class="log-label">耗时:</span>
+                        <span class="log-value">${log.duration} 秒</span>
+                    </div>
+                ` : ''}
+                ${log.error_message ? `
+                    <div class="log-error">
+                        <span class="log-label">错误信息:</span>
+                        <span class="log-value">${escapeHtml(log.error_message)}</span>
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderPagination(total, page, pageSize) {
+    const totalPages = Math.ceil(total / pageSize);
+    const container = document.getElementById('pagination');
+    
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    let html = '';
+    
+    if (page > 1) {
+        html += `<button class="page-btn" onclick="loadLogs(${page - 1})">上一页</button>`;
+    }
+    
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === page) {
+            html += `<button class="page-btn active">${i}</button>`;
+        } else if (i === 1 || i === totalPages || (i >= page - 2 && i <= page + 2)) {
+            html += `<button class="page-btn" onclick="loadLogs(${i})">${i}</button>`;
+        } else if (i === page - 3 || i === page + 3) {
+            html += '<span>...</span>';
+        }
+    }
+    
+    if (page < totalPages) {
+        html += `<button class="page-btn" onclick="loadLogs(${page + 1})">下一页</button>`;
+    }
+    
+    container.innerHTML = html;
+}
+
+function formatTime(timeStr) {
+    const date = new Date(timeStr);
+    return date.toLocaleString('zh-CN');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+loadLogs();
+</script>
+{% endblock %}

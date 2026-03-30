@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}新闻列表 - 新闻抓取应用{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>新闻列表</h1>
+    <div class="filter-bar">
+        <input type="text" id="searchInput" placeholder="搜索新闻..." class="search-input">
+        <select id="sourceFilter" class="filter-select">
+            <option value="">全部来源</option>
+            <option value="财联社">财联社</option>
+            <option value="新华网">新华网</option>
+            <option value="东方财富">东方财富</option>
+            <option value="36氪">36氪</option>
+            <option value="巨潮资讯">巨潮资讯</option>
+        </select>
+    </div>
+</div>
+
+<div id="newsList" class="news-list">
+</div>
+
+<div id="pagination" class="pagination">
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+const pageSize = 20;
+
+async function loadNews(page = 1) {
+    currentPage = page;
+    const search = document.getElementById('searchInput').value;
+    const source = document.getElementById('sourceFilter').value;
+    
+    let url = `/api/news?page=${page}&page_size=${pageSize}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    if (source) url += `&source=${encodeURIComponent(source)}`;
+    
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+        renderNewsList(data.news);
+        renderPagination(data.total, data.page, data.page_size);
+    } catch (error) {
+        console.error('加载新闻失败:', error);
+    }
+}
+
+function renderNewsList(news) {
+    const container = document.getElementById('newsList');
+    if (news.length === 0) {
+        container.innerHTML = '<div class="empty-state">暂无新闻数据</div>';
+        return;
+    }
+    
+    container.innerHTML = news.map(item => `
+        <div class="news-card" onclick="location.href='/news/${item.id}'">
+            <div class="news-card-header">
+                <span class="news-source">${item.source}</span>
+                <span class="news-time">${formatTime(item.publish_time)}</span>
+            </div>
+            <h3 class="news-title">${escapeHtml(item.title)}</h3>
+            <p class="news-summary">${escapeHtml(item.summary || '')}</p>
+        </div>
+    `).join('');
+}
+
+function renderPagination(total, page, pageSize) {
+    const totalPages = Math.ceil(total / pageSize);
+    const container = document.getElementById('pagination');
+    
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    let html = '';
+    
+    if (page > 1) {
+        html += `<button class="page-btn" onclick="loadNews(${page - 1})">上一页</button>`;
+    }
+    
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === page) {
+            html += `<button class="page-btn active">${i}</button>`;
+        } else if (i === 1 || i === totalPages || (i >= page - 2 && i <= page + 2)) {
+            html += `<button class="page-btn" onclick="loadNews(${i})">${i}</button>`;
+        } else if (i === page - 3 || i === page + 3) {
+            html += '<span>...</span>';
+        }
+    }
+    
+    if (page < totalPages) {
+        html += `<button class="page-btn" onclick="loadNews(${page + 1})">下一页</button>`;
+    }
+    
+    container.innerHTML = html;
+}
+
+function formatTime(timeStr) {
+    const date = new Date(timeStr);
+    return date.toLocaleString('zh-CN');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.getElementById('searchInput').addEventListener('input', debounce(() => loadNews(1), 300));
+document.getElementById('sourceFilter').addEventListener('change', () => loadNews(1));
+
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+}
+
+loadNews();
+</script>
+{% endblock %}
