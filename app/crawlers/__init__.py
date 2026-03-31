@@ -1,14 +1,14 @@
 from .base import BaseCrawler, NewsItem
 from .cls import CLSCrawler
+from .cls_depth import CLSDepthCrawler
 from .eastmoney import EastmoneyCrawler
 from .kr36 import Kr36Crawler
-from .cninfo import CninfoCrawler
 
 __all__ = [
     "BaseCrawler",
     "NewsItem",
     "CLSCrawler",
+    "CLSDepthCrawler",
     "EastmoneyCrawler",
-    "Kr36Crawler",
-    "CninfoCrawler"
+    "Kr36Crawler"
 ]

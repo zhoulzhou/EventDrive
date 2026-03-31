@@ -9,7 +9,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app import crud, schemas
 from app.crawlers import (
-    CLSCrawler,
+    CLSDepthCrawler,
     EastmoneyCrawler,
     Kr36Crawler,
     NewsItem
@@ -90,7 +90,7 @@ async def full_crawl():
     start_time = datetime.now()
     
     crawlers = [
-        CLSCrawler,
+        CLSDepthCrawler,
         EastmoneyCrawler,
         Kr36Crawler
     ]
