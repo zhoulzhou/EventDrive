@@ -28,60 +28,51 @@ class CLSDepthCrawler(BaseCrawler):
             page = await context.new_page()
 
             try:
-                print("访问财联社深度页面...")
                 await page.goto(f"{self.base_url}/depth?id=1000", wait_until="networkidle", timeout=60000)
                 await asyncio.sleep(3)
 
                 articles = await page.query_selector_all('[class*="depth"], .article-item')
 
-                print(f"找到 {len(articles)} 个文章元素")
-
-                seen_titles = set()
-                for i, article in enumerate(articles[:20]):
+                seen_urls = set()
+                for article in articles:
                     try:
                         title_elem = await article.query_selector('h3, .title, [class*="title"], a')
                         if not title_elem:
-                            print(f"  第{i}条: 无标题元素，跳过")
                             continue
+
+                        href = await title_elem.get_attribute('href')
+                        if not href or not href.startswith('/detail/'):
+                            continue
+
+                        url = self.base_url + href
+
+                        if url in seen_urls:
+                            continue
+                        seen_urls.add(url)
 
                         title = await title_elem.inner_text()
                         title = title.strip()
 
-                        if not title or len(title) < 10:
-                            print(f"  第{i}条: 标题太短或为空 '{title[:30] if title else ''}...'，跳过")
+                        if not title or title == "None" or len(title) < 5:
                             continue
-
-                        if title in seen_titles:
-                            print(f"  第{i}条: 重复标题 '{title[:30]}...'，跳过")
-                            continue
-                        seen_titles.add(title)
-
-                        href = await title_elem.get_attribute('href')
-                        if href:
-                            if not href.startswith('http'):
-                                href = self.base_url + href
 
                         time_elem = await article.query_selector('.time, [class*="time"]')
                         publish_time_str = await time_elem.inner_text() if time_elem else ""
-
                         publish_time = self._parse_publish_time(publish_time_str)
 
                         summary_elem = await article.query_selector('.desc, .summary, [class*="desc"], [class*="summary"]')
                         summary = await summary_elem.inner_text() if summary_elem else ""
                         summary = summary.strip() if summary else ""
 
-                        if title:
-                            news_list.append({
-                                "title": title,
-                                "url": href or "",
-                                "publish_time": publish_time,
-                                "summary": summary,
-                                "content": summary
-                            })
-                            print(f"  ✅ {len(news_list)}. {title[:50]}...")
+                        news_list.append({
+                            "title": title,
+                            "url": url,
+                            "publish_time": publish_time,
+                            "summary": summary,
+                            "content": summary
+                        })
 
                     except Exception as e:
-                        print(f"  第{i}条: 解析失败 - {e}")
                         continue
 
             except Exception as e:
@@ -132,6 +123,9 @@ class CLSDepthCrawler(BaseCrawler):
             self.error_message = f"解析失败: {str(e)}"
             return None
 
+    def is_within_time_range(self, publish_time: datetime) -> bool:
+        return True
+
     async def fetch_news_detail(self, url: str) -> dict:
         return {}
 
@@ -148,7 +142,7 @@ class CLSDepthCrawler(BaseCrawler):
 
                 if news_item:
                     self.news_list.append(news_item)
-                    await random_delay(min_delay=1, max_delay=2)
+                    random_delay(min_delay=1, max_delay=2)
 
                     if len(self.news_list) >= 5:
                         break
