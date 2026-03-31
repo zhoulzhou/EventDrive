@@ -2,8 +2,9 @@ import logging
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.requests import Request
+from fastapi.responses import HTMLResponse
+from jinja2 import Environment, FileSystemLoader
+from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base
@@ -25,7 +26,7 @@ app = FastAPI(
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates_dir = BASE_DIR / "app" / "templates"
-templates = Jinja2Templates(directory=str(templates_dir))
+jinja_env = Environment(loader=FileSystemLoader(str(templates_dir)))
 
 static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)
@@ -41,26 +42,33 @@ app.include_router(filter.router, prefix="/api", tags=["filter"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
 
 
+def render_template(template_name: str, context: dict = None) -> HTMLResponse:
+    template = jinja_env.get_template(template_name)
+    context = context or {}
+    html_content = template.render(**context)
+    return HTMLResponse(content=html_content)
+
+
 @app.get("/")
-async def root():
-    return {"message": "新闻抓取应用正在运行", "version": "1.0.0", "status": "ok"}
+async def root(request: Request):
+    return render_template("index.html", {"request": request})
 
 
 @app.get("/news/{news_id}")
 async def news_detail(request: Request, news_id: int):
-    return templates.TemplateResponse("news_detail.html", {"request": request, "news_id": news_id})
+    return render_template("news_detail.html", {"request": request, "news_id": news_id})
 
 
 @app.get("/crawl")
 async def crawl_control(request: Request):
-    return templates.TemplateResponse("crawl_control.html", {"request": request})
+    return render_template("crawl_control.html", {"request": request})
 
 
 @app.get("/filter")
 async def filter_rules(request: Request):
-    return templates.TemplateResponse("filter_rules.html", {"request": request})
+    return render_template("filter_rules.html", {"request": request})
 
 
 @app.get("/logs")
 async def crawl_logs(request: Request):
-    return templates.TemplateResponse("crawl_logs.html", {"request": request})
+    return render_template("crawl_logs.html", {"request": request})

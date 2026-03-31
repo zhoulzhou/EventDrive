@@ -4,6 +4,11 @@ import asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# 清除所有可能缓存的模块
+for mod_name in list(sys.modules.keys()):
+    if mod_name.startswith(('jinja2', 'starlette', 'fastapi')):
+        del sys.modules[mod_name]
+
 print("=" * 70)
 print("异步启动器 - 简化版")
 print("=" * 70)
@@ -32,7 +37,8 @@ async def main():
         host="127.0.0.1",
         port=8000,
         log_level="info",
-        access_log=True
+        access_log=True,
+        reload=True
     )
     
     server = uvicorn.Server(config)
