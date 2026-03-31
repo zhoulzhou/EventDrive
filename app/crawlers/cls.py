@@ -20,11 +20,11 @@ class CLSCrawler(BaseCrawler):
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 params = {
-                "app": "CailianpressWeb",
-                "os": "web",
-                "rn": 10,
-                "sv": "7.7.5"
-            }
+                    "app": "CailianpressWeb",
+                    "os": "web",
+                    "rn": 5,
+                    "sv": "7.7.5"
+                }
 
                 response = await client.get(
                     self.telegraph_api,
