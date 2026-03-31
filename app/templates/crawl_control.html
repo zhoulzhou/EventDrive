@@ -59,11 +59,11 @@ async function loadStatus() {
 }
 
 function updateStatus(data) {
-    isCrawling = data.is_crawling;
-    
+    isCrawling = data.is_running;
+
     const statusEl = document.getElementById('crawlStatus');
     const btnEl = document.getElementById('startCrawlBtn');
-    
+
     if (isCrawling) {
         statusEl.textContent = '抓取中...';
         statusEl.className = 'status-value status-running';
@@ -77,11 +77,11 @@ function updateStatus(data) {
         btnEl.textContent = '开始抓取';
         document.getElementById('progressSection').style.display = 'none';
     }
-    
-    if (data.last_crawl_time) {
-        document.getElementById('lastCrawlTime').textContent = formatTime(data.last_crawl_time);
+
+    if (data.last_run) {
+        document.getElementById('lastCrawlTime').textContent = formatTime(data.last_run);
     }
-    
+
     updateSourcesList(data.sources || []);
 }
 
@@ -115,14 +115,14 @@ function getStatusText(status) {
 
 async function startCrawl() {
     if (isCrawling) return;
-    
+
     try {
-        const response = await fetch('/api/crawl/start', {
+        const response = await fetch('/api/crawl/trigger', {
             method: 'POST'
         });
         const data = await response.json();
-        
-        if (data.success) {
+
+        if (data.status === 'started' || data.status === 'already_running') {
             pollStatus();
         } else {
             alert('启动抓取失败: ' + (data.message || '未知错误'));
