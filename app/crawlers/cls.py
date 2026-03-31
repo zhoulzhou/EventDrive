@@ -20,11 +20,11 @@ class CLSCrawler(BaseCrawler):
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 params = {
-                    "app": "CailianpressWeb",
-                    "os": "web",
-                    "rn": 50,
-                    "sv": "7.7.5"
-                }
+                "app": "CailianpressWeb",
+                "os": "web",
+                "rn": 10,
+                "sv": "7.7.5"
+            }
 
                 response = await client.get(
                     self.telegraph_api,
@@ -61,8 +61,17 @@ class CLSCrawler(BaseCrawler):
             content = raw_data.get("content", "")
             brief = raw_data.get("brief", "")
 
-            if not title or not content:
+            if not content or len(content) < 20:
                 return None
+
+            if not title and content:
+                import re
+                title_match = re.search(r'【([^】]+)】', content)
+                if title_match:
+                    title = title_match.group(1).strip()
+
+            if not title:
+                title = content[:50] + "..." if len(content) > 50 else content
 
             time_str = str(raw_data.get("ctime", ""))
             publish_time = self._parse_time(time_str)

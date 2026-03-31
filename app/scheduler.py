@@ -12,7 +12,6 @@ from app.crawlers import (
     CLSCrawler,
     EastmoneyCrawler,
     Kr36Crawler,
-    CninfoCrawler,
     NewsItem
 )
 from app.utils.image_downloader import download_image
@@ -93,8 +92,7 @@ async def full_crawl():
     crawlers = [
         CLSCrawler,
         EastmoneyCrawler,
-        Kr36Crawler,
-        CninfoCrawler
+        Kr36Crawler
     ]
     
     logger.info(f"将抓取 {len(crawlers)} 个新闻源")
