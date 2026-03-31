@@ -11,12 +11,12 @@ from app.crawlers.base import BaseCrawler, NewsItem
 from app.utils.anti_crawl import random_delay
 
 
-class CLSDepthCrawler(BaseCrawler):
-    source_name = "财联社头条"
+class EastmoneyDepthCrawler(BaseCrawler):
+    source_name = "东方财富"
 
     def __init__(self):
         super().__init__()
-        self.base_url = "https://www.cls.cn"
+        self.base_url = "https://finance.eastmoney.com"
 
     def _fetch_sync(self):
         news_list = []
@@ -24,33 +24,28 @@ class CLSDepthCrawler(BaseCrawler):
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                 locale="zh-CN"
             )
             page = context.new_page()
 
             try:
-                page.goto(f"{self.base_url}/depth?id=1000", wait_until="networkidle", timeout=60000)
-                page.wait_for_timeout(3000)
+                page.goto(f"{self.base_url}/a/ccjdd.html", wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(5000)
 
-                articles = page.query_selector_all('[class*="depth"], .article-item')
+                items = page.query_selector_all('#newsListContent > li')
 
                 seen_urls = set()
-                for article in articles:
+                for item in items:
                     try:
-                        title_elem = article.query_selector('h3, .title, [class*="title"], a')
+                        title_elem = item.query_selector('p.title a')
                         if not title_elem:
                             continue
 
                         href = title_elem.get_attribute('href')
-                        if not href or not href.startswith('/detail/'):
+                        if not href or href in seen_urls:
                             continue
-
-                        url = self.base_url + href
-
-                        if url in seen_urls:
-                            continue
-                        seen_urls.add(url)
+                        seen_urls.add(href)
 
                         title = title_elem.inner_text()
                         title = title.strip()
@@ -58,17 +53,17 @@ class CLSDepthCrawler(BaseCrawler):
                         if not title or title == "None" or len(title) < 5:
                             continue
 
-                        time_elem = article.query_selector('.time, [class*="time"]')
+                        time_elem = item.query_selector('p.time')
                         publish_time_str = time_elem.inner_text() if time_elem else ""
                         publish_time = self._parse_publish_time(publish_time_str)
 
-                        summary_elem = article.query_selector('.desc, .summary, [class*="desc"], [class*="summary"]')
-                        summary = summary_elem.inner_text() if summary_elem else ""
+                        info_elem = item.query_selector('p.info')
+                        summary = info_elem.get_attribute('title') if info_elem else ""
                         summary = summary.strip() if summary else ""
 
                         news_list.append({
                             "title": title,
-                            "url": url,
+                            "url": href,
                             "publish_time": publish_time,
                             "summary": summary,
                             "content": summary
@@ -78,7 +73,7 @@ class CLSDepthCrawler(BaseCrawler):
                         continue
 
             except Exception as e:
-                self.error_message = f"获取财联社头条失败: {str(e)}"
+                self.error_message = f"获取东方财富新闻失败: {str(e)}"
             finally:
                 browser.close()
 
@@ -97,11 +92,15 @@ class CLSDepthCrawler(BaseCrawler):
 
             time_str = time_str.strip()
 
-            match = re.search(r'(\d{1,2})/(\d{1,2})', time_str)
+            match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})', time_str)
             if match:
-                month, day = int(match.group(1)), int(match.group(2))
-                now = datetime.now()
-                return datetime(now.year, month, day)
+                year, month, day, hour, minute = int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4)), int(match.group(5))
+                return datetime(year, month, day, hour, minute)
+
+            match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', time_str)
+            if match:
+                year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                return datetime(year, month, day)
 
             return datetime.now()
         except:
@@ -144,14 +143,14 @@ class CLSDepthCrawler(BaseCrawler):
         try:
             raw_news_list = await self.fetch_news_list()
 
-            for raw_news in raw_news_list[:5]:
+            for raw_news in raw_news_list[:10]:
                 news_item = self.parse_news_item(raw_news)
 
                 if news_item:
                     self.news_list.append(news_item)
                     random_delay(min_delay=1, max_delay=2)
 
-                    if len(self.news_list) >= 5:
+                    if len(self.news_list) >= 10:
                         break
 
         except Exception as e:

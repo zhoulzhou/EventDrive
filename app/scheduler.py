@@ -10,6 +10,7 @@ from app.database import SessionLocal
 from app import crud, schemas
 from app.crawlers import (
     CLSDepthCrawler,
+    EastmoneyDepthCrawler,
     NewsItem
 )
 from app.utils.image_downloader import download_image
@@ -88,7 +89,8 @@ async def full_crawl():
     start_time = datetime.now()
     
     crawlers = [
-        CLSDepthCrawler
+        CLSDepthCrawler,
+        EastmoneyDepthCrawler
     ]
     
     logger.info(f"将抓取 {len(crawlers)} 个新闻源")

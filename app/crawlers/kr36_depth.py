@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 import sys
-import re
 import concurrent.futures
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -11,12 +10,12 @@ from app.crawlers.base import BaseCrawler, NewsItem
 from app.utils.anti_crawl import random_delay
 
 
-class CLSDepthCrawler(BaseCrawler):
-    source_name = "财联社头条"
+class Kr36DepthCrawler(BaseCrawler):
+    source_name = "36氪"
 
     def __init__(self):
         super().__init__()
-        self.base_url = "https://www.cls.cn"
+        self.base_url = "https://36kr.com"
 
     def _fetch_sync(self):
         news_list = []
@@ -30,45 +29,46 @@ class CLSDepthCrawler(BaseCrawler):
             page = context.new_page()
 
             try:
-                page.goto(f"{self.base_url}/depth?id=1000", wait_until="networkidle", timeout=60000)
+                page.goto(f"{self.base_url}/", wait_until="networkidle", timeout=60000)
                 page.wait_for_timeout(3000)
 
-                articles = page.query_selector_all('[class*="depth"], .article-item')
+                articles = page.query_selector_all('a.article-item-link, .article-item a, [class*="article-item"]')
 
                 seen_urls = set()
                 for article in articles:
                     try:
-                        title_elem = article.query_selector('h3, .title, [class*="title"], a')
-                        if not title_elem:
+                        href = article.get_attribute('href')
+                        if not href:
                             continue
 
-                        href = title_elem.get_attribute('href')
-                        if not href or not href.startswith('/detail/'):
+                        if not href.startswith('http'):
+                            href = self.base_url + href
+
+                        if '/article/' not in href:
                             continue
 
-                        url = self.base_url + href
-
-                        if url in seen_urls:
+                        if href in seen_urls:
                             continue
-                        seen_urls.add(url)
+                        seen_urls.add(href)
 
-                        title = title_elem.inner_text()
+                        title_elem = article.query_selector('.item-title, h3, .title, [class*="title"]')
+                        title = title_elem.inner_text() if title_elem else ""
                         title = title.strip()
 
                         if not title or title == "None" or len(title) < 5:
                             continue
 
-                        time_elem = article.query_selector('.time, [class*="time"]')
+                        time_elem = article.query_selector('.item-time, .time, [class*="time"]')
                         publish_time_str = time_elem.inner_text() if time_elem else ""
                         publish_time = self._parse_publish_time(publish_time_str)
 
-                        summary_elem = article.query_selector('.desc, .summary, [class*="desc"], [class*="summary"]')
+                        summary_elem = article.query_selector('.item-desc, .desc, [class*="desc"]')
                         summary = summary_elem.inner_text() if summary_elem else ""
                         summary = summary.strip() if summary else ""
 
                         news_list.append({
                             "title": title,
-                            "url": url,
+                            "url": href,
                             "publish_time": publish_time,
                             "summary": summary,
                             "content": summary
@@ -78,7 +78,7 @@ class CLSDepthCrawler(BaseCrawler):
                         continue
 
             except Exception as e:
-                self.error_message = f"获取财联社头条失败: {str(e)}"
+                self.error_message = f"获取36氪新闻失败: {str(e)}"
             finally:
                 browser.close()
 
@@ -96,6 +96,12 @@ class CLSDepthCrawler(BaseCrawler):
                 return datetime.now()
 
             time_str = time_str.strip()
+
+            import re
+            match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', time_str)
+            if match:
+                year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                return datetime(year, month, day)
 
             match = re.search(r'(\d{1,2})/(\d{1,2})', time_str)
             if match:
