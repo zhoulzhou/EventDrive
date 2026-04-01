@@ -8,7 +8,8 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base
-from app.api import news, crawl, filter, logs
+from app.api import news, crawl, filter, logs, feishu
+from app.utils.feishu_notifier import init_feishu_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,16 @@ print("=" * 60)
 
 Base.metadata.create_all(bind=engine)
 print("✅ 数据库表初始化完成")
+
+if settings.FEISHU_WEBHOOK_URL and settings.FEISHU_SECRET:
+    init_feishu_notifier(
+        settings.FEISHU_WEBHOOK_URL,
+        settings.FEISHU_SECRET,
+        settings.FEISHU_KEYWORD
+    )
+    print("✅ 飞书推送已初始化")
+else:
+    print("⚠️ 飞书推送未配置 (FEISHU_WEBHOOK_URL 或 FEISHU_SECRET 未设置)")
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -40,6 +51,7 @@ app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(crawl.router, prefix="/api", tags=["crawl"])
 app.include_router(filter.router, prefix="/api", tags=["filter"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
+app.include_router(feishu.router, prefix="/api", tags=["feishu"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:

@@ -28,6 +28,10 @@ class Settings:
     DATA_DIR: Path = BASE_DIR / "data"
     LOGS_DIR: Path = BASE_DIR / "logs"
 
+    FEISHU_WEBHOOK_URL: str = os.getenv("FEISHU_WEBHOOK_URL", "")
+    FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
+    FEISHU_KEYWORD: str = os.getenv("FEISHU_KEYWORD", "头条")
+
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.IMAGES_DIR.mkdir(exist_ok=True, parents=True)

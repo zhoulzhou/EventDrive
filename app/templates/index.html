@@ -12,6 +12,7 @@
             <option value="财联社头条">财联社头条</option>
             <option value="东方财富">东方财富</option>
         </select>
+        <button id="feishuPushBtn" class="btn btn-primary" onclick="pushToFeishu()">📤 推送到飞书</button>
     </div>
 </div>
 
@@ -112,6 +113,31 @@ function escapeHtml(text) {
 
 document.getElementById('searchInput').addEventListener('input', debounce(() => loadNews(1), 300));
 document.getElementById('sourceFilter').addEventListener('change', () => loadNews(1));
+
+async function pushToFeishu() {
+    const btn = document.getElementById('feishuPushBtn');
+    btn.disabled = true;
+    btn.textContent = '推送中...';
+
+    try {
+        const response = await fetch('/api/feishu/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            alert('✅ ' + data.message);
+        } else {
+            alert('❌ ' + data.message);
+        }
+    } catch (error) {
+        alert('❌ 推送失败: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '📤 推送到飞书';
+    }
+}
 
 function debounce(func, wait) {
     let timeout;
