@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
 
@@ -26,6 +27,9 @@ def get_news_list(
     exclude_keywords: Optional[List[str]] = None
 ) -> List[models.News]:
     query = db.query(models.News)
+    
+    cutoff_time = datetime.now() - timedelta(hours=24)
+    query = query.filter(models.News.publish_time >= cutoff_time)
     
     if source:
         query = query.filter(models.News.source == source)

@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from typing import List
+from typing import List, Callable, Optional
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -19,6 +19,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
+
+crawl_progress_callback: Optional[Callable] = None
+
+
+def set_crawl_progress_callback(callback: Callable):
+    global crawl_progress_callback
+    crawl_progress_callback = callback
+
+
+def log_crawl(message: str):
+    logger.info(message)
+    if crawl_progress_callback:
+        crawl_progress_callback(message)
 
 
 async def process_news_item(news_item: NewsItem):
@@ -45,23 +58,23 @@ async def crawl_single_source(crawler_class):
     db = SessionLocal()
     try:
         crawler = crawler_class()
-        logger.info(f"=== 开始抓取: {crawler.source_name} ===")
+        source_name = crawler.source_name
+        log_crawl(f"📰 开始抓取: {source_name}")
         
         news_items = await crawler.crawl()
-        logger.info(f"[{crawler.source_name}] 抓取到 {len(news_items)} 条新闻，准备保存...")
+        log_crawl(f"[{source_name}] 获取到 {len(news_items)} 条新闻，准备保存...")
         
         saved_count = 0
         
         for idx, news_item in enumerate(news_items):
-            logger.info(f"[{crawler.source_name}] 处理新闻 {idx+1}/{len(news_items)}: {news_item.title[:40]}...")
+            log_crawl(f"[{source_name}] 处理第 {idx+1}/{len(news_items)} 条: {news_item.title[:30]}...")
             if not crud.is_news_exists(db, news_item.url):
-                logger.info(f"[{crawler.source_name}] 新闻不存在，正在保存...")
                 news_create = await process_news_item(news_item)
                 crud.create_news(db, news_create)
                 saved_count += 1
-                logger.info(f"[{crawler.source_name}] 新闻保存成功 (累计: {saved_count})")
+                log_crawl(f"[{source_name}] ✅ 保存成功 (累计: {saved_count})")
             else:
-                logger.info(f"[{crawler.source_name}] 新闻已存在，跳过")
+                log_crawl(f"[{source_name}] ⏭️ 已存在，跳过")
         
         log = schemas.CrawlLogCreate(
             source=crawler.source_name,
@@ -72,10 +85,11 @@ async def crawl_single_source(crawler_class):
         )
         crud.create_crawl_log(db, log)
         
-        logger.info(f"=== {crawler.source_name} 抓取完成: 保存 {saved_count} 条, 状态 {crawler.get_status()} ===")
+        log_crawl(f"🏁 {source_name} 抓取完成: 保存 {saved_count} 条")
         return saved_count
         
     except Exception as e:
+        log_crawl(f"❌ {crawler_class.__name__} 抓取出错: {str(e)}")
         logger.error(f"!!! {crawler_class.__name__} 抓取出错: {e}", exc_info=True)
         return 0
     finally:
@@ -83,9 +97,9 @@ async def crawl_single_source(crawler_class):
 
 
 async def full_crawl():
-    logger.info("=" * 60)
-    logger.info("🚀 开始执行完整新闻抓取任务...")
-    logger.info("=" * 60)
+    log_crawl("=" * 50)
+    log_crawl("🚀 开始执行完整新闻抓取任务...")
+    log_crawl("=" * 50)
     start_time = datetime.now()
     
     crawlers = [
@@ -93,18 +107,18 @@ async def full_crawl():
         EastmoneyDepthCrawler
     ]
     
-    logger.info(f"将抓取 {len(crawlers)} 个新闻源")
+    log_crawl(f"将抓取 {len(crawlers)} 个新闻源")
     
     total_saved = 0
     for idx, crawler_class in enumerate(crawlers):
-        logger.info(f"\n--- 处理第 {idx+1}/{len(crawlers)} 个新闻源 ---")
+        log_crawl(f"--- 第 {idx+1}/{len(crawlers)} 个新闻源 ---")
         count = await crawl_single_source(crawler_class)
         total_saved += count
     
     duration = int((datetime.now() - start_time).total_seconds())
-    logger.info("=" * 60)
-    logger.info(f"✅ 完整抓取任务完成！总共保存: {total_saved} 条新闻, 耗时: {duration}秒")
-    logger.info("=" * 60)
+    log_crawl("=" * 50)
+    log_crawl(f"✅ 抓取完成! 总共保存: {total_saved} 条, 耗时: {duration}秒")
+    log_crawl("=" * 50)
     return total_saved
 
 

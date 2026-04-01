@@ -22,6 +22,10 @@
                 <span id="crawlStatus" class="status-value">空闲</span>
             </div>
             <div class="status-item">
+                <span class="status-label">当前步骤:</span>
+                <span id="currentStep" class="status-value">-</span>
+            </div>
+            <div class="status-item">
                 <span class="status-label">最后抓取时间:</span>
                 <span id="lastCrawlTime" class="status-value">-</span>
             </div>
@@ -29,12 +33,11 @@
     </div>
 </div>
 
-<div class="progress-section" id="progressSection" style="display: none;">
-    <h2>抓取进度</h2>
-    <div class="progress-container">
-        <div class="progress-bar" id="progressBar"></div>
+<div class="crawl-logs-section">
+    <h2>抓取日志</h2>
+    <div id="crawlLogs" class="crawl-logs">
+        <div class="log-placeholder">点击"开始抓取"按钮启动抓取任务</div>
     </div>
-    <div id="progressText" class="progress-text">0%</div>
 </div>
 
 <div class="sources-status">
@@ -45,6 +48,58 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+.crawl-logs-section {
+    margin-top: 20px;
+    background: #1e1e1e;
+    border-radius: 8px;
+    padding: 15px;
+    color: #d4d4d4;
+}
+
+.crawl-logs-section h2 {
+    color: #fff;
+    margin-bottom: 15px;
+    font-size: 16px;
+}
+
+.crawl-logs {
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    background: #252526;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.log-placeholder {
+    color: #666;
+    text-align: center;
+    padding: 20px;
+}
+
+.log-item {
+    padding: 2px 0;
+    border-bottom: 1px solid #333;
+}
+
+.log-item:last-child {
+    border-bottom: none;
+}
+
+.log-time {
+    color: #858585;
+    margin-right: 10px;
+}
+
+.log-success { color: #4ec9b0; }
+.log-info { color: #9cdcfe; }
+.log-warning { color: #dcdcaa; }
+.log-error { color: #f14c4c; }
+.log-running { color: #c586c0; }
+</style>
 <script>
 let isCrawling = false;
 
@@ -53,15 +108,44 @@ async function loadStatus() {
         const response = await fetch('/api/crawl/status');
         const data = await response.json();
         updateStatus(data);
+        updateLogs(data.logs || []);
     } catch (error) {
         console.error('加载状态失败:', error);
     }
+}
+
+function getLogClass(message) {
+    if (message.includes('❌') || message.includes('错误')) return 'log-error';
+    if (message.includes('✅') || message.includes('完成')) return 'log-success';
+    if (message.includes('🚀') || message.includes('开始')) return 'log-running';
+    if (message.includes('🕐')) return 'log-running';
+    if (message.includes('📰') || message.includes('---')) return 'log-running';
+    if (message.includes('⏭️')) return 'log-warning';
+    return 'log-info';
+}
+
+function updateLogs(logs) {
+    const container = document.getElementById('crawlLogs');
+    
+    if (!logs || logs.length === 0) {
+        if (container.querySelector('.log-placeholder')) return;
+        container.innerHTML = '<div class="log-placeholder">点击"开始抓取"按钮启动抓取任务</div>';
+        return;
+    }
+    
+    container.innerHTML = logs.map(log => {
+        const logClass = getLogClass(log.message);
+        return `<div class="log-item"><span class="log-time">[${log.time}]</span><span class="${logClass}">${log.message}</span></div>`;
+    }).join('');
+    
+    container.scrollTop = container.scrollHeight;
 }
 
 function updateStatus(data) {
     isCrawling = data.is_running;
 
     const statusEl = document.getElementById('crawlStatus');
+    const stepEl = document.getElementById('currentStep');
     const btnEl = document.getElementById('startCrawlBtn');
 
     if (isCrawling) {
@@ -69,35 +153,40 @@ function updateStatus(data) {
         statusEl.className = 'status-value status-running';
         btnEl.disabled = true;
         btnEl.textContent = '抓取中...';
-        document.getElementById('progressSection').style.display = 'block';
     } else {
         statusEl.textContent = '空闲';
         statusEl.className = 'status-value status-idle';
         btnEl.disabled = false;
         btnEl.textContent = '开始抓取';
-        document.getElementById('progressSection').style.display = 'none';
     }
+
+    stepEl.textContent = data.current_step || '-';
 
     if (data.last_run) {
         document.getElementById('lastCrawlTime').textContent = formatTime(data.last_run);
     }
 
-    updateSourcesList(data.sources || []);
+    updateSourcesList(data.latest_log);
 }
 
-function updateSourcesList(sources) {
+function updateSourcesList(latestLog) {
     const container = document.getElementById('sourcesList');
-    const allSources = ['财联社', '新华网', '东方财富', '36氪', '巨潮资讯'];
+    const allSources = ['财联社', '东方财富'];
     
     container.innerHTML = allSources.map(source => {
-        const sourceData = sources.find(s => s.name === source) || {};
+        let status = 'pending';
+        let count = '-';
+        
+        if (latestLog && latestLog.source === source) {
+            status = latestLog.status || 'pending';
+            count = latestLog.news_count || 0;
+        }
+        
         return `
             <div class="source-item">
                 <div class="source-name">${source}</div>
-                <div class="source-status ${sourceData.status || 'pending'}">
-                    ${getStatusText(sourceData.status)}
-                </div>
-                ${sourceData.count !== undefined ? `<div class="source-count">抓取: ${sourceData.count}条</div>` : ''}
+                <div class="source-status ${status}">${getStatusText(status)}</div>
+                <div class="source-count">${count}条</div>
             </div>
         `;
     }).join('');
@@ -143,7 +232,7 @@ function pollStatus() {
         if (!isCrawling) {
             clearInterval(pollInterval);
         }
-    }, 1000);
+    }, 500);
 }
 
 function formatTime(timeStr) {
