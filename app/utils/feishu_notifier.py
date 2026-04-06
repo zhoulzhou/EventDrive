@@ -73,7 +73,7 @@ class FeishuNotifier:
         logger.info(f"飞书通知: {source} 准备发送 {len(news_list)} 条新闻")
 
         content_lines = [
-            f"@javis 头条 {source} 最新资讯",
+            f"【头条】📰 {source} 最新资讯",
             f"共获取 {len(news_list)} 条新闻",
             "",
         ]

@@ -76,42 +76,67 @@ EventDrive/
 
 ## 安装说明
 
-### 1. 克隆项目
+### Ubuntu 22.04 一键启动
 
 ```bash
-cd d:\AppData\EventDrive
+# 克隆项目
+git clone <repository-url>
+cd EventDrive
+
+# 运行启动脚本（自动创建虚拟环境、安装依赖、启动服务器）
+chmod +x run.sh
+./run.sh
 ```
 
-### 2. 创建虚拟环境（推荐）
+### 手动安装（Ubuntu/Windows）
 
+#### 1. 克隆项目
+
+```bash
+cd EventDrive
+```
+
+#### 2. 创建虚拟环境（推荐）
+
+**Ubuntu:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+**Windows PowerShell:**
 ```bash
 python -m venv venv
 .\venv\Scripts\activate
 ```
 
-### 3. 安装依赖
+#### 3. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. 安装Playwright浏览器
+#### 4. 安装Playwright浏览器（如需要）
 
 ```bash
 playwright install
 ```
 
-### 5. 配置环境变量
+#### 5. 配置环境变量
 
-复制`.env.example`为`.env`（Windows PowerShell）：
+**Ubuntu:**
+```bash
+cp .env.example .env
+```
 
+**Windows PowerShell:**
 ```powershell
 Copy-Item .env.example .env
 ```
 
 根据需要修改`.env`中的配置。
 
-### 6. 初始化数据库
+#### 6. 初始化数据库
 
 ```bash
 python init_db.py
@@ -121,9 +146,24 @@ python init_db.py
 
 ## 运行应用
 
+### Ubuntu（推荐）
+
+使用启动脚本：
+```bash
+./run.sh
+```
+
 ### 开发模式
 
+**Ubuntu:**
 ```bash
+source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Windows:**
+```bash
+.\venv\Scripts\activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
