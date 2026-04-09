@@ -131,14 +131,23 @@ async def full_crawl():
     log_crawl(f"✅ 抓取完成! 总共保存: {total_saved} 条, 耗时: {duration}秒")
     log_crawl("=" * 50)
     
-    if all_saved_news and settings.FEISHU_WEBHOOK_URL:
-        log_crawl("📤 正在发送飞书通知...")
-        logger.info(f"飞书通知准备: webhook_url={settings.FEISHU_WEBHOOK_URL}, keyword={settings.FEISHU_KEYWORD}")
-        try:
-            result = await notify_new_news(all_saved_news, "新闻汇总")
-            log_crawl(f"📤 飞书通知发送结果: {result}")
-        except Exception as e:
-            logger.error(f"飞书通知发送失败: {e}", exc_info=True)
+    # 按来源分组发送飞书通知
+    if settings.FEISHU_WEBHOOK_URL:
+        news_by_source = {}
+        for news in all_saved_news:
+            source = news.get('source', '未知来源')
+            if source not in news_by_source:
+                news_by_source[source] = []
+            news_by_source[source].append(news)
+
+        for source, news_list in news_by_source.items():
+            if news_list:
+                log_crawl(f"📤 正在发送 {source} 飞书通知...")
+                try:
+                    result = await notify_new_news(news_list[:5], source)
+                    log_crawl(f"📤 {source} 飞书通知发送结果: {result}")
+                except Exception as e:
+                    logger.error(f"{source} 飞书通知发送失败: {e}", exc_info=True)
     else:
         if not all_saved_news:
             logger.info("飞书通知跳过: 没有新保存的新闻")
