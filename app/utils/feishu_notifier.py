@@ -90,6 +90,13 @@ class FeishuNotifier:
         logger.info(f"飞书通知内容预览: {content[:200]}...")
         return self.send_message(content)
 
+    def send_no_news_notification(self) -> bool:
+        from datetime import datetime
+        now = datetime.now().strftime("%H:%M")
+        content = f"【头条】📰 {now} 定时推送\n\n暂无新新闻"
+        logger.info(f"飞书无新新闻通知: {content}")
+        return self.send_message(content)
+
 
 _feishu_notifier: Optional[FeishuNotifier] = None
 
@@ -108,4 +115,11 @@ async def notify_new_news(news_list: List[dict], source: str) -> bool:
     notifier = get_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
+    return False
+
+
+async def notify_no_news() -> bool:
+    notifier = get_feishu_notifier()
+    if notifier:
+        return notifier.send_no_news_notification()
     return False
