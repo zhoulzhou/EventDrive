@@ -201,11 +201,10 @@ class NYTDepthCrawler(BaseCrawler):
     async def fetch_news_list(self) -> List[Dict[str, Any]]:
         raw_news_list = []
 
-        wire_tasks = self._fetch_wire_news()
-        top_tasks = self._fetch_topstories()
-
-        wire_results, top_results = await asyncio.gather(wire_tasks, top_tasks)
+        wire_results = await self._fetch_wire_news()
         raw_news_list.extend(wire_results)
+
+        top_results = await self._fetch_topstories()
         raw_news_list.extend(top_results)
 
         return raw_news_list
