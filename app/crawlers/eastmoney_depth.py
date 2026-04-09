@@ -165,7 +165,9 @@ class EastmoneyDepthCrawler(BaseCrawler):
         self.error_message = None
 
         try:
+            logger.info(f"[东方财富] 调用 fetch_news_list()...")
             raw_news_list = await self.fetch_news_list()
+            logger.info(f"[东方财富] fetch_news_list() 返回 {len(raw_news_list)} 条")
 
             for raw_news in raw_news_list[:10]:
                 news_item = self.parse_news_item(raw_news)
@@ -179,5 +181,6 @@ class EastmoneyDepthCrawler(BaseCrawler):
 
         except Exception as e:
             self.error_message = str(e)
+            logger.error(f"[东方财富] crawl() 异常: {e}", exc_info=True)
 
         return self.news_list
