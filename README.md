@@ -38,7 +38,8 @@ EventDrive/
 │   │   ├── news.py             # 新闻相关API
 │   │   ├── crawl.py            # 抓取相关API
 │   │   ├── filter.py           # 筛选规则API
-│   │   └── logs.py             # 日志相关API
+│   │   ├── logs.py             # 日志相关API
+│   │   └── feishu.py           # 飞书推送API
 │   ├── crawlers/
 │   │   ├── __init__.py
 │   │   ├── base.py             # 爬虫基类
@@ -52,7 +53,8 @@ EventDrive/
 │   │   ├── __init__.py
 │   │   ├── anti_crawl.py       # 反爬虫工具
 │   │   ├── image_downloader.py # 图片下载器
-│   │   └── filters.py          # 筛选工具
+│   │   ├── filters.py          # 筛选工具
+│   │   └── feishu_notifier.py  # 飞书推送工具
 │   └── templates/
 │       ├── base.html
 │       ├── index.html
@@ -71,6 +73,10 @@ EventDrive/
 │   └── app.log
 ├── requirements.txt
 ├── .env.example
+├── .env                        # 环境变量配置 (需自行创建)
+├── run.sh                      # Ubuntu启动脚本
+├── start.bat                   # Windows启动脚本
+├── start.ps1                   # Windows PowerShell启动脚本
 └── README.md
 ```
 

@@ -3,7 +3,7 @@ import asyncio
 from typing import List, Callable, Optional, Dict
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from app.config import settings
 from app.database import SessionLocal
@@ -161,13 +161,34 @@ def start_scheduler():
     if not scheduler.running:
         scheduler.add_job(
             full_crawl,
-            trigger=IntervalTrigger(hours=settings.CRAWL_INTERVAL_HOURS),
+            trigger=CronTrigger(hour=8, minute=0),
             id='full_crawl_job',
-            name='Full news crawl',
+            name='Morning crawl 8:00',
+            replace_existing=True
+        )
+        scheduler.add_job(
+            full_crawl,
+            trigger=CronTrigger(hour=12, minute=0),
+            id='full_crawl_job_noon',
+            name='Noon crawl 12:00',
+            replace_existing=True
+        )
+        scheduler.add_job(
+            full_crawl,
+            trigger=CronTrigger(hour=17, minute=0),
+            id='full_crawl_job_afternoon',
+            name='Afternoon crawl 17:00',
+            replace_existing=True
+        )
+        scheduler.add_job(
+            full_crawl,
+            trigger=CronTrigger(hour=22, minute=0),
+            id='full_crawl_job_night',
+            name='Night crawl 22:00',
             replace_existing=True
         )
         scheduler.start()
-        logger.info(f"Scheduler started. Next crawl every {settings.CRAWL_INTERVAL_HOURS} hours.")
+        logger.info("Scheduler started. Crawl at 9:00, 12:00, 17:00, 22:00 every day.")
 
 
 def stop_scheduler():
