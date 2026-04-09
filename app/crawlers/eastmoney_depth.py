@@ -4,11 +4,14 @@ from pathlib import Path
 import sys
 import re
 import concurrent.futures
+import logging
 sys.path.insert(0, str(Path(__file__).parent))
 
 from playwright.sync_api import sync_playwright
 from app.crawlers.base import BaseCrawler, NewsItem
 from app.utils.anti_crawl import random_delay
+
+logger = logging.getLogger(__name__)
 
 
 class EastmoneyDepthCrawler(BaseCrawler):
@@ -20,6 +23,7 @@ class EastmoneyDepthCrawler(BaseCrawler):
 
     def _fetch_sync(self):
         news_list = []
+        logger.info(f"[东方财富] 开始抓取，URL: {self.base_url}/a/ccjdd.html")
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -30,20 +34,34 @@ class EastmoneyDepthCrawler(BaseCrawler):
             page = context.new_page()
 
             try:
+                logger.info(f"[东方财富] 正在访问页面...")
                 page.goto(f"{self.base_url}/a/ccjdd.html", wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(5000)
+                logger.info(f"[东方财富] 页面加载完成，当前URL: {page.url}")
 
                 items = page.query_selector_all('#newsListContent > li')
+                logger.info(f"[东方财富] 找到 {len(items)} 个文章元素")
+
+                if len(items) == 0:
+                    logger.warning(f"[东方财富] 未找到任何文章元素，获取页面信息...")
+                    logger.info(f"[东方财富] 页面标题: {page.title()}")
+                    page_content = page.content()
+                    logger.info(f"[东方财富] 页面HTML前500字符: {page_content[:500]}")
 
                 seen_urls = set()
-                for item in items:
+                for idx, item in enumerate(items):
                     try:
                         title_elem = item.query_selector('p.title a')
                         if not title_elem:
+                            logger.debug(f"[东方财富] 第{idx+1}个文章: 未找到标题元素")
                             continue
 
                         href = title_elem.get_attribute('href')
-                        if not href or href in seen_urls:
+                        if not href:
+                            logger.debug(f"[东方财富] 第{idx+1}个文章: 无href属性")
+                            continue
+                        if href in seen_urls:
+                            logger.debug(f"[东方财富] 第{idx+1}个文章: URL已存在，跳过")
                             continue
                         seen_urls.add(href)
 
@@ -51,6 +69,7 @@ class EastmoneyDepthCrawler(BaseCrawler):
                         title = title.strip()
 
                         if not title or title == "None" or len(title) < 5:
+                            logger.debug(f"[东方财富] 第{idx+1}个文章: 标题无效: '{title}'")
                             continue
 
                         time_elem = item.query_selector('p.time')
@@ -61,6 +80,7 @@ class EastmoneyDepthCrawler(BaseCrawler):
                         summary = info_elem.get_attribute('title') if info_elem else ""
                         summary = summary.strip() if summary else ""
 
+                        logger.info(f"[东方财富] 第{idx+1}个文章: 标题='{title[:30]}...', URL={href}")
                         news_list.append({
                             "title": title,
                             "url": href,
@@ -70,10 +90,14 @@ class EastmoneyDepthCrawler(BaseCrawler):
                         })
 
                     except Exception as e:
+                        logger.error(f"[东方财富] 第{idx+1}个文章解析异常: {e}")
                         continue
+
+                logger.info(f"[东方财富] 抓取完成，共获取 {len(news_list)} 条新闻")
 
             except Exception as e:
                 self.error_message = f"获取东方财富新闻失败: {str(e)}"
+                logger.error(f"[东方财富] 页面访问异常: {e}")
             finally:
                 browser.close()
 

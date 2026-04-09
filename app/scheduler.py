@@ -16,7 +16,7 @@ from app.crawlers import (
 from app.utils.image_downloader import download_image
 from app.utils.feishu_notifier import notify_new_news, init_feishu_notifier
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()

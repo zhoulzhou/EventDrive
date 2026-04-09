@@ -4,11 +4,14 @@ from pathlib import Path
 import sys
 import re
 import concurrent.futures
+import logging
 sys.path.insert(0, str(Path(__file__).parent))
 
 from playwright.sync_api import sync_playwright
 from app.crawlers.base import BaseCrawler, NewsItem
 from app.utils.anti_crawl import random_delay
+
+logger = logging.getLogger(__name__)
 
 
 class CLSDepthCrawler(BaseCrawler):
@@ -20,6 +23,7 @@ class CLSDepthCrawler(BaseCrawler):
 
     def _fetch_sync(self):
         news_list = []
+        logger.info(f"[财联社] 开始抓取，URL: {self.base_url}/depth?id=1000")
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -30,25 +34,40 @@ class CLSDepthCrawler(BaseCrawler):
             page = context.new_page()
 
             try:
+                logger.info(f"[财联社] 正在访问页面...")
                 page.goto(f"{self.base_url}/depth?id=1000", wait_until="networkidle", timeout=60000)
                 page.wait_for_timeout(3000)
+                logger.info(f"[财联社] 页面加载完成，当前URL: {page.url}")
 
                 articles = page.query_selector_all('[class*="depth"], .article-item')
+                logger.info(f"[财联社] 找到 {len(articles)} 个文章元素")
+
+                if len(articles) == 0:
+                    logger.warning(f"[财联社] 未找到任何文章元素，尝试获取页面HTML片段...")
+                    page_content = page.content()
+                    logger.info(f"[财联社] 页面标题: {page.title()}")
+                    logger.info(f"[财联社] 页面HTML前500字符: {page_content[:500]}")
 
                 seen_urls = set()
-                for article in articles:
+                for idx, article in enumerate(articles):
                     try:
                         title_elem = article.query_selector('h3, .title, [class*="title"], a')
                         if not title_elem:
+                            logger.debug(f"[财联社] 第{idx+1}个文章: 未找到标题元素")
                             continue
 
                         href = title_elem.get_attribute('href')
-                        if not href or not href.startswith('/detail/'):
+                        if not href:
+                            logger.debug(f"[财联社] 第{idx+1}个文章: 无href属性")
+                            continue
+                        if not href.startswith('/detail/'):
+                            logger.debug(f"[财联社] 第{idx+1}个文章: href不以/detail/开头: {href}")
                             continue
 
                         url = self.base_url + href
 
                         if url in seen_urls:
+                            logger.debug(f"[财联社] 第{idx+1}个文章: URL已存在，跳过")
                             continue
                         seen_urls.add(url)
 
@@ -56,6 +75,7 @@ class CLSDepthCrawler(BaseCrawler):
                         title = title.strip()
 
                         if not title or title == "None" or len(title) < 5:
+                            logger.debug(f"[财联社] 第{idx+1}个文章: 标题无效: '{title}'")
                             continue
 
                         time_elem = article.query_selector('.time, [class*="time"]')
@@ -66,6 +86,7 @@ class CLSDepthCrawler(BaseCrawler):
                         summary = summary_elem.inner_text() if summary_elem else ""
                         summary = summary.strip() if summary else ""
 
+                        logger.info(f"[财联社] 第{idx+1}个文章: 标题='{title[:30]}...', URL={url}")
                         news_list.append({
                             "title": title,
                             "url": url,
@@ -75,10 +96,14 @@ class CLSDepthCrawler(BaseCrawler):
                         })
 
                     except Exception as e:
+                        logger.error(f"[财联社] 第{idx+1}个文章解析异常: {e}")
                         continue
+
+                logger.info(f"[财联社] 抓取完成，共获取 {len(news_list)} 条新闻")
 
             except Exception as e:
                 self.error_message = f"获取财联社头条失败: {str(e)}"
+                logger.error(f"[财联社] 页面访问异常: {e}")
             finally:
                 browser.close()
 
