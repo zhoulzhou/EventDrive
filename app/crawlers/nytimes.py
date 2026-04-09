@@ -79,7 +79,6 @@ class NYTCrawler(BaseCrawler):
                 return None
 
             publish_time_str = raw_data.get('publish_time', '')
-            publish_time = self._parse_publish_time(publish_time_str)
             display_time = self._parse_display_time(publish_time_str)
 
             summary = raw_data.get('summary', '')
@@ -92,7 +91,8 @@ class NYTCrawler(BaseCrawler):
                 url=url,
                 author=None,
                 summary=summary if summary else None,
-                image_url=None
+                image_url=None,
+                news_type="wire"
             )
         except Exception as e:
             self.error_message = f"解析纽约时报新闻失败: {str(e)}"
@@ -316,6 +316,7 @@ class NYTDepthCrawler(BaseCrawler):
             display_time = self._parse_display_time(publish_time_str)
 
             summary = raw_data.get('summary', '')
+            news_type = raw_data.get('news_type')
 
             return NewsItem(
                 title=title,
@@ -325,7 +326,8 @@ class NYTDepthCrawler(BaseCrawler):
                 url=url,
                 author=None,
                 summary=summary if summary else None,
-                image_url=None
+                image_url=None,
+                news_type=news_type
             )
         except Exception as e:
             self.error_message = f"解析纽约时报新闻失败: {str(e)}"

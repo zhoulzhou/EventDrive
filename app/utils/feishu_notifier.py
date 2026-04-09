@@ -73,21 +73,28 @@ class FeishuNotifier:
         logger.info(f"飞书通知: {source} 准备发送 {len(news_list)} 条新闻")
 
         content_lines = [
-            f"【头条】📰 {source} 最新资讯",
+            f"【头条】📰 {source}",
             f"共获取 {len(news_list)} 条新闻",
             "",
         ]
 
         for idx, news in enumerate(news_list[:5], 1):
-            title = news.get('title', '')[:50]
+            title = news.get('title', '')
+            summary = news.get('summary', '')
             publish_time = news.get('publish_time', '')
+            url = news.get('url', '')
+
             content_lines.append(f"{idx}. {title}")
             if publish_time:
-                content_lines.append(f"   {publish_time}")
+                content_lines.append(f"   🕐 {publish_time}")
+            if summary:
+                content_lines.append(f"   📝 {summary}")
+            if url:
+                content_lines.append(f"   🔗 {url}")
             content_lines.append("")
 
         content = "\n".join(content_lines)
-        logger.info(f"飞书通知内容预览: {content[:200]}...")
+        logger.info(f"飞书通知内容预览: {content[:500]}...")
         return self.send_message(content)
 
     def send_no_news_notification(self) -> bool:

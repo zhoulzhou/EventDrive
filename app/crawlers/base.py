@@ -21,6 +21,7 @@ class NewsItem:
     author: Optional[str] = None
     summary: Optional[str] = None
     image_url: Optional[str] = None
+    news_type: Optional[str] = None
 
 
 class BaseCrawler(ABC):

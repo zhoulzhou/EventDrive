@@ -81,7 +81,9 @@ async def crawl_single_source(crawler_class):
                     "title": news_item.title,
                     "url": news_item.url,
                     "publish_time": news_item.publish_time.isoformat() if news_item.publish_time else "",
-                    "source": news_item.source
+                    "source": news_item.source,
+                    "summary": news_item.summary,
+                    "news_type": getattr(news_item, 'news_type', None)
                 })
                 log_crawl(f"[{source_name}] ✅ 保存成功 (累计: {saved_count})")
             else:
@@ -141,18 +143,32 @@ async def full_crawl():
             news_by_source = {}
             for news in all_saved_news:
                 source = news.get('source', '未知来源')
-                if source not in news_by_source:
-                    news_by_source[source] = []
-                news_by_source[source].append(news)
+                news_type = news.get('news_type')
 
-            for source, news_list in news_by_source.items():
+                if news_type in ('wire', 'topstories'):
+                    key = f"{source}_{news_type}"
+                else:
+                    key = source
+
+                if key not in news_by_source:
+                    news_by_source[key] = []
+                news_by_source[key].append(news)
+
+            for key, news_list in news_by_source.items():
                 if news_list:
-                    log_crawl(f"📤 正在发送 {source} 飞书通知...")
+                    if 'wire' in key:
+                        display_source = "纽约时报最新资讯"
+                    elif 'topstories' in key:
+                        display_source = "纽约时报精选"
+                    else:
+                        display_source = key
+
+                    log_crawl(f"📤 正在发送 {display_source} 飞书通知...")
                     try:
-                        result = await notify_new_news(news_list[:5], source)
-                        log_crawl(f"📤 {source} 飞书通知发送结果: {result}")
+                        result = await notify_new_news(news_list[:5], display_source)
+                        log_crawl(f"📤 {display_source} 飞书通知发送结果: {result}")
                     except Exception as e:
-                        logger.error(f"{source} 飞书通知发送失败: {e}", exc_info=True)
+                        logger.error(f"{display_source} 飞书通知发送失败: {e}", exc_info=True)
         else:
             log_crawl("📤 没有新新闻，发送无新新闻通知...")
             try:
