@@ -4,6 +4,7 @@ from typing import List, Callable, Optional, Dict
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
 from app.database import SessionLocal
@@ -11,6 +12,8 @@ from app import crud, schemas
 from app.crawlers import (
     CLSDepthCrawler,
     EastmoneyDepthCrawler,
+    NYTDepthCrawler,
+    NYTCrawler,
     NewsItem
 )
 from app.utils.image_downloader import download_image
@@ -112,7 +115,8 @@ async def full_crawl():
     
     crawlers = [
         CLSDepthCrawler,
-        EastmoneyDepthCrawler
+        EastmoneyDepthCrawler,
+        NYTDepthCrawler
     ]
     
     log_crawl(f"将抓取 {len(crawlers)} 个新闻源")
@@ -165,6 +169,29 @@ async def full_crawl():
     return total_saved
 
 
+async def nyt_wire_crawl():
+    log_crawl("=" * 50)
+    log_crawl("🚀 开始执行纽约时报快讯抓取任务...")
+    log_crawl("=" * 50)
+    start_time = datetime.now()
+
+    count, saved_news = await crawl_single_source(NYTCrawler)
+
+    duration = int((datetime.now() - start_time).total_seconds())
+    log_crawl("=" * 50)
+    log_crawl(f"✅ 纽约时报快讯抓取完成! 保存: {count} 条, 耗时: {duration}秒")
+    log_crawl("=" * 50)
+
+    if settings.FEISHU_WEBHOOK_URL and saved_news:
+        try:
+            result = await notify_new_news(saved_news[:5], "纽约时报快讯")
+            log_crawl(f"📤 纽约时报快讯飞书通知发送结果: {result}")
+        except Exception as e:
+            logger.error(f"纽约时报快讯飞书通知发送失败: {e}", exc_info=True)
+
+    return count
+
+
 def start_scheduler():
     if not scheduler.running:
         scheduler.add_job(
@@ -195,8 +222,15 @@ def start_scheduler():
             name='Night crawl 22:00',
             replace_existing=True
         )
+        scheduler.add_job(
+            nyt_wire_crawl,
+            trigger=IntervalTrigger(hours=3),
+            id='nyt_wire_crawl_job',
+            name='NYT Wire crawl every 3 hours',
+            replace_existing=True
+        )
         scheduler.start()
-        logger.info("Scheduler started. Crawl at 9:00, 12:00, 17:00, 22:00 every day.")
+        logger.info("Scheduler started. Crawl at 8:00, 12:00, 17:00, 22:00 every day + NYT Wire every 3 hours.")
 
 
 def stop_scheduler():
