@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +11,7 @@ from app.config import settings
 from app.database import engine, Base
 from app.api import news, crawl, filter, logs, feishu
 from app.utils.feishu_notifier import init_feishu_notifier
+from app.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,20 @@ if settings.FEISHU_WEBHOOK_URL and settings.FEISHU_SECRET:
 else:
     print("⚠️ 飞书推送未配置 (FEISHU_WEBHOOK_URL 或 FEISHU_SECRET 未设置)")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    print("✅ 定时任务调度器已启动")
+    yield
+    stop_scheduler()
+    print("🛑 定时任务调度器已停止")
+
+
 app = FastAPI(
     title=settings.APP_NAME,
-    version=settings.APP_VERSION
+    version=settings.APP_VERSION,
+    lifespan=lifespan
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
