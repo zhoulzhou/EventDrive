@@ -13,7 +13,6 @@ from app.crawlers import (
     CLSDepthCrawler,
     EastmoneyDepthCrawler,
     NYTDepthCrawler,
-    NYTCrawler,
     NewsItem
 )
 from app.utils.image_downloader import download_image
@@ -45,7 +44,7 @@ async def process_news_item(news_item: NewsItem):
             image_path = await download_image(news_item.image_url)
         except Exception as e:
             logger.warning(f"Failed to download image for {news_item.url}: {e}")
-    
+
     return schemas.NewsCreate(
         title=news_item.title,
         content=news_item.content,
@@ -65,12 +64,12 @@ async def crawl_single_source(crawler_class):
         crawler = crawler_class()
         source_name = crawler.source_name
         log_crawl(f"📰 开始抓取: {source_name}")
-        
+
         news_items = await crawler.crawl()
         log_crawl(f"[{source_name}] 获取到 {len(news_items)} 条新闻，准备保存...")
-        
+
         saved_count = 0
-        
+
         for idx, news_item in enumerate(news_items):
             log_crawl(f"[{source_name}] 处理第 {idx+1}/{len(news_items)} 条: {news_item.title[:30]}...")
             if not crud.is_news_exists(db, news_item.url):
@@ -88,7 +87,7 @@ async def crawl_single_source(crawler_class):
                 log_crawl(f"[{source_name}] ✅ 保存成功 (累计: {saved_count})")
             else:
                 log_crawl(f"[{source_name}] ⏭️ 已存在，跳过")
-        
+
         log = schemas.CrawlLogCreate(
             source=crawler.source_name,
             news_count=saved_count,
@@ -97,10 +96,10 @@ async def crawl_single_source(crawler_class):
             duration=crawler.get_crawl_duration()
         )
         crud.create_crawl_log(db, log)
-        
+
         log_crawl(f"🏁 {source_name} 抓取完成: 保存 {saved_count} 条")
         return saved_count, saved_news
-        
+
     except Exception as e:
         log_crawl(f"❌ {crawler_class.__name__} 抓取出错: {str(e)}")
         logger.error(f"!!! {crawler_class.__name__} 抓取出错: {e}", exc_info=True)
@@ -111,33 +110,32 @@ async def crawl_single_source(crawler_class):
 
 async def full_crawl():
     log_crawl("=" * 50)
-    log_crawl("🚀 开始执行完整新闻抓取任务...")
+    log_crawl("🚀 开始执行新闻抓取任务...")
     log_crawl("=" * 50)
     start_time = datetime.now()
-    
+
     crawlers = [
         CLSDepthCrawler,
         EastmoneyDepthCrawler,
         NYTDepthCrawler
     ]
-    
+
     log_crawl(f"将抓取 {len(crawlers)} 个新闻源")
-    
+
     total_saved = 0
     all_saved_news = []
-    
+
     for idx, crawler_class in enumerate(crawlers):
         log_crawl(f"--- 第 {idx+1}/{len(crawlers)} 个新闻源 ---")
         count, saved_news = await crawl_single_source(crawler_class)
         total_saved += count
         all_saved_news.extend(saved_news)
-    
+
     duration = int((datetime.now() - start_time).total_seconds())
     log_crawl("=" * 50)
     log_crawl(f"✅ 抓取完成! 总共保存: {total_saved} 条, 耗时: {duration}秒")
     log_crawl("=" * 50)
-    
-    # 按来源分组发送飞书通知
+
     if settings.FEISHU_WEBHOOK_URL:
         if all_saved_news:
             news_by_source = {}
@@ -181,72 +179,28 @@ async def full_crawl():
             logger.info("飞书通知跳过: 没有新保存的新闻")
         if not settings.FEISHU_WEBHOOK_URL:
             logger.info("飞书通知跳过: FEISHU_WEBHOOK_URL 未配置")
-    
+
     return total_saved
-
-
-async def nyt_wire_crawl():
-    log_crawl("=" * 50)
-    log_crawl("🚀 开始执行纽约时报快讯抓取任务...")
-    log_crawl("=" * 50)
-    start_time = datetime.now()
-
-    count, saved_news = await crawl_single_source(NYTCrawler)
-
-    duration = int((datetime.now() - start_time).total_seconds())
-    log_crawl("=" * 50)
-    log_crawl(f"✅ 纽约时报快讯抓取完成! 保存: {count} 条, 耗时: {duration}秒")
-    log_crawl("=" * 50)
-
-    if settings.FEISHU_WEBHOOK_URL and saved_news:
-        try:
-            result = await notify_new_news(saved_news[:5], "纽约时报快讯")
-            log_crawl(f"📤 纽约时报快讯飞书通知发送结果: {result}")
-        except Exception as e:
-            logger.error(f"纽约时报快讯飞书通知发送失败: {e}", exc_info=True)
-
-    return count
 
 
 def start_scheduler():
     if not scheduler.running:
         scheduler.add_job(
             full_crawl,
-            trigger=CronTrigger(hour=8, minute=0),
-            id='full_crawl_job',
-            name='Morning crawl 8:00',
-            replace_existing=True
-        )
-        scheduler.add_job(
-            full_crawl,
             trigger=CronTrigger(hour=12, minute=0),
-            id='full_crawl_job_noon',
-            name='Noon crawl 12:00',
+            id='crawl_job_12',
+            name='Crawl at 12:00',
             replace_existing=True
         )
         scheduler.add_job(
             full_crawl,
-            trigger=CronTrigger(hour=17, minute=0),
-            id='full_crawl_job_afternoon',
-            name='Afternoon crawl 17:00',
-            replace_existing=True
-        )
-        scheduler.add_job(
-            full_crawl,
-            trigger=CronTrigger(hour=22, minute=0),
-            id='full_crawl_job_night',
-            name='Night crawl 22:00',
-            replace_existing=True
-        )
-        scheduler.add_job(
-            nyt_wire_crawl,
-            trigger=IntervalTrigger(hours=3),
-            id='nyt_wire_crawl_job',
-            name='NYT Wire crawl every 3 hours',
+            trigger=IntervalTrigger(hours=3, start_date=datetime.now()),
+            id='crawl_job_3h',
+            name='Crawl every 3 hours',
             replace_existing=True
         )
         scheduler.start()
-        logger.info("Scheduler started. Crawl at 8:00, 12:00, 17:00, 22:00 every day + NYT Wire every 3 hours.")
+        logger.info("Scheduler started. Crawl every 3 hours starting from 12:00.")
 
 
 def stop_scheduler():
