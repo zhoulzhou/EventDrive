@@ -3,7 +3,7 @@ from .cls_depth import CLSDepthCrawler
 from .eastmoney_depth import EastmoneyDepthCrawler
 from .kr36_depth import Kr36DepthCrawler
 from .nytimes import NYTCrawler, NYTDepthCrawler
-from .apnews import APNewsCrawler
+from .bbc import BBCCrawler
 
 __all__ = [
     "BaseCrawler",
@@ -13,5 +13,5 @@ __all__ = [
     "Kr36DepthCrawler",
     "NYTCrawler",
     "NYTDepthCrawler",
-    "APNewsCrawler"
+    "BBCCrawler"
 ]

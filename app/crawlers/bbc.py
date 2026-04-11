@@ -7,12 +7,12 @@ from io import BytesIO
 from app.crawlers.base import BaseCrawler, NewsItem
 
 
-class APNewsCrawler(BaseCrawler):
-    source_name: str = "美联社"
+class BBCCrawler(BaseCrawler):
+    source_name: str = "BBC新闻"
 
     def __init__(self):
         super().__init__()
-        self.rss_url = "https://news.google.com/rss/search?q=site:apnews.com&hl=en-US&gl=US&ceid=US:en"
+        self.rss_url = "https://feeds.bbci.co.uk/news/world/rss.xml"
 
     async def fetch_news_list(self) -> List[Dict[str, Any]]:
         raw_news_list = []
@@ -31,11 +31,11 @@ class APNewsCrawler(BaseCrawler):
 
             if not feed.entries:
                 import logging
-                logging.warning(f"[美联社] RSS解析后无条目，bozo={feed.bozo}, 内容长度={len(content)}")
+                logging.warning(f"[BBC] RSS解析后无条目，bozo={feed.bozo}, 内容长度={len(content)}")
                 if len(content) > 0:
-                    logging.warning(f"[美联社] 内容前200字符: {content[:200]}")
+                    logging.warning(f"[BBC] 内容前200字符: {content[:200]}")
                 if feed.bozo and hasattr(feed, 'bozo_exception'):
-                    logging.warning(f"[美联社] bozo_exception: {feed.bozo_exception}")
+                    logging.warning(f"[BBC] bozo_exception: {feed.bozo_exception}")
                 return []
 
             for entry in feed.entries[:10]:
@@ -52,9 +52,9 @@ class APNewsCrawler(BaseCrawler):
                         "publish_time": published
                     })
         except Exception as e:
-            self.error_message = f"获取美联社RSS失败: {str(e)}"
+            self.error_message = f"获取BBC RSS失败: {str(e)}"
             import logging
-            logging.error(f"[美联社] 获取RSS异常: {e}")
+            logging.error(f"[BBC] 获取RSS异常: {e}")
 
         return raw_news_list
 
@@ -81,7 +81,7 @@ class APNewsCrawler(BaseCrawler):
                 author=None,
                 summary=summary if summary else None,
                 image_url=None,
-                news_type="ap"
+                news_type="bbc"
             )
         except Exception:
             return None

@@ -35,8 +35,8 @@ class Settings:
     NYT_FEISHU_WEBHOOK_URL: str = os.getenv("NYT_FEISHU_WEBHOOK_URL", "")
     NYT_FEISHU_KEYWORD: str = os.getenv("NYT_FEISHU_KEYWORD", "HOT")
 
-    AP_NEWS_WEBHOOK_URL: str = os.getenv("AP_NEWS_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/d7ce9b83-ea9e-4779-b514-211848d06e35")
-    AP_NEWS_KEYWORD: str = os.getenv("AP_NEWS_KEYWORD", "HOT")
+    BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/d7ce9b83-ea9e-4779-b514-211848d06e35")
+    BBC_FEISHU_KEYWORD: str = os.getenv("BBC_FEISHU_KEYWORD", "HOT")
 
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
