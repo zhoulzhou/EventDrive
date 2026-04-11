@@ -82,11 +82,8 @@ class FeishuNotifier:
         for idx, news in enumerate(news_list[:5], 1):
             title = news.get('title', '')
             summary = news.get('summary', '')
-            publish_time = news.get('publish_time', '')
 
             content_lines.append(f"{idx}. {title}")
-            if publish_time:
-                content_lines.append(f"   🕐 {publish_time}")
             if summary:
                 content_lines.append(f"   📝 {summary}")
             content_lines.append("")
