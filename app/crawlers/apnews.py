@@ -12,7 +12,7 @@ class APNewsCrawler(BaseCrawler):
 
     def __init__(self):
         super().__init__()
-        self.rss_url = "https://apnews.com/rss.xml"
+        self.rss_url = "https://news.google.com/rss/search?q=site:apnews.com&hl=en-US&gl=US&ceid=US:en"
 
     async def fetch_news_list(self) -> List[Dict[str, Any]]:
         raw_news_list = []
