@@ -29,22 +29,32 @@ class APNewsCrawler(BaseCrawler):
 
             feed = feedparser.parse(BytesIO(content))
 
-            if feed.entries:
-                for entry in feed.entries[:10]:
-                    title = entry.get("title", "")
-                    link = entry.get("link", "")
-                    summary = entry.get("summary", "")
-                    published = entry.get("published", "")
+            if not feed.entries:
+                import logging
+                logging.warning(f"[美联社] RSS解析后无条目，bozo={feed.bozo}, 内容长度={len(content)}")
+                if len(content) > 0:
+                    logging.warning(f"[美联社] 内容前200字符: {content[:200]}")
+                if feed.bozo and hasattr(feed, 'bozo_exception'):
+                    logging.warning(f"[美联社] bozo_exception: {feed.bozo_exception}")
+                return []
 
-                    if title and link:
-                        raw_news_list.append({
-                            "url": link,
-                            "title": title,
-                            "summary": self._clean_html(summary),
-                            "publish_time": published
-                        })
+            for entry in feed.entries[:10]:
+                title = entry.get("title", "")
+                link = entry.get("link", "")
+                summary = entry.get("summary", "")
+                published = entry.get("published", "")
+
+                if title and link:
+                    raw_news_list.append({
+                        "url": link,
+                        "title": title,
+                        "summary": self._clean_html(summary),
+                        "publish_time": published
+                    })
         except Exception as e:
             self.error_message = f"获取美联社RSS失败: {str(e)}"
+            import logging
+            logging.error(f"[美联社] 获取RSS异常: {e}")
 
         return raw_news_list
 
