@@ -4,7 +4,6 @@ from typing import List, Callable, Optional, Dict
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
 from app.database import SessionLocal
@@ -195,20 +194,13 @@ def start_scheduler():
     if not scheduler.running:
         scheduler.add_job(
             full_crawl,
-            trigger=CronTrigger(hour=12, minute=0),
-            id='crawl_job_12',
-            name='Crawl at 12:00',
-            replace_existing=True
-        )
-        scheduler.add_job(
-            full_crawl,
-            trigger=IntervalTrigger(hours=3, start_date=datetime.now()),
-            id='crawl_job_3h',
-            name='Crawl every 3 hours',
+            trigger=CronTrigger(hour='0,3,6,9,12,15,18,21', minute=0),
+            id='crawl_job_3h_intervals',
+            name='Crawl at hours divisible by 3',
             replace_existing=True
         )
         scheduler.start()
-        logger.info("Scheduler started. Crawl every 3 hours starting from 12:00.")
+        logger.info("Scheduler started. Crawl at 0,3,6,9,12,15,18,21 hours.")
 
 
 def stop_scheduler():
