@@ -10,7 +10,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base
 from app.api import news, crawl, filter, logs, feishu
-from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier
+from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_ap_feishu_notifier
 from app.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,16 @@ if settings.NYT_FEISHU_WEBHOOK_URL:
     print("✅ 纽约时报飞书推送已初始化")
 else:
     print("⚠️ 纽约时报飞书推送未配置 (NYT_FEISHU_WEBHOOK_URL 未设置)")
+
+if settings.AP_NEWS_WEBHOOK_URL:
+    init_ap_feishu_notifier(
+        settings.AP_NEWS_WEBHOOK_URL,
+        "",
+        settings.AP_NEWS_KEYWORD
+    )
+    print("✅ 美联社飞书推送已初始化")
+else:
+    print("⚠️ 美联社飞书推送未配置 (AP_NEWS_WEBHOOK_URL 未设置)")
 
 
 @asynccontextmanager

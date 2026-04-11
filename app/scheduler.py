@@ -13,10 +13,11 @@ from app.crawlers import (
     CLSDepthCrawler,
     EastmoneyDepthCrawler,
     NYTDepthCrawler,
+    APNewsCrawler,
     NewsItem
 )
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_no_news, init_feishu_notifier, init_nyt_feishu_notifier
+from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_ap_news, notify_no_news, init_feishu_notifier, init_nyt_feishu_notifier
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -117,7 +118,8 @@ async def full_crawl():
     crawlers = [
         CLSDepthCrawler,
         EastmoneyDepthCrawler,
-        NYTDepthCrawler
+        NYTDepthCrawler,
+        APNewsCrawler
     ]
 
     log_crawl(f"将抓取 {len(crawlers)} 个新闻源")
@@ -160,6 +162,9 @@ async def full_crawl():
                     elif 'topstories' in key:
                         display_source = "纽约时报精选"
                         notify_func = notify_nyt_news
+                    elif 'ap' in key:
+                        display_source = "美联社"
+                        notify_func = notify_ap_news
                     else:
                         display_source = key
                         notify_func = notify_new_news
