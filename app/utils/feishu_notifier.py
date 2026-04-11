@@ -83,15 +83,12 @@ class FeishuNotifier:
             title = news.get('title', '')
             summary = news.get('summary', '')
             publish_time = news.get('publish_time', '')
-            url = news.get('url', '')
 
             content_lines.append(f"{idx}. {title}")
             if publish_time:
                 content_lines.append(f"   🕐 {publish_time}")
             if summary:
                 content_lines.append(f"   📝 {summary}")
-            if url:
-                content_lines.append(f"   🔗 {url}")
             content_lines.append("")
 
         content = "\n".join(content_lines)
