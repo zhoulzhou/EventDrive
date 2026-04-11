@@ -35,7 +35,7 @@ else:
 if settings.NYT_FEISHU_WEBHOOK_URL:
     init_nyt_feishu_notifier(
         settings.NYT_FEISHU_WEBHOOK_URL,
-        settings.NYT_FEISHU_SECRET,
+        "",
         settings.NYT_FEISHU_KEYWORD
     )
     print("✅ 纽约时报飞书推送已初始化")

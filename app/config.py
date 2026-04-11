@@ -33,7 +33,6 @@ class Settings:
     FEISHU_KEYWORD: str = os.getenv("FEISHU_KEYWORD", "头条")
 
     NYT_FEISHU_WEBHOOK_URL: str = os.getenv("NYT_FEISHU_WEBHOOK_URL", "")
-    NYT_FEISHU_SECRET: str = os.getenv("NYT_FEISHU_SECRET", "")
     NYT_FEISHU_KEYWORD: str = os.getenv("NYT_FEISHU_KEYWORD", "HOT")
 
     def __init__(self):
