@@ -34,7 +34,7 @@ def main():
     else:
         print("⚠️ 飞书推送未配置")
 
-    if settings.NYT_FEISHU_WEBHOOK_URL and settings.NYT_FEISHU_SECRET:
+    if settings.NYT_FEISHU_WEBHOOK_URL:
         init_nyt_feishu_notifier(
             settings.NYT_FEISHU_WEBHOOK_URL,
             settings.NYT_FEISHU_SECRET,

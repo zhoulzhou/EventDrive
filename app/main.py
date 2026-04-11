@@ -32,7 +32,7 @@ if settings.FEISHU_WEBHOOK_URL and settings.FEISHU_SECRET:
 else:
     print("⚠️ 飞书推送未配置 (FEISHU_WEBHOOK_URL 或 FEISHU_SECRET 未设置)")
 
-if settings.NYT_FEISHU_WEBHOOK_URL and settings.NYT_FEISHU_SECRET:
+if settings.NYT_FEISHU_WEBHOOK_URL:
     init_nyt_feishu_notifier(
         settings.NYT_FEISHU_WEBHOOK_URL,
         settings.NYT_FEISHU_SECRET,
@@ -40,7 +40,7 @@ if settings.NYT_FEISHU_WEBHOOK_URL and settings.NYT_FEISHU_SECRET:
     )
     print("✅ 纽约时报飞书推送已初始化")
 else:
-    print("⚠️ 纽约时报飞书推送未配置 (NYT_FEISHU_WEBHOOK_URL 或 NYT_FEISHU_SECRET 未设置)")
+    print("⚠️ 纽约时报飞书推送未配置 (NYT_FEISHU_WEBHOOK_URL 未设置)")
 
 
 @asynccontextmanager
