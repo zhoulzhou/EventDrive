@@ -16,7 +16,7 @@ from app.crawlers import (
     NewsItem
 )
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import notify_new_news, notify_no_news, init_feishu_notifier
+from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_no_news, init_feishu_notifier, init_nyt_feishu_notifier
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -156,14 +156,17 @@ async def full_crawl():
                 if news_list:
                     if 'wire' in key:
                         display_source = "纽约时报最新资讯"
+                        notify_func = notify_nyt_news
                     elif 'topstories' in key:
                         display_source = "纽约时报精选"
+                        notify_func = notify_nyt_news
                     else:
                         display_source = key
+                        notify_func = notify_new_news
 
                     log_crawl(f"📤 正在发送 {display_source} 飞书通知...")
                     try:
-                        result = await notify_new_news(news_list[:5], display_source)
+                        result = await notify_func(news_list[:5], display_source)
                         log_crawl(f"📤 {display_source} 飞书通知发送结果: {result}")
                     except Exception as e:
                         logger.error(f"{display_source} 飞书通知发送失败: {e}", exc_info=True)

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from app.config import settings
 from app.database import engine, Base
-from app.utils.feishu_notifier import init_feishu_notifier
+from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier
 from app.scheduler import start_scheduler, stop_scheduler, full_crawl
 
 def signal_handler(signum, frame):
@@ -33,6 +33,16 @@ def main():
         print("✅ 飞书推送已初始化")
     else:
         print("⚠️ 飞书推送未配置")
+
+    if settings.NYT_FEISHU_WEBHOOK_URL and settings.NYT_FEISHU_SECRET:
+        init_nyt_feishu_notifier(
+            settings.NYT_FEISHU_WEBHOOK_URL,
+            settings.NYT_FEISHU_SECRET,
+            settings.NYT_FEISHU_KEYWORD
+        )
+        print("✅ 纽约时报飞书推送已初始化")
+    else:
+        print("⚠️ 纽约时报飞书推送未配置")
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

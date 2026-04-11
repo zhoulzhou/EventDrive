@@ -32,6 +32,10 @@ class Settings:
     FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
     FEISHU_KEYWORD: str = os.getenv("FEISHU_KEYWORD", "头条")
 
+    NYT_FEISHU_WEBHOOK_URL: str = os.getenv("NYT_FEISHU_WEBHOOK_URL", "")
+    NYT_FEISHU_SECRET: str = os.getenv("NYT_FEISHU_SECRET", "")
+    NYT_FEISHU_KEYWORD: str = os.getenv("NYT_FEISHU_KEYWORD", "HOT")
+
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.IMAGES_DIR.mkdir(exist_ok=True, parents=True)

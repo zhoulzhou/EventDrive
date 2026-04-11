@@ -65,15 +65,16 @@ class FeishuNotifier:
             logger.error(f"飞书推送异常: {e}", exc_info=True)
             return False
 
-    def send_news_notification(self, news_list: List[dict], source: str) -> bool:
+    def send_news_notification(self, news_list: List[dict], source: str, prefix: str = None) -> bool:
         if not news_list:
             logger.info(f"飞书通知: {source} 没有新闻，跳过")
             return False
 
         logger.info(f"飞书通知: {source} 准备发送 {len(news_list)} 条新闻")
 
+        header = f"【{self.keyword}】📰 {source}" if not prefix else f"{prefix}📰 {source}"
         content_lines = [
-            f"【头条】📰 {source}",
+            header,
             f"共获取 {len(news_list)} 条新闻",
             "",
         ]
@@ -100,12 +101,13 @@ class FeishuNotifier:
     def send_no_news_notification(self) -> bool:
         from datetime import datetime
         now = datetime.now().strftime("%H:%M")
-        content = f"【头条】📰 {now} 定时推送\n\n暂无新新闻"
+        content = f"【{self.keyword}】📰 {now} 定时推送\n\n暂无新新闻"
         logger.info(f"飞书无新新闻通知: {content}")
         return self.send_message(content)
 
 
 _feishu_notifier: Optional[FeishuNotifier] = None
+_nyt_feishu_notifier: Optional[FeishuNotifier] = None
 
 
 def init_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
@@ -114,12 +116,29 @@ def init_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条")
     logger.info(f"飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
 
 
+def init_nyt_feishu_notifier(webhook_url: str, secret: str, keyword: str = "HOT"):
+    global _nyt_feishu_notifier
+    _nyt_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
+    logger.info(f"纽约时报飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+
+
 def get_feishu_notifier() -> Optional[FeishuNotifier]:
     return _feishu_notifier
 
 
+def get_nyt_feishu_notifier() -> Optional[FeishuNotifier]:
+    return _nyt_feishu_notifier
+
+
 async def notify_new_news(news_list: List[dict], source: str) -> bool:
     notifier = get_feishu_notifier()
+    if notifier:
+        return notifier.send_news_notification(news_list, source)
+    return False
+
+
+async def notify_nyt_news(news_list: List[dict], source: str) -> bool:
+    notifier = get_nyt_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False

@@ -317,10 +317,17 @@ class NYTDepthCrawler(BaseCrawler):
             summary = raw_data.get('summary', '')
             news_type = raw_data.get('news_type')
 
+            if news_type == 'wire':
+                source = "纽约时报最新资讯"
+            elif news_type == 'topstories':
+                source = "纽约时报精选"
+            else:
+                source = self.source_name
+
             return NewsItem(
                 title=title,
                 content=summary,
-                source=self.source_name,
+                source=source,
                 publish_time=display_time,
                 url=url,
                 author=None,
