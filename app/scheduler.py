@@ -161,7 +161,7 @@ async def full_crawl():
                     elif 'topstories' in key:
                         display_source = "纽约时报精选"
                         notify_func = notify_nyt_news
-                    elif 'bbc' in key:
+                    elif 'bbc' in key.lower():
                         display_source = "BBC新闻"
                         notify_func = notify_bbc_news
                     else:
