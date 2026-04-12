@@ -151,7 +151,7 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    window.location.href = '/';
+                    window.location.href = '/home';
                 } else {
                     errorMsg.textContent = data.message || '登录失败';
                     errorMsg.classList.add('show');

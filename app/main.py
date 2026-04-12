@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader
 from starlette.requests import Request
 
@@ -95,8 +95,8 @@ def render_template(template_name: str, context: dict = None) -> HTMLResponse:
     return HTMLResponse(content=html_content)
 
 
-@app.get("/")
-async def root(request: Request):
+@app.get("/home")
+async def home(request: Request):
     return render_template("index.html", {"request": request})
 
 
