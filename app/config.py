@@ -35,7 +35,7 @@ class Settings:
     NYT_FEISHU_WEBHOOK_URL: str = os.getenv("NYT_FEISHU_WEBHOOK_URL", "")
     NYT_FEISHU_KEYWORD: str = os.getenv("NYT_FEISHU_KEYWORD", "HOT")
 
-    BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/d7ce9b83-ea9e-4779-b514-211848d06e35")
+    BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/3d2a80af-aa97-48aa-864e-dec19d48ac08")
     BBC_FEISHU_KEYWORD: str = os.getenv("BBC_FEISHU_KEYWORD", "HOT")
 
     def __init__(self):
