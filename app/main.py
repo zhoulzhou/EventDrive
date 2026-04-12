@@ -9,7 +9,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base
-from app.api import news, crawl, filter, logs, feishu
+from app.api import news, crawl, filter, logs, feishu, login
 from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier
 from app.scheduler import start_scheduler, stop_scheduler
 
@@ -85,6 +85,7 @@ app.include_router(crawl.router, prefix="/api", tags=["crawl"])
 app.include_router(filter.router, prefix="/api", tags=["filter"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
 app.include_router(feishu.router, prefix="/api", tags=["feishu"])
+app.include_router(login.router, prefix="/api", tags=["login"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:
@@ -97,6 +98,11 @@ def render_template(template_name: str, context: dict = None) -> HTMLResponse:
 @app.get("/")
 async def root(request: Request):
     return render_template("index.html", {"request": request})
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    return render_template("login.html", {"request": request})
 
 
 @app.get("/news/{news_id}")
