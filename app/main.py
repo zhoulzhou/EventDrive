@@ -95,6 +95,11 @@ def render_template(template_name: str, context: dict = None) -> HTMLResponse:
     return HTMLResponse(content=html_content)
 
 
+@app.get("/")
+async def root(request: Request):
+    return RedirectResponse(url="/login")
+
+
 @app.get("/home")
 async def home(request: Request):
     return render_template("index.html", {"request": request})
