@@ -17,6 +17,7 @@ from app.crawlers import (
 )
 from app.utils.image_downloader import download_image
 from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_no_news, init_feishu_notifier, init_nyt_feishu_notifier
+from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ async def crawl_single_source(crawler_class):
                     "publish_time": news_item.publish_time.isoformat() if news_item.publish_time else "",
                     "source": news_item.source,
                     "summary": news_item.summary,
+                    "content": news_item.content,
                     "news_type": getattr(news_item, 'news_type', None)
                 })
                 log_crawl(f"[{source_name}] ✅ 保存成功 (累计: {saved_count})")
@@ -186,6 +188,72 @@ async def full_crawl():
             logger.info("飞书通知跳过: 没有新保存的新闻")
         if not settings.FEISHU_WEBHOOK_URL:
             logger.info("飞书通知跳过: FEISHU_WEBHOOK_URL 未配置")
+
+    # ==================== 大模型分析新闻 ====================
+    if settings.KB_FEISHU_WEBHOOK_URL and all_saved_news:
+        log_crawl("=" * 50)
+        log_crawl("🧠 开始大模型新闻分析...")
+        log_crawl("=" * 50)
+        
+        # 初始化知识库分析器
+        try:
+            init_knowledge_analyzer(
+                account_id=str(settings.KB_ACCOUNT_ID),
+                apikey=settings.KB_APIKEY,
+                service_resource_id=settings.KB_SERVICE_RESOURCE_ID,
+                knowledge_base_domain=settings.KB_DOMAIN,
+                feishu_webhook_url=settings.KB_FEISHU_WEBHOOK_URL,
+                keyword=settings.KB_KEYWORD
+            )
+            log_crawl("✅ 知识库分析器初始化完成")
+        except Exception as e:
+            logger.error(f"❌ 知识库分析器初始化失败: {e}", exc_info=True)
+        
+        analyzer = get_knowledge_analyzer()
+        if analyzer:
+            # 按来源分组新闻
+            news_by_source = {}
+            for news in all_saved_news:
+                source = news.get('source', '未知来源')
+                if source not in news_by_source:
+                    news_by_source[source] = []
+                news_by_source[source].append(news)
+            
+            # 每个新闻源分析第一条新闻
+            for source, news_list in news_by_source.items():
+                if news_list:
+                    first_news = news_list[0]
+                    news_title = first_news.get('title', '')
+                    news_content = first_news.get('content', first_news.get('summary', ''))
+                    
+                    log_crawl(f"🔍 正在分析 {source} 的新闻: {news_title[:50]}...")
+                    
+                    try:
+                        success = analyzer.analyze_and_push(
+                            news_title=news_title,
+                            news_content=news_content,
+                            source=source
+                        )
+                        if success:
+                            log_crawl(f"✅ {source} 新闻分析并推送成功")
+                        else:
+                            log_crawl(f"❌ {source} 新闻分析或推送失败")
+                    except Exception as e:
+                        logger.error(f"❌ {source} 新闻分析异常: {e}", exc_info=True)
+                    
+                    # 分析间隔
+                    await asyncio.sleep(2)
+            
+            log_crawl("=" * 50)
+            log_crawl("✅ 大模型新闻分析完成")
+            log_crawl("=" * 50)
+        else:
+            log_crawl("❌ 知识库分析器不可用，跳过分析")
+    else:
+        if not all_saved_news:
+            logger.info("大模型分析跳过: 没有新保存的新闻")
+        if not settings.KB_FEISHU_WEBHOOK_URL:
+            logger.info("大模型分析跳过: KB_FEISHU_WEBHOOK_URL 未配置")
 
     return total_saved
 

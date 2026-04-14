@@ -38,6 +38,13 @@ class Settings:
     BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/3d2a80af-aa97-48aa-864e-dec19d48ac08")
     BBC_FEISHU_KEYWORD: str = os.getenv("BBC_FEISHU_KEYWORD", "HOT")
 
+    KB_ACCOUNT_ID: str = os.getenv("KB_ACCOUNT_ID", "2123896104")
+    KB_APIKEY: str = os.getenv("KB_APIKEY", "8ZZGZ1SM19RP0X1991HXDFH674FCPD6H580TZABCZ9SCP5TP6G8060R30C9K60SKA")
+    KB_SERVICE_RESOURCE_ID: str = os.getenv("KB_SERVICE_RESOURCE_ID", "kb-service-97251f0167acebc4")
+    KB_DOMAIN: str = os.getenv("KB_DOMAIN", "api-knowledgebase.mlp.cn-beijing.volces.com")
+    KB_FEISHU_WEBHOOK_URL: str = os.getenv("KB_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/dea274be-df47-4ab7-b69b-ec51de9c3e17")
+    KB_KEYWORD: str = os.getenv("KB_KEYWORD", "Talk")
+
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.IMAGES_DIR.mkdir(exist_ok=True, parents=True)
