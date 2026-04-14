@@ -10,7 +10,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base
 from app.api import news, crawl, filter, logs, feishu, login
-from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier
+from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier
 from app.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,16 @@ if settings.BBC_FEISHU_WEBHOOK_URL:
     print("✅ BBC飞书推送已初始化")
 else:
     print("⚠️ BBC飞书推送未配置 (BBC_FEISHU_WEBHOOK_URL 未设置)")
+
+if settings.EM_FEISHU_WEBHOOK_URL:
+    init_em_feishu_notifier(
+        settings.EM_FEISHU_WEBHOOK_URL,
+        "",
+        settings.EM_FEISHU_KEYWORD
+    )
+    print("✅ 东方财富飞书推送已初始化")
+else:
+    print("⚠️ 东方财富飞书推送未配置 (EM_FEISHU_WEBHOOK_URL 未设置)")
 
 
 @asynccontextmanager

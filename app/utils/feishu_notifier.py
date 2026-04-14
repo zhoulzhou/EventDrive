@@ -106,6 +106,7 @@ class FeishuNotifier:
 _feishu_notifier: Optional[FeishuNotifier] = None
 _nyt_feishu_notifier: Optional[FeishuNotifier] = None
 _bbc_feishu_notifier: Optional[FeishuNotifier] = None
+_em_feishu_notifier: Optional[FeishuNotifier] = None
 
 
 def init_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
@@ -126,6 +127,12 @@ def init_bbc_feishu_notifier(webhook_url: str, secret: str, keyword: str = "HOT"
     logger.info(f"BBC飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
 
 
+def init_em_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
+    global _em_feishu_notifier
+    _em_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
+    logger.info(f"东方财富飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+
+
 def get_feishu_notifier() -> Optional[FeishuNotifier]:
     return _feishu_notifier
 
@@ -136,6 +143,10 @@ def get_nyt_feishu_notifier() -> Optional[FeishuNotifier]:
 
 def get_bbc_feishu_notifier() -> Optional[FeishuNotifier]:
     return _bbc_feishu_notifier
+
+
+def get_em_feishu_notifier() -> Optional[FeishuNotifier]:
+    return _em_feishu_notifier
 
 
 async def notify_new_news(news_list: List[dict], source: str) -> bool:
@@ -154,6 +165,13 @@ async def notify_nyt_news(news_list: List[dict], source: str) -> bool:
 
 async def notify_bbc_news(news_list: List[dict], source: str) -> bool:
     notifier = get_bbc_feishu_notifier()
+    if notifier:
+        return notifier.send_news_notification(news_list, source)
+    return False
+
+
+async def notify_em_news(news_list: List[dict], source: str) -> bool:
+    notifier = get_em_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False

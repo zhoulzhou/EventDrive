@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from app.config import settings
 from app.database import engine, Base
-from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier
+from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier
 from app.scheduler import start_scheduler, stop_scheduler, full_crawl
 
 def signal_handler(signum, frame):
@@ -53,6 +53,16 @@ def main():
         print("✅ BBC飞书推送已初始化")
     else:
         print("⚠️ BBC飞书推送未配置")
+
+    if settings.EM_FEISHU_WEBHOOK_URL:
+        init_em_feishu_notifier(
+            settings.EM_FEISHU_WEBHOOK_URL,
+            "",
+            settings.EM_FEISHU_KEYWORD
+        )
+        print("✅ 东方财富飞书推送已初始化")
+    else:
+        print("⚠️ 东方财富飞书推送未配置")
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

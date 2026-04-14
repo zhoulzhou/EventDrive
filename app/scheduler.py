@@ -16,7 +16,7 @@ from app.crawlers import (
     NewsItem
 )
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_no_news, init_feishu_notifier, init_nyt_feishu_notifier
+from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier
 from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -166,6 +166,9 @@ async def full_crawl():
                     elif 'bbc' in key.lower():
                         display_source = "BBC新闻"
                         notify_func = notify_bbc_news
+                    elif 'eastmoney' in key.lower() or '东方财富' in key:
+                        display_source = "东方财富"
+                        notify_func = notify_em_news
                     else:
                         display_source = key
                         notify_func = notify_new_news

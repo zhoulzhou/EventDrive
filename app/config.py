@@ -38,6 +38,9 @@ class Settings:
     BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/3d2a80af-aa97-48aa-864e-dec19d48ac08")
     BBC_FEISHU_KEYWORD: str = os.getenv("BBC_FEISHU_KEYWORD", "HOT")
 
+    EM_FEISHU_WEBHOOK_URL: str = os.getenv("EM_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/1d418960-b397-428e-9808-f9a36a0e2edf")
+    EM_FEISHU_KEYWORD: str = os.getenv("EM_FEISHU_KEYWORD", "头条")
+
     KB_ACCOUNT_ID: str = os.getenv("KB_ACCOUNT_ID", "2123896104")
     KB_APIKEY: str = os.getenv("KB_APIKEY", "8ZZGZ1SM19RP0X1991HXDFH674FCPD6H580TZABCZ9SCP5TP6G8060R30C9K60SKA")
     KB_SERVICE_RESOURCE_ID: str = os.getenv("KB_SERVICE_RESOURCE_ID", "kb-service-97251f0167acebc4")
