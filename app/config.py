@@ -48,6 +48,10 @@ class Settings:
     KB_FEISHU_WEBHOOK_URL: str = os.getenv("KB_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/dea274be-df47-4ab7-b69b-ec51de9c3e17")
     KB_KEYWORD: str = os.getenv("KB_KEYWORD", "Talk")
 
+    FINNHUB_API_KEY: str = os.getenv("FINNHUB_API_KEY", "d7f34c1r01qi33g87p90d7f34c1r01qi33g87p9g")
+    INDEX_FEISHU_WEBHOOK_URL: str = os.getenv("INDEX_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/5977e5fe-e551-4091-829d-2d1e89edd721")
+    INDEX_KEYWORD: str = os.getenv("INDEX_KEYWORD", "指数")
+
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.IMAGES_DIR.mkdir(exist_ok=True, parents=True)

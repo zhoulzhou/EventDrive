@@ -4,6 +4,7 @@ from .eastmoney_depth import EastmoneyDepthCrawler
 from .kr36_depth import Kr36DepthCrawler
 from .nytimes import NYTCrawler, NYTDepthCrawler
 from .bbc import BBCCrawler
+from .finnhub_index import FinnhubIndexCrawler
 
 __all__ = [
     "BaseCrawler",
@@ -13,5 +14,6 @@ __all__ = [
     "Kr36DepthCrawler",
     "NYTCrawler",
     "NYTDepthCrawler",
-    "BBCCrawler"
+    "BBCCrawler",
+    "FinnhubIndexCrawler"
 ]

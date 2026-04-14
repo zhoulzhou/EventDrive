@@ -13,10 +13,11 @@ from app.crawlers import (
     EastmoneyDepthCrawler,
     NYTDepthCrawler,
     BBCCrawler,
+    FinnhubIndexCrawler,
     NewsItem
 )
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier
+from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier
 from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -108,6 +109,41 @@ async def crawl_single_source(crawler_class):
         return 0, []
     finally:
         db.close()
+
+
+async def crawl_indices():
+    log_crawl("=" * 50)
+    log_crawl("📊 开始执行指数监控任务...")
+    log_crawl("=" * 50)
+
+    try:
+        if settings.INDEX_FEISHU_WEBHOOK_URL:
+            init_index_feishu_notifier(
+                settings.INDEX_FEISHU_WEBHOOK_URL,
+                "",
+                settings.INDEX_KEYWORD
+            )
+            log_crawl("✅ 指数飞书推送已初始化")
+
+        crawler = FinnhubIndexCrawler()
+        alert_message = await crawler.crawl()
+
+        if alert_message and settings.INDEX_FEISHU_WEBHOOK_URL:
+            log_crawl("📤 正在发送指数监控通知...")
+            result = await notify_index_alert(alert_message)
+            log_crawl(f"📤 指数监控通知发送结果: {result}")
+        elif alert_message:
+            log_crawl(f"📊 指数监控结果:\n{alert_message}")
+        else:
+            log_crawl("⚠️ 未获取到指数数据")
+
+        log_crawl("=" * 50)
+        log_crawl("✅ 指数监控任务完成")
+        log_crawl("=" * 50)
+
+    except Exception as e:
+        log_crawl(f"❌ 指数监控任务出错: {str(e)}")
+        logger.error(f"!!! 指数监控任务出错: {e}", exc_info=True)
 
 
 async def full_crawl():
@@ -274,8 +310,15 @@ def start_scheduler():
             name='Crawl at hours divisible by 3',
             replace_existing=True
         )
+        scheduler.add_job(
+            crawl_indices,
+            trigger=CronTrigger(hour='*', minute=0),
+            id='index_crawl_job_1h_intervals',
+            name='Crawl indices every hour',
+            replace_existing=True
+        )
         scheduler.start()
-        logger.info("Scheduler started. Crawl at 0,3,6,9,12,15,18,21 hours.")
+        logger.info("Scheduler started. Crawl at 0,3,6,9,12,15,18,21 hours. Index crawl every hour.")
 
 
 def stop_scheduler():
