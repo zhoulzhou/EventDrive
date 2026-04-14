@@ -75,13 +75,17 @@ class KnowledgeAnalyzer:
         try:
             session = requests.Session()
             req = self._prepare_request("POST", "/api/knowledge/service/chat", request_params)
-            response = session.send(req, timeout=60)
+            response = session.send(req, timeout=180)  # 增加超时时间到 3 分钟
             response.raise_for_status()
             result = response.json()
             
-            analysis_result = result["choices"][0]["message"]["content"]
-            logger.info(f"新闻分析成功: {news_title}")
-            return analysis_result
+            if "data" in result and "generated_answer" in result["data"]:
+                analysis_result = result["data"]["generated_answer"]
+                logger.info(f"新闻分析成功: {news_title}")
+                return analysis_result
+            else:
+                logger.error(f"API 响应结构错误: {result}")
+                return None
         except Exception as e:
             logger.error(f"新闻分析失败: {e}", exc_info=True)
             return None
@@ -133,6 +137,15 @@ class KnowledgeAnalyzer:
             return False
         
         return self.send_to_feishu(news_title, analysis_result, source)
+    
+    def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
+        """
+        只分析新闻，不推送到飞书，返回分析结果
+        """
+        logger.info(f"开始分析新闻: {news_title}")
+        
+        analysis_result = self.analyze_news(news_content, news_title)
+        return analysis_result
 
 
 _analyzer: Optional[KnowledgeAnalyzer] = None

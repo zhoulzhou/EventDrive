@@ -1,0 +1,104 @@
+能对接你 200 个 PDF 知识库、能做新闻深度分析的完整版本
+将分析的结果发送到飞书 https://open.feishu.cn/open-apis/bot/v2/hook/dea274be-df47-4ab7-b69b-ec51de9c3e17
+必须加关键词 Talk
+
+代码如下：
+
+import json
+import requests
+
+# ===================== 【必须修改这4个参数】 =====================
+account_id = "2123896104"
+apikey = "8ZZGZ1SM19RP0X1991HXDFH674FCPD6H580TZABCZ9SCP5TP6G8060R30C9K60SKA"
+service_resource_id = "kb-service-97251f0167acebc4 "
+g_knowledge_base_domain = "api-knowledgebase.mlp.cn-beijing.volces.com"
+# =================================================================
+
+# 新闻内容（你系统自动传入这里）
+news_content = """
+在这里粘贴你要分析的新闻全文
+"""
+
+# 🔥 我们的深度分析Prompt（核心！让AI思考、不摘抄）
+prompt = f"""
+你已完整学习我上传的200个PDF资料库。
+请基于资料库对以下新闻做深度分析与逻辑判断，严格遵守：
+1. 提取新闻核心事实（3-5句）
+2. 提炼资料库中相关逻辑、案例、规则（禁止摘抄原文）
+3. 分析新闻与资料的一致性、矛盾点、原因、影响
+4. 给出明确判断 + 依据
+5. 预测趋势或给出建议
+
+全程：深度思考、逻辑严密、不摘抄、基于资料。
+
+新闻内容：
+{news_content}
+"""
+
+def prepare_request(method, path, data=None):
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json;charset=UTF-8",
+        "Host": g_knowledge_base_domain,
+        "Authorization": f"Bearer {apikey}"
+    }
+    r = Request()
+    r.set_method(method)
+    r.set_headers(headers)
+    r.set_host(g_knowledge_base_domain)
+    r.set_path(path)
+    if data:
+        r.set_body(json.dumps(data))
+    return r
+
+class Request:
+    def __init__(self):
+        self.method = ""
+        self.headers = {}
+        self.host = ""
+        self.path = ""
+        self.body = ""
+
+    def set_method(self, method): self.method = method
+    def set_headers(self, headers): self.headers = headers
+    def set_host(self, host): self.host = host
+    def set_path(self, path): self.path = path
+    def set_body(self, body): self.body = body
+
+def knowledge_service_chat():
+    method = "POST"
+    path = "/api/knowledge/service/chat"
+
+    # 请求参数（已修复）
+    request_params = {
+        "service_resource_id": service_resource_id,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt  # 直接传入带新闻的Prompt
+            }
+        ],
+        "stream": False,
+        "temperature": 0.7,  # 思考强度
+        "top_p": 0.9
+    }
+
+    req = prepare_request(method, path, request_params)
+    url = f"https://{req.host}{req.path}"
+
+    # 发送请求
+    response = requests.request(
+        method=req.method,
+        url=url,
+        headers=req.headers,
+        data=req.body
+    )
+
+    # 输出AI分析结果
+    result = response.json()
+    print("\n===== 新闻深度分析结果 =====\n")
+    print(result["choices"][0]["message"]["content"])
+    return result
+
+if __name__ == "__main__":
+    knowledge_service_chat()

@@ -219,30 +219,34 @@ async def full_crawl():
                     news_by_source[source] = []
                 news_by_source[source].append(news)
             
-            # 每个新闻源分析第一条新闻
+            # 每个新闻源分析前两条新闻
             for source, news_list in news_by_source.items():
                 if news_list:
-                    first_news = news_list[0]
-                    news_title = first_news.get('title', '')
-                    news_content = first_news.get('content', first_news.get('summary', ''))
+                    # 取前两条新闻
+                    news_to_analyze = news_list[:2]
                     
-                    log_crawl(f"🔍 正在分析 {source} 的新闻: {news_title[:50]}...")
-                    
-                    try:
-                        success = analyzer.analyze_and_push(
-                            news_title=news_title,
-                            news_content=news_content,
-                            source=source
-                        )
-                        if success:
-                            log_crawl(f"✅ {source} 新闻分析并推送成功")
-                        else:
-                            log_crawl(f"❌ {source} 新闻分析或推送失败")
-                    except Exception as e:
-                        logger.error(f"❌ {source} 新闻分析异常: {e}", exc_info=True)
-                    
-                    # 分析间隔
-                    await asyncio.sleep(2)
+                    for idx, news in enumerate(news_to_analyze, 1):
+                        news_title = news.get('title', '')
+                        news_content = news.get('content', news.get('summary', ''))
+                        
+                        log_crawl(f"🔍 正在分析 {source} 的第 {idx}/{len(news_to_analyze)} 条新闻: {news_title[:50]}...")
+                        
+                        try:
+                            success = analyzer.analyze_and_push(
+                                news_title=news_title,
+                                news_content=news_content,
+                                source=source
+                            )
+                            if success:
+                                log_crawl(f"✅ {source} 第 {idx} 条新闻分析并推送成功")
+                            else:
+                                log_crawl(f"❌ {source} 第 {idx} 条新闻分析或推送失败")
+                        except Exception as e:
+                            logger.error(f"❌ {source} 第 {idx} 条新闻分析异常: {e}", exc_info=True)
+                        
+                        # 分析间隔
+                        if idx < len(news_to_analyze):
+                            await asyncio.sleep(2)
             
             log_crawl("=" * 50)
             log_crawl("✅ 大模型新闻分析完成")
