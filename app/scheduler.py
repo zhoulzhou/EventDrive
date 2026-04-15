@@ -18,7 +18,7 @@ from app.crawlers import (
 )
 from app.utils.image_downloader import download_image
 from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier
-from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
+from app.utils.knowledge_analyzer import init_knowledge_analyzer_with_ak_sk, get_knowledge_analyzer
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -247,11 +247,12 @@ async def full_crawl():
         log_crawl("🧠 开始大模型新闻分析...")
         log_crawl("=" * 50)
         
-        # 初始化知识库分析器
+        # 初始化知识库分析器（使用AK/SK认证）
         try:
-            init_knowledge_analyzer(
-                api_key=settings.KB_APIKEY,
-                kb_service_id=settings.KB_SERVICE_ID,
+            init_knowledge_analyzer_with_ak_sk(
+                ak=settings.KB_AK,
+                sk=settings.KB_SK,
+                model_id=settings.KB_MODEL_ID,
                 region=settings.KB_REGION,
                 feishu_webhook_url=settings.KB_FEISHU_WEBHOOK_URL,
                 keyword=settings.KB_KEYWORD
