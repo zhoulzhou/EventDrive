@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 import httpx
 from app.crawlers.base import BaseCrawler, NewsItem
 from app.utils.anti_crawl import random_delay
+from app.config import settings
 
 
 class NYTCrawler(BaseCrawler):
@@ -11,7 +12,7 @@ class NYTCrawler(BaseCrawler):
 
     def __init__(self):
         super().__init__()
-        self.api_key = "uXnQUhc3Y1pGqIDcd7u9F2A9h41SrfolGf2wBGCsN3A0KYyx"
+        self.api_key = settings.NYT_API_KEY
         self.wire_api_url = "https://api.nytimes.com/svc/news/v3/content/all/all.json"
         self.topstories_api_url = "https://api.nytimes.com/svc/topstories/v2/home.json"
 
@@ -194,7 +195,7 @@ class NYTDepthCrawler(BaseCrawler):
 
     def __init__(self):
         super().__init__()
-        self.api_key = "uXnQUhc3Y1pGqIDcd7u9F2A9h41SrfolGf2wBGCsN3A0KYyx"
+        self.api_key = settings.NYT_API_KEY
         self.wire_api_url = "https://api.nytimes.com/svc/news/v3/content/all/all.json"
         self.topstories_api_url = "https://api.nytimes.com/svc/topstories/v2/home.json"
 

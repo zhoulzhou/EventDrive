@@ -176,7 +176,16 @@ async def full_crawl():
 
     duration = int((datetime.now() - start_time).total_seconds())
     log_crawl("=" * 50)
-    log_crawl(f"✅ 抓取完成! 总共保存: {total_saved} 条, 耗时: {duration}秒")
+    log_crawl(f"✅ 前 {len(crawlers)} 个新闻源抓取完成! 保存: {total_saved} 条, 耗时: {duration}秒")
+    log_crawl("=" * 50)
+
+    # ==================== 第5个新闻源: Finnhub 指数监控 ====================
+    log_crawl("=" * 50)
+    log_crawl("📊 开始第 5 个新闻源: Finnhub 指数监控...")
+    log_crawl("=" * 50)
+    await crawl_indices()
+    log_crawl("=" * 50)
+    log_crawl("✅ Finnhub 指数监控完成")
     log_crawl("=" * 50)
 
     if settings.FEISHU_WEBHOOK_URL:

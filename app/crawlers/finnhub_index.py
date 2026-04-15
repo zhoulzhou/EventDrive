@@ -131,13 +131,20 @@ class FinnhubIndexCrawler:
     async def crawl(self):
         self.alert_messages = []
         has_alert = False
-        logger.info("开始指数监控...")
+        logger.info("=" * 50)
+        logger.info("📊 开始指数监控任务...")
+        logger.info("=" * 50)
 
         ndx_symbol = "NDX"
         vix_symbol = "VIX"
 
+        logger.info(f"🔍 正在获取 {ndx_symbol} 和 {vix_symbol} 指数数据...")
+
         ndx_quote = await self.fetch_quote(ndx_symbol)
+        logger.info(f"📈 NDX 报价响应: {ndx_quote}")
+
         vix_quote = await self.fetch_quote(vix_symbol)
+        logger.info(f"📈 VIX 报价响应: {vix_quote}")
 
         ndx_alert_level = None
         vix_alert_level = None
@@ -145,54 +152,59 @@ class FinnhubIndexCrawler:
 
         if ndx_quote and ndx_quote.get("c", 0) > 0:
             current_price = ndx_quote["c"]
+            logger.info(f"📊 NDX 当前价格: {current_price}")
+
             year_start_price = await self.fetch_year_start_price(ndx_symbol)
-            
+            logger.info(f"📅 NDX 年初价格: {year_start_price}")
+
             high_result = self.update_index_high(ndx_symbol, current_price)
             ndx_high_updated = high_result.get('updated', False) if high_result else False
-            
+
             if year_start_price:
                 drop_percent = ((year_start_price - current_price) / year_start_price) * 100
                 ndx_alert_level = self.get_ndx_alert_level(drop_percent)
-                
+
                 self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
                 self.alert_messages.append(f"   当前价格: {current_price:.2f}")
                 self.alert_messages.append(f"   年初价格: {year_start_price:.2f}")
                 self.alert_messages.append(f"   年内涨跌幅: { -drop_percent:.2f}%")
-                
+
                 if high_result:
                     self.alert_messages.append(f"   历史高点: {high_result['new_high']}")
                     if ndx_high_updated:
                         self.alert_messages.append(f"   🎉 突破历史新高! (前高: {high_result['old_high']})")
-                
-                if alert_level:
-                    self.alert_messages.append(f"   {alert_level}: 年内下跌 {drop_percent:.2f}%")
+
+                if ndx_alert_level:
+                    self.alert_messages.append(f"   {ndx_alert_level}: 年内下跌 {drop_percent:.2f}%")
                     has_alert = True
                 else:
                     self.alert_messages.append(f"   🟢 正常")
             else:
                 self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
                 self.alert_messages.append(f"   当前价格: {current_price:.2f}")
-                
+
                 if high_result:
                     self.alert_messages.append(f"   历史高点: {high_result['new_high']}")
                     if ndx_high_updated:
                         self.alert_messages.append(f"   🎉 突破历史新高! (前高: {high_result['old_high']})")
-                
+
                 self.alert_messages.append(f"   警告: 无法获取年初价格")
 
         if vix_quote and vix_quote.get("c", 0) > 0:
             vix_value = vix_quote["c"]
             vix_alert_level = self.get_vix_alert_level(vix_value)
-            
+
             self.alert_messages.append("")
             self.alert_messages.append(f"📈 VIX 恐慌指数 (VIX)")
             self.alert_messages.append(f"   当前值: {vix_value:.2f}")
-            
+
             if vix_alert_level:
                 self.alert_messages.append(f"   {vix_alert_level}")
                 has_alert = True
             else:
                 self.alert_messages.append(f"   🟢 正常")
+
+        logger.info(f"🔔 指数警报状态: has_alert={has_alert}, ndx_high_updated={ndx_high_updated}")
 
         should_push = has_alert or ndx_high_updated or (len(self.alert_messages) > 0)
 
@@ -201,10 +213,16 @@ class FinnhubIndexCrawler:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             header = f"【{settings.INDEX_KEYWORD}】指数监控报告 - {now}"
             full_message = header + "\n\n" + "\n".join(self.alert_messages)
-            logger.info(f"指数监控结果:\n{full_message}")
+            logger.info(f"📋 指数监控结果:\n{full_message}")
+            logger.info("=" * 50)
+            logger.info("✅ 指数监控任务完成")
+            logger.info("=" * 50)
             return full_message
-        
-        logger.info("指数无数据，不推送飞书消息")
+
+        logger.info("ℹ️ 指数无明显变化，不推送飞书消息")
+        logger.info("=" * 50)
+        logger.info("✅ 指数监控任务完成")
+        logger.info("=" * 50)
         return None
 
     def close(self):
