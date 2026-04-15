@@ -1,6 +1,6 @@
 import logging
+import requests
 from typing import Optional
-from volcenginesdkarkruntime import Ark
 
 logger = logging.getLogger(__name__)
 
@@ -10,33 +10,28 @@ class KnowledgeAnalyzer:
         self,
         ak: str,
         sk: str,
-        model_id: str,
-        region: str = "cn-beijing",
         feishu_webhook_url: str = "",
         keyword: str = "Talk"
     ):
         self.ak = ak
         self.sk = sk
-        self.model_id = model_id
-        self.region = region
+        self.model = "doubao-1-5-pro-32k-250115"
+        self.url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
 
-        self.client = Ark(ak=ak, sk=sk, project_name="default")
-
     def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
         """
-        使用豆包大模型分析新闻
+        使用豆包大模型分析新闻（原生requests方式）
         输出：核心事实 + 事件背景 + 各方动机 + 潜在影响 + 趋势判断
         """
-        prompt = f"""你是资深国际新闻分析师，请严格按以下结构输出，不冗余、不编造、不跑偏。
+        prompt = f"""你是专业新闻分析师，严格按以下5点输出，不废话、不编造、不跑偏：
 
-输出必须包含5个部分，每个部分独立成段，不交叉、不混淆：
-1. 核心事实（3句话以内，仅客观陈述，无主观判断）
-2. 事件背景（1-2句话，梳理历史脉络与前提，贴合新闻本身）
-3. 各方动机（明确核心相关方，分别说明利益诉求与出发点）
-4. 潜在影响（分2-3点，说明对相关方、地区局势的直接/间接影响）
-5. 趋势判断（1-2个合理预测，不绝对化、不臆测）
+1. 核心事实（3句话内）
+2. 事件背景
+3. 各方动机
+4. 潜在影响
+5. 趋势判断
 
 新闻标题：{news_title}
 新闻内容：
@@ -44,21 +39,41 @@ class KnowledgeAnalyzer:
 """
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_id,
-                messages=[{"role": "user", "content": prompt}],
-                stream=False,
-                temperature=0.6
+            headers = {
+                "Content-Type": "application/json"
+            }
+
+            data = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "temperature": 0.6
+            }
+
+            auth = (self.ak, self.sk)
+
+            response = requests.post(
+                self.url,
+                headers=headers,
+                json=data,
+                auth=auth,
+                timeout=30
             )
 
-            usage = response.usage
-            logger.info(f"✅ 分析完成 | 输入token: {usage.prompt_tokens} | 输出token: {usage.completion_tokens} | 总消耗: {usage.total_tokens}")
+            if response.status_code == 200:
+                result = response.json()
+                if "choices" in result and len(result["choices"]) > 0:
+                    logger.info(f"新闻分析成功: {news_title}")
+                    return result["choices"][0]["message"]["content"]
+                else:
+                    logger.error(f"API 响应结构错误: {result}")
+                    return None
+            else:
+                logger.error(f"分析失败 {response.status_code}: {response.text}")
+                return None
 
-            analysis_result = response.choices[0].message.content
-            logger.info(f"新闻分析成功: {news_title}")
-            return analysis_result
         except Exception as e:
-            logger.error(f"新闻分析失败: {e}", exc_info=True)
+            logger.error(f"新闻分析出错: {str(e)}", exc_info=True)
             return None
 
     def send_to_feishu(self, news_title: str, analysis_result: str, source: str = "") -> bool:
@@ -88,7 +103,6 @@ class KnowledgeAnalyzer:
         }
 
         try:
-            import requests
             response = requests.post(self.feishu_webhook_url, json=payload, timeout=10)
             result = response.json()
             if result.get("code") == 0:
@@ -142,7 +156,7 @@ def init_knowledge_analyzer(
 def init_knowledge_analyzer_with_ak_sk(
     ak: str,
     sk: str,
-    model_id: str,
+    model_id: str = "doubao-1-5-pro-32k-250115",
     region: str = "cn-beijing",
     feishu_webhook_url: str = "",
     keyword: str = "Talk"
@@ -151,12 +165,10 @@ def init_knowledge_analyzer_with_ak_sk(
     _analyzer = KnowledgeAnalyzer(
         ak=ak,
         sk=sk,
-        model_id=model_id,
-        region=region,
         feishu_webhook_url=feishu_webhook_url,
         keyword=keyword
     )
-    logger.info(f"豆包大模型分析器已初始化，模型ID: '{model_id}', 区域: '{region}'")
+    logger.info(f"豆包大模型分析器已初始化，模型: '{model_id}', 区域: '{region}'")
 
 
 def get_knowledge_analyzer() -> Optional[KnowledgeAnalyzer]:
