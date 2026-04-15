@@ -4,17 +4,21 @@ import logging
 from datetime import datetime, date
 from typing import Dict, Any, Optional
 from app.config import settings
+from app.database import SessionLocal
+from app import crud, schemas
 
 logger = logging.getLogger(__name__)
 
 
 class FinnhubIndexCrawler:
     source_name = "Finnhub 指数"
+    NDX_INITIAL_HIGH = 26011.75
 
     def __init__(self):
         self.api_key = settings.FINNHUB_API_KEY
         self.base_url = "https://finnhub.io/api/v1"
         self.alert_messages = []
+        self.db = SessionLocal()
 
     async def fetch_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         url = f"{self.base_url}/quote"
@@ -110,8 +114,23 @@ class FinnhubIndexCrawler:
             return "🟠 恐慌预警"
         return None
 
+    def update_index_high(self, symbol: str, current_price: float) -> Optional[Dict[str, Any]]:
+        try:
+            index_high = crud.get_or_create_index_high(self.db, symbol, self.NDX_INITIAL_HIGH)
+            if current_price > index_high.high_price:
+                updated = crud.update_index_high(self.db, symbol, current_price)
+                logger.info(f"{symbol} 历史高点更新: {index_high.high_price} -> {current_price}")
+                return {"updated": True, "old_high": index_high.high_price, "new_high": current_price}
+            else:
+                logger.info(f"{symbol} 历史高点未更新: 当前 {current_price} <= 历史高点 {index_high.high_price}")
+                return {"updated": False, "old_high": index_high.high_price, "new_high": index_high.high_price}
+        except Exception as e:
+            logger.error(f"更新 {symbol} 历史高点失败: {e}", exc_info=True)
+            return None
+
     async def crawl(self):
         self.alert_messages = []
+        has_alert = False
         logger.info("开始指数监控...")
 
         ndx_symbol = "NDX"
@@ -120,38 +139,64 @@ class FinnhubIndexCrawler:
         ndx_quote = await self.fetch_quote(ndx_symbol)
         vix_quote = await self.fetch_quote(vix_symbol)
 
+        ndx_alert_level = None
+        vix_alert_level = None
+        ndx_high_updated = False
+
         if ndx_quote and ndx_quote.get("c", 0) > 0:
             current_price = ndx_quote["c"]
             year_start_price = await self.fetch_year_start_price(ndx_symbol)
             
+            high_result = self.update_index_high(ndx_symbol, current_price)
+            ndx_high_updated = high_result.get('updated', False) if high_result else False
+            
             if year_start_price:
                 drop_percent = ((year_start_price - current_price) / year_start_price) * 100
-                alert_level = self.get_ndx_alert_level(drop_percent)
+                ndx_alert_level = self.get_ndx_alert_level(drop_percent)
                 
                 self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
                 self.alert_messages.append(f"   当前价格: {current_price:.2f}")
                 self.alert_messages.append(f"   年初价格: {year_start_price:.2f}")
                 self.alert_messages.append(f"   年内涨跌幅: { -drop_percent:.2f}%")
                 
+                if high_result:
+                    self.alert_messages.append(f"   历史高点: {high_result['new_high']}")
+                    if ndx_high_updated:
+                        self.alert_messages.append(f"   🎉 突破历史新高! (前高: {high_result['old_high']})")
+                
                 if alert_level:
                     self.alert_messages.append(f"   {alert_level}: 年内下跌 {drop_percent:.2f}%")
+                    has_alert = True
+                else:
+                    self.alert_messages.append(f"   🟢 正常")
             else:
                 self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
                 self.alert_messages.append(f"   当前价格: {current_price:.2f}")
+                
+                if high_result:
+                    self.alert_messages.append(f"   历史高点: {high_result['new_high']}")
+                    if ndx_high_updated:
+                        self.alert_messages.append(f"   🎉 突破历史新高! (前高: {high_result['old_high']})")
+                
                 self.alert_messages.append(f"   警告: 无法获取年初价格")
 
         if vix_quote and vix_quote.get("c", 0) > 0:
             vix_value = vix_quote["c"]
-            alert_level = self.get_vix_alert_level(vix_value)
+            vix_alert_level = self.get_vix_alert_level(vix_value)
             
             self.alert_messages.append("")
             self.alert_messages.append(f"📈 VIX 恐慌指数 (VIX)")
             self.alert_messages.append(f"   当前值: {vix_value:.2f}")
             
-            if alert_level:
-                self.alert_messages.append(f"   {alert_level}")
+            if vix_alert_level:
+                self.alert_messages.append(f"   {vix_alert_level}")
+                has_alert = True
+            else:
+                self.alert_messages.append(f"   🟢 正常")
 
-        if self.alert_messages:
+        should_push = has_alert or ndx_high_updated or (len(self.alert_messages) > 0)
+
+        if self.alert_messages and should_push:
             from datetime import datetime
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             header = f"【{settings.INDEX_KEYWORD}】指数监控报告 - {now}"
@@ -159,4 +204,8 @@ class FinnhubIndexCrawler:
             logger.info(f"指数监控结果:\n{full_message}")
             return full_message
         
+        logger.info("指数无数据，不推送飞书消息")
         return None
+
+    def close(self):
+        self.db.close()
