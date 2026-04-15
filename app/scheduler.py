@@ -18,7 +18,7 @@ from app.crawlers import (
 )
 from app.utils.image_downloader import download_image
 from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier
-from app.utils.knowledge_analyzer import init_knowledge_analyzer_with_ak_sk, get_knowledge_analyzer
+from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -247,17 +247,14 @@ async def full_crawl():
         log_crawl("🧠 开始大模型新闻分析...")
         log_crawl("=" * 50)
         
-        # 初始化知识库分析器（使用AK/SK认证）
+        # 初始化 OpenRouter 大模型分析器
         try:
-            init_knowledge_analyzer_with_ak_sk(
-                ak=settings.KB_AK,
-                sk=settings.KB_SK,
-                model_id=settings.KB_MODEL_ID,
-                region=settings.KB_REGION,
+            init_knowledge_analyzer(
+                api_key=settings.OPENROUTER_API_KEY,
                 feishu_webhook_url=settings.KB_FEISHU_WEBHOOK_URL,
                 keyword=settings.KB_KEYWORD
             )
-            log_crawl("✅ 知识库分析器初始化完成")
+            log_crawl("✅ OpenRouter 大模型分析器初始化完成")
         except Exception as e:
             logger.error(f"❌ 知识库分析器初始化失败: {e}", exc_info=True)
         

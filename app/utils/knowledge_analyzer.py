@@ -8,60 +8,50 @@ logger = logging.getLogger(__name__)
 class KnowledgeAnalyzer:
     def __init__(
         self,
-        ak: str,
-        sk: str,
+        api_key: str,
         feishu_webhook_url: str = "",
         keyword: str = "Talk"
     ):
-        self.ak = ak
-        self.sk = sk
-        self.model = "doubao-1-5-pro-32k-250115"
-        self.url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        self.api_key = api_key
+        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
+        self.model = "qwen/qwen3.6-plus-preview:free"
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
 
     def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
         """
-        使用豆包大模型分析新闻（原生requests方式）
+        使用 OpenRouter + Qwen3.6 分析新闻
         输出：核心事实 + 事件背景 + 各方动机 + 潜在影响 + 趋势判断
         """
-        prompt = f"""你是专业新闻分析师，严格按以下5点输出，不废话、不编造、不跑偏：
+        prompt = f"""你是专业新闻分析师，严格按5点输出：
+1.核心事实 2.事件背景 3.各方动机 4.潜在影响 5.趋势判断
 
-1. 核心事实（3句话内）
-2. 事件背景
-3. 各方动机
-4. 潜在影响
-5. 趋势判断
-
-新闻标题：{news_title}
-新闻内容：
+标题：{news_title}
+内容：
 {news_content}
 """
 
         try:
-            headers = {
-                "Content-Type": "application/json"
-            }
+            session = requests.Session()
+            session.trust_env = False
 
-            data = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "temperature": 0.6
-            }
-
-            auth = (self.ak, self.sk)
-
-            response = requests.post(
-                self.url,
-                headers=headers,
-                json=data,
-                auth=auth,
-                timeout=30
+            resp = session.post(
+                self.base_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.6,
+                    "stream": False
+                },
+                timeout=45
             )
 
-            if response.status_code == 200:
-                result = response.json()
+            if resp.status_code == 200:
+                result = resp.json()
                 if "choices" in result and len(result["choices"]) > 0:
                     logger.info(f"新闻分析成功: {news_title}")
                     return result["choices"][0]["message"]["content"]
@@ -69,7 +59,7 @@ class KnowledgeAnalyzer:
                     logger.error(f"API 响应结构错误: {result}")
                     return None
             else:
-                logger.error(f"分析失败 {response.status_code}: {response.text}")
+                logger.error(f"分析失败 {resp.status_code}: {resp.text[:100]}")
                 return None
 
         except Exception as e:
@@ -143,14 +133,16 @@ _analyzer: Optional[KnowledgeAnalyzer] = None
 
 def init_knowledge_analyzer(
     api_key: str,
-    kb_service_id: str,
-    region: str = "cn-beijing",
     feishu_webhook_url: str = "",
     keyword: str = "Talk"
 ):
     global _analyzer
-    logger.error("init_knowledge_analyzer 参数错误：现在需要使用 AK/SK 认证方式")
-    logger.error("请使用 init_knowledge_analyzer_with_ak_sk() 函数")
+    _analyzer = KnowledgeAnalyzer(
+        api_key=api_key,
+        feishu_webhook_url=feishu_webhook_url,
+        keyword=keyword
+    )
+    logger.info(f"OpenRouter 大模型分析器已初始化，模型: qwen/qwen3.6-plus-preview:free")
 
 
 def init_knowledge_analyzer_with_ak_sk(
@@ -162,13 +154,7 @@ def init_knowledge_analyzer_with_ak_sk(
     keyword: str = "Talk"
 ):
     global _analyzer
-    _analyzer = KnowledgeAnalyzer(
-        ak=ak,
-        sk=sk,
-        feishu_webhook_url=feishu_webhook_url,
-        keyword=keyword
-    )
-    logger.info(f"豆包大模型分析器已初始化，模型: '{model_id}', 区域: '{region}'")
+    logger.warning("init_knowledge_analyzer_with_ak_sk 已弃用，请使用 init_knowledge_analyzer()")
 
 
 def get_knowledge_analyzer() -> Optional[KnowledgeAnalyzer]:

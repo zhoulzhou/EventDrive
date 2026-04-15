@@ -42,10 +42,7 @@ class Settings:
     EM_FEISHU_WEBHOOK_URL: str = os.getenv("EM_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/1d418960-b397-428e-9808-f9a36a0e2edf")
     EM_FEISHU_KEYWORD: str = os.getenv("EM_FEISHU_KEYWORD", "头条")
 
-    KB_AK: str = os.getenv("KB_AK", "")
-    KB_SK: str = os.getenv("KB_SK", "")
-    KB_MODEL_ID: str = os.getenv("KB_MODEL_ID", "doubao-1-5-pro-32k-250115")
-    KB_REGION: str = os.getenv("KB_REGION", "cn-beijing")
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     KB_FEISHU_WEBHOOK_URL: str = os.getenv("KB_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/dea274be-df47-4ab7-b69b-ec51de9c3e17")
     KB_KEYWORD: str = os.getenv("KB_KEYWORD", "Talk")
 
