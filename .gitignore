@@ -26,7 +26,7 @@ ENV/
 htmlcov/
 
 # Environment
-# .env  # 临时上传，后续删除
+.env
 .env.local
 
 # Database
