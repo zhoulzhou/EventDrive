@@ -14,7 +14,7 @@ class KnowledgeAnalyzer:
     ):
         self.api_key = api_key
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
-        self.model = "google/gemini-2.0-flash-lite"
+        self.model = "deepseek-chat-v3"
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
 
