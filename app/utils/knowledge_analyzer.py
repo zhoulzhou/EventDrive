@@ -14,7 +14,7 @@ class KnowledgeAnalyzer:
     ):
         self.api_key = api_key
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
-        self.model = "qwen/qwen3.6-plus-preview:free"
+        self.model = "deepseek/deepseek-r1:free"
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
 
