@@ -22,7 +22,7 @@ class KnowledgeAnalyzer:
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
 
-        self.client = Ark(ak=ak, sk=sk)
+        self.client = Ark(ak=ak, sk=sk, project_name="default")
 
     def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
         """
