@@ -6,8 +6,8 @@
 import asyncio
 from app.config import settings
 from app.database import engine, Base, SessionLocal
-from app.models import News, FilterRule, CrawlLog
-from app import crud
+from app.models import News, FilterRule, CrawlLog, IndexHigh
+from app import crud, schemas
 
 
 async def init_db():
@@ -25,8 +25,7 @@ async def init_db():
             print("创建默认筛选规则...")
             crud.create_filter_rule(
                 db,
-                include_keywords="",
-                exclude_keywords=""
+                schemas.FilterRuleCreate(include_keywords="", exclude_keywords="")
             )
             print("默认筛选规则创建成功！")
         else:

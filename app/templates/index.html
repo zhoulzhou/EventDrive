@@ -123,7 +123,7 @@ async function pushToFeishu() {
     btn.textContent = '推送中...';
 
     try {
-        const response = await fetch('/api/feishu/push', {
+        const response = await fetchWithAuth('/api/feishu/push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });

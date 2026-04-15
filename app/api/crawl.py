@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import crud, schemas
 from app.scheduler import full_crawl, set_crawl_progress_callback
+from app.api.login import require_auth
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ async def trigger_crawl():
 
 
 @router.get("/crawl/status")
-def get_crawl_status(db: Session = Depends(get_db)):
+def get_crawl_status(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     latest_log = crud.get_latest_crawl_log(db)
 
     response = {

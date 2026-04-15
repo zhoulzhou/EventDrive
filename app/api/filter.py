@@ -3,12 +3,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import crud, schemas
+from app.api.login import require_auth
 
 router = APIRouter()
 
 
 @router.get("/filter/rules", response_model=schemas.FilterRule)
-def get_filter_rules(db: Session = Depends(get_db)):
+def get_filter_rules(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     rule = crud.get_latest_filter_rule(db)
     if rule is None:
         rule = crud.create_filter_rule(db, schemas.FilterRuleCreate())
@@ -18,7 +19,8 @@ def get_filter_rules(db: Session = Depends(get_db)):
 @router.put("/filter/rules", response_model=schemas.FilterRule)
 def update_filter_rules(
     rule_update: schemas.FilterRuleUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    auth: bool = Depends(require_auth)
 ):
     latest_rule = crud.get_latest_filter_rule(db)
     if latest_rule:

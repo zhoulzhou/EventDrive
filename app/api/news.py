@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import crud, schemas
+from app.api.login import require_auth
 
 router = APIRouter()
 
@@ -15,7 +16,8 @@ def get_news_list(
     source: Optional[str] = None,
     include_keywords: Optional[str] = None,
     exclude_keywords: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    auth: bool = Depends(require_auth)
 ):
     include_kw_list = None
     if include_keywords:
@@ -35,7 +37,7 @@ def get_news_list(
 
 
 @router.get("/news/{news_id}", response_model=schemas.News)
-def get_news_detail(news_id: int, db: Session = Depends(get_db)):
+def get_news_detail(news_id: int, db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     news = crud.get_news(db, news_id=news_id)
     if news is None:
         raise HTTPException(status_code=404, detail="News not found")

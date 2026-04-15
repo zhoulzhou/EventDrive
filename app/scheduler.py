@@ -116,6 +116,7 @@ async def crawl_indices():
     log_crawl("📊 开始执行指数监控任务...")
     log_crawl("=" * 50)
 
+    crawler = None
     try:
         if settings.INDEX_FEISHU_WEBHOOK_URL:
             init_index_feishu_notifier(
@@ -144,6 +145,9 @@ async def crawl_indices():
     except Exception as e:
         log_crawl(f"❌ 指数监控任务出错: {str(e)}")
         logger.error(f"!!! 指数监控任务出错: {e}", exc_info=True)
+    finally:
+        if crawler:
+            crawler.close()
 
 
 async def full_crawl():
@@ -237,10 +241,9 @@ async def full_crawl():
         # 初始化知识库分析器
         try:
             init_knowledge_analyzer(
-                account_id=str(settings.KB_ACCOUNT_ID),
-                apikey=settings.KB_APIKEY,
-                service_resource_id=settings.KB_SERVICE_RESOURCE_ID,
-                knowledge_base_domain=settings.KB_DOMAIN,
+                api_key=settings.KB_APIKEY,
+                kb_service_id=settings.KB_SERVICE_ID,
+                region=settings.KB_REGION,
                 feishu_webhook_url=settings.KB_FEISHU_WEBHOOK_URL,
                 keyword=settings.KB_KEYWORD
             )

@@ -9,35 +9,18 @@ logger = logging.getLogger(__name__)
 class KnowledgeAnalyzer:
     def __init__(
         self,
-        account_id: str,
-        apikey: str,
-        service_resource_id: str,
-        knowledge_base_domain: str,
-        feishu_webhook_url: str,
+        api_key: str,
+        kb_service_id: str,
+        region: str = "cn-beijing",
+        feishu_webhook_url: str = "",
         keyword: str = "Talk"
     ):
-        self.account_id = account_id
-        self.apikey = apikey
-        self.service_resource_id = service_resource_id
-        self.knowledge_base_domain = knowledge_base_domain
+        self.api_key = api_key
+        self.kb_service_id = kb_service_id
+        self.region = region
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
-
-    def _prepare_request(self, method: str, path: str, data: Optional[Dict] = None) -> requests.Request:
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json;charset=UTF-8",
-            "Host": self.knowledge_base_domain,
-            "Authorization": f"Bearer {self.apikey}"
-        }
-        
-        req = requests.Request(
-            method=method,
-            url=f"https://{self.knowledge_base_domain}{path}",
-            headers=headers,
-            json=data if data else None
-        )
-        return req.prepare()
+        self.api_url = f"https://ark.{region}.volces.com/api/v3/chat/completions"
 
     def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
         """
@@ -59,28 +42,30 @@ class KnowledgeAnalyzer:
 {news_content}
 """
 
-        request_params = {
-            "service_resource_id": self.service_resource_id,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            "stream": False,
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "model": self.kb_service_id,
+            "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7,
-            "top_p": 0.9
+            "stream": False
         }
 
         try:
-            session = requests.Session()
-            req = self._prepare_request("POST", "/api/knowledge/service/chat", request_params)
-            response = session.send(req, timeout=180)  # 增加超时时间到 3 分钟
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                json=data,
+                timeout=180
+            )
             response.raise_for_status()
             result = response.json()
-            
-            if "data" in result and "generated_answer" in result["data"]:
-                analysis_result = result["data"]["generated_answer"]
+
+            if "choices" in result and len(result["choices"]) > 0:
+                analysis_result = result["choices"][0]["message"]["content"]
                 logger.info(f"新闻分析成功: {news_title}")
                 return analysis_result
             else:
@@ -94,6 +79,10 @@ class KnowledgeAnalyzer:
         """
         将分析结果发送到飞书
         """
+        if not self.feishu_webhook_url:
+            logger.warning("飞书 webhook 未配置")
+            return False
+
         content_lines = [
             f"【{self.keyword}】📰 新闻深度分析",
             f"来源: {source}" if source else "",
@@ -102,16 +91,16 @@ class KnowledgeAnalyzer:
             "===== 分析结果 =====",
             analysis_result
         ]
-        
+
         content = "\n".join([line for line in content_lines if line])
-        
+
         payload = {
             "msg_type": "text",
             "content": {
                 "text": content
             }
         }
-        
+
         try:
             response = requests.post(self.feishu_webhook_url, json=payload, timeout=10)
             result = response.json()
@@ -130,20 +119,20 @@ class KnowledgeAnalyzer:
         分析新闻并推送到飞书
         """
         logger.info(f"开始分析新闻: {news_title}")
-        
+
         analysis_result = self.analyze_news(news_content, news_title)
         if not analysis_result:
             logger.error("新闻分析失败，跳过推送")
             return False
-        
+
         return self.send_to_feishu(news_title, analysis_result, source)
-    
+
     def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
         """
         只分析新闻，不推送到飞书，返回分析结果
         """
         logger.info(f"开始分析新闻: {news_title}")
-        
+
         analysis_result = self.analyze_news(news_content, news_title)
         return analysis_result
 
@@ -152,23 +141,21 @@ _analyzer: Optional[KnowledgeAnalyzer] = None
 
 
 def init_knowledge_analyzer(
-    account_id: str,
-    apikey: str,
-    service_resource_id: str,
-    knowledge_base_domain: str,
-    feishu_webhook_url: str,
+    api_key: str,
+    kb_service_id: str,
+    region: str = "cn-beijing",
+    feishu_webhook_url: str = "",
     keyword: str = "Talk"
 ):
     global _analyzer
     _analyzer = KnowledgeAnalyzer(
-        account_id=account_id,
-        apikey=apikey,
-        service_resource_id=service_resource_id,
-        knowledge_base_domain=knowledge_base_domain,
+        api_key=api_key,
+        kb_service_id=kb_service_id,
+        region=region,
         feishu_webhook_url=feishu_webhook_url,
         keyword=keyword
     )
-    logger.info(f"知识库分析器已初始化，关键词: '{keyword}'")
+    logger.info(f"知识库分析器已初始化，知识库ID: '{kb_service_id}', 区域: '{region}'")
 
 
 def get_knowledge_analyzer() -> Optional[KnowledgeAnalyzer]:

@@ -49,7 +49,7 @@
 <script>
 async function loadRules() {
     try {
-        const response = await fetch('/api/filter/rules');
+        const response = await fetchWithAuth('/api/filter/rules');
         const data = await response.json();
         document.getElementById('includeKeywords').value = data.include_keywords || '';
         document.getElementById('excludeKeywords').value = data.exclude_keywords || '';
@@ -71,8 +71,8 @@ async function saveRules(event) {
     const excludeKeywords = document.getElementById('excludeKeywords').value;
     
     try {
-        const response = await fetch('/api/filter/rules', {
-            method: 'POST',
+        const response = await fetchWithAuth('/api/filter/rules', {
+            method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
             },

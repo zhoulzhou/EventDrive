@@ -23,10 +23,10 @@ async function loadLogs(page = 1) {
     currentPage = page;
     
     try {
-        const response = await fetch(`/api/logs?page=${page}&page_size=${pageSize}`);
+        const response = await fetchWithAuth(`/api/logs?skip=${(page - 1) * pageSize}&limit=${pageSize}`);
         const data = await response.json();
-        renderLogsList(data.logs);
-        renderPagination(data.total, data.page, data.page_size);
+        renderLogsList(data);
+        renderPagination(data.length, page, pageSize);
     } catch (error) {
         console.error('加载日志失败:', error);
     }
@@ -34,7 +34,7 @@ async function loadLogs(page = 1) {
 
 function renderLogsList(logs) {
     const container = document.getElementById('logsList');
-    if (logs.length === 0) {
+    if (!logs || logs.length === 0) {
         container.innerHTML = '<div class="empty-state">暂无抓取日志</div>';
         return;
     }

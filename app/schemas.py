@@ -83,3 +83,24 @@ class CrawlLog(CrawlLogBase):
     crawl_time: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class IndexHighBase(BaseModel):
+    symbol: str
+    high_price: float
+
+
+class IndexHighCreate(IndexHighBase):
+    pass
+
+
+class IndexHighUpdate(BaseModel):
+    high_price: Optional[float] = None
+
+
+class IndexHigh(IndexHighBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

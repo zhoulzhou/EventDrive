@@ -41,10 +41,9 @@ class Settings:
     EM_FEISHU_WEBHOOK_URL: str = os.getenv("EM_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/1d418960-b397-428e-9808-f9a36a0e2edf")
     EM_FEISHU_KEYWORD: str = os.getenv("EM_FEISHU_KEYWORD", "头条")
 
-    KB_ACCOUNT_ID: str = os.getenv("KB_ACCOUNT_ID", "2123896104")
     KB_APIKEY: str = os.getenv("KB_APIKEY", "8ZZGZ1SM19RP0X1991HXDFH674FCPD6H580TZABCZ9SCP5TP6G8060R30C9K60SKA")
-    KB_SERVICE_RESOURCE_ID: str = os.getenv("KB_SERVICE_RESOURCE_ID", "kb-service-97251f0167acebc4")
-    KB_DOMAIN: str = os.getenv("KB_DOMAIN", "api-knowledgebase.mlp.cn-beijing.volces.com")
+    KB_SERVICE_ID: str = os.getenv("KB_SERVICE_ID", "kb-service-97251f0167acebc4")
+    KB_REGION: str = os.getenv("KB_REGION", "cn-beijing")
     KB_FEISHU_WEBHOOK_URL: str = os.getenv("KB_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/dea274be-df47-4ab7-b69b-ec51de9c3e17")
     KB_KEYWORD: str = os.getenv("KB_KEYWORD", "Talk")
 

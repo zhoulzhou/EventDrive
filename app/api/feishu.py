@@ -1,12 +1,13 @@
 import logging
 from typing import List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from app.config import settings
 from app.database import SessionLocal
 from app import crud
 from app.utils.feishu_notifier import get_feishu_notifier, notify_new_news
+from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class FeishuPushResponse(BaseModel):
 
 
 @router.post("/feishu/push", response_model=FeishuPushResponse)
-async def push_to_feishu():
+async def push_to_feishu(auth: bool = Depends(require_auth)):
     if not settings.FEISHU_WEBHOOK_URL:
         raise HTTPException(status_code=400, detail="飞书推送未配置")
 

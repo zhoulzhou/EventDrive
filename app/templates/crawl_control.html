@@ -206,7 +206,7 @@ async function startCrawl() {
     if (isCrawling) return;
 
     try {
-        const response = await fetch('/api/crawl/trigger', {
+        const response = await fetchWithAuth('/api/crawl/trigger', {
             method: 'POST'
         });
         const data = await response.json();

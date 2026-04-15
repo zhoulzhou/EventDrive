@@ -12,6 +12,7 @@ from app.database import engine, Base
 from app.api import news, crawl, filter, logs, feishu, login
 from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier
 from app.scheduler import start_scheduler, stop_scheduler
+from app.api.login import is_logged_in
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,8 @@ async def root(request: Request):
 
 @app.get("/home")
 async def home(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
     return render_template("index.html", {"request": request})
 
 
@@ -122,19 +125,27 @@ async def login_page(request: Request):
 
 @app.get("/news/{news_id}")
 async def news_detail(request: Request, news_id: int):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
     return render_template("news_detail.html", {"request": request, "news_id": news_id})
 
 
 @app.get("/crawl")
 async def crawl_control(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
     return render_template("crawl_control.html", {"request": request})
 
 
 @app.get("/filter")
 async def filter_rules(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
     return render_template("filter_rules.html", {"request": request})
 
 
 @app.get("/logs")
 async def crawl_logs(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
     return render_template("crawl_logs.html", {"request": request})

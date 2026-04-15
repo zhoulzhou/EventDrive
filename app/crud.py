@@ -175,3 +175,47 @@ def delete_crawl_log(db: Session, log_id: int) -> bool:
         db.commit()
         return True
     return False
+
+
+def get_index_high(db: Session, symbol: str) -> Optional[models.IndexHigh]:
+    return db.query(models.IndexHigh).filter(models.IndexHigh.symbol == symbol).first()
+
+
+def get_all_index_highs(db: Session) -> List[models.IndexHigh]:
+    return db.query(models.IndexHigh).all()
+
+
+def create_index_high(db: Session, index_high: schemas.IndexHighCreate) -> models.IndexHigh:
+    db_index_high = models.IndexHigh(**index_high.model_dump())
+    db.add(db_index_high)
+    db.commit()
+    db.refresh(db_index_high)
+    return db_index_high
+
+
+def update_index_high(db: Session, symbol: str, high_price: float) -> Optional[models.IndexHigh]:
+    db_index_high = get_index_high(db, symbol)
+    if db_index_high:
+        db_index_high.high_price = high_price
+        db.commit()
+        db.refresh(db_index_high)
+    return db_index_high
+
+
+def get_or_create_index_high(db: Session, symbol: str, initial_high: float) -> models.IndexHigh:
+    db_index_high = get_index_high(db, symbol)
+    if db_index_high:
+        return db_index_high
+    return create_index_high(db, schemas.IndexHighCreate(symbol=symbol, high_price=initial_high))
+
+
+def update_index_high_if_higher(db: Session, symbol: str, current_price: float) -> Optional[models.IndexHigh]:
+    db_index_high = get_index_high(db, symbol)
+    if not db_index_high:
+        return None
+    if current_price > db_index_high.high_price:
+        db_index_high.high_price = current_price
+        db.commit()
+        db.refresh(db_index_high)
+        return db_index_high
+    return None
