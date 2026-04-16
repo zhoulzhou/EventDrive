@@ -30,7 +30,7 @@ class FinnhubIndexCrawler:
     async def fetch_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         try:
             if symbol == "NDX":
-                url = "https://hq.sinajs.cn/list=gb_$NDX"
+                url = "https://hq.sinajs.cn/list=gb_NDX"
             elif symbol == "VIX":
                 url = "https://hq.sinajs.cn/list=gb_VIX"
             else:
@@ -45,7 +45,7 @@ class FinnhubIndexCrawler:
             response.encoding = "gbk"
             text = response.text.strip()
 
-            if 'hq_str_gb_$NDX' in text:
+            if symbol == "NDX" and 'hq_str_gb_NDX' in text and '","' not in text:
                 data = text.split('"')[1].split(',')
                 if len(data) >= 12:
                     quote = {
@@ -58,7 +58,7 @@ class FinnhubIndexCrawler:
                     }
                     logger.info(f"获取 {symbol} 报价成功: {quote}")
                     return quote
-            elif 'hq_str_gb_VIX' in text:
+            elif symbol == "VIX" and 'hq_str_gb_VIX' in text and '","' not in text:
                 data = text.split('"')[1].split(',')
                 if len(data) >= 12:
                     quote = {
