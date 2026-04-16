@@ -249,7 +249,11 @@ async def full_crawl():
         
         # 初始化 OpenRouter 大模型分析器
         try:
-            init_knowledge_analyzer(api_key=settings.OPENROUTER_API_KEY)
+            init_knowledge_analyzer(
+                api_key=settings.OPENROUTER_API_KEY,
+                feishu_webhook_url=settings.KB_FEISHU_WEBHOOK_URL,
+                keyword=settings.KB_KEYWORD
+            )
             log_crawl("✅ OpenRouter 大模型分析器初始化完成")
         except Exception as e:
             logger.error(f"❌ 知识库分析器初始化失败: {e}", exc_info=True)
