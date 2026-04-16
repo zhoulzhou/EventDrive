@@ -14,7 +14,7 @@ _client = httpx.AsyncClient(
     timeout=8,
     headers={
         "User-Agent": "Mozilla/5.0",
-        "Referer": "https://finance.qq.com/"
+        "Referer": "https://finance.sina.com.cn/"
     }
 )
 
@@ -28,37 +28,52 @@ class FinnhubIndexCrawler:
         self.db = SessionLocal()
 
     async def fetch_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
-        symbol_map = {
-            "NDX": "hf_NDX",
-            "VIX": "hf_VIX"
-        }
-        tencent_symbol = symbol_map.get(symbol, symbol)
-        url = f"https://qt.gtimg.cn/q={tencent_symbol}"
         try:
+            if symbol == "NDX":
+                url = "https://hq.sinajs.cn/list=gb_$NDX"
+            elif symbol == "VIX":
+                url = "https://hq.sinajs.cn/list=gb_VIX"
+            else:
+                return None
+
             await asyncio.sleep(0.5)
             response = await _client.get(url)
             if response.status_code != 200:
                 logger.error(f"请求失败 {symbol}: {response.status_code}")
                 return None
+
             response.encoding = "gbk"
             text = response.text.strip()
-            if "none_match" in text:
-                logger.error(f"未找到 {symbol} 数据")
-                return None
-            parts = text.split("~")
-            if len(parts) < 11:
-                logger.error(f"数据解析失败 {symbol}: {text}")
-                return None
-            quote = {
-                "c": round(float(parts[3]), 2),
-                "h": round(float(parts[6]), 2),
-                "l": round(float(parts[7]), 2),
-                "o": round(float(parts[8]), 2),
-                "pc": round(float(parts[8]), 2),
-                "update_time": parts[10]
-            }
-            logger.info(f"获取 {symbol} 报价成功: {quote}")
-            return quote
+
+            if symbol == "NDX" and 'var hq_str_gb_$NDX="' in text:
+                s = text.split('"')[1].split(',')
+                if len(s) >= 5:
+                    quote = {
+                        "c": float(s[1]),
+                        "o": float(s[2]),
+                        "h": float(s[3]),
+                        "l": float(s[4]),
+                        "pc": float(s[2]),
+                        "update_time": f"{s[6]} {s[7]}"
+                    }
+                    logger.info(f"获取 {symbol} 报价成功: {quote}")
+                    return quote
+            elif symbol == "VIX" and 'var hq_str_gb_VIX="' in text:
+                s = text.split('"')[1].split(',')
+                if len(s) >= 5:
+                    quote = {
+                        "c": float(s[1]),
+                        "o": float(s[2]),
+                        "h": float(s[3]),
+                        "l": float(s[4]),
+                        "pc": float(s[2]),
+                        "update_time": f"{s[6]} {s[7]}"
+                    }
+                    logger.info(f"获取 {symbol} 报价成功: {quote}")
+                    return quote
+
+            logger.error(f"未找到 {symbol} 数据: {text}")
+            return None
         except Exception as e:
             logger.error(f"获取 {symbol} 报价失败: {e}", exc_info=True)
             return None
