@@ -46,8 +46,7 @@ class Settings:
     KB_FEISHU_WEBHOOK_URL: str = os.getenv("KB_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/dea274be-df47-4ab7-b69b-ec51de9c3e17")
     KB_KEYWORD: str = os.getenv("KB_KEYWORD", "Talk")
 
-    KB_AK: str = os.getenv("KB_AK", "")
-    KB_SK: str = os.getenv("KB_SK", "")
+    KB_API_KEY: str = os.getenv("KB_API_KEY", "")
     KB_MODEL_ID: str = os.getenv("KB_MODEL_ID", "doubao-1-5-pro-32k-250115")
     KB_REGION: str = os.getenv("KB_REGION", "cn-beijing")
 

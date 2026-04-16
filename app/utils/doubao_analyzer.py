@@ -8,15 +8,13 @@ logger = logging.getLogger(__name__)
 class DoubaoAnalyzer:
     def __init__(
         self,
-        ak: str,
-        sk: str,
+        api_key: str,
         model: str = "doubao-1-5-pro-32k-250115",
         region: str = "cn-beijing",
         feishu_webhook_url: str = "",
         keyword: str = "豆包"
     ):
-        self.ak = ak
-        self.sk = sk
+        self.api_key = api_key
         self.model = model
         self.region = region
         self.url = f"https://ark.{region}.volces.com/api/v3/chat/completions"
@@ -37,21 +35,22 @@ class DoubaoAnalyzer:
 
 新闻标题：{news_title}
 新闻内容：
-{news_content}
-"""
+{news_content}"""
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.6,
+            "stream": False
+        }
 
         try:
-            resp = requests.post(
-                self.url,
-                auth=(self.ak, self.sk),
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.6,
-                    "stream": False
-                },
-                timeout=30
-            )
+            resp = requests.post(self.url, headers=headers, json=data, timeout=30)
 
             if resp.status_code == 200:
                 result = resp.json()
@@ -135,8 +134,7 @@ _doubao_analyzer: Optional[DoubaoAnalyzer] = None
 
 
 def init_doubao_analyzer(
-    ak: str,
-    sk: str,
+    api_key: str,
     model: str = "doubao-1-5-pro-32k-250115",
     region: str = "cn-beijing",
     feishu_webhook_url: str = "",
@@ -144,8 +142,7 @@ def init_doubao_analyzer(
 ):
     global _doubao_analyzer
     _doubao_analyzer = DoubaoAnalyzer(
-        ak=ak,
-        sk=sk,
+        api_key=api_key,
         model=model,
         region=region,
         feishu_webhook_url=feishu_webhook_url,
