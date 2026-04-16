@@ -11,7 +11,7 @@ from app import crud, schemas
 logger = logging.getLogger(__name__)
 
 _client = httpx.AsyncClient(
-    timeout=8,
+    timeout=10,
     headers={
         "User-Agent": "Mozilla/5.0",
         "Referer": "https://finance.sina.com.cn/"
@@ -45,29 +45,29 @@ class FinnhubIndexCrawler:
             response.encoding = "gbk"
             text = response.text.strip()
 
-            if symbol == "NDX" and 'var hq_str_gb_$NDX="' in text:
-                s = text.split('"')[1].split(',')
-                if len(s) >= 5:
+            if 'hq_str_gb_$NDX' in text:
+                data = text.split('"')[1].split(',')
+                if len(data) >= 12:
                     quote = {
-                        "c": float(s[1]),
-                        "o": float(s[2]),
-                        "h": float(s[3]),
-                        "l": float(s[4]),
-                        "pc": float(s[2]),
-                        "update_time": f"{s[6]} {s[7]}"
+                        "c": round(float(data[1]), 2),
+                        "o": round(float(data[2]), 2),
+                        "h": round(float(data[3]), 2),
+                        "l": round(float(data[4]), 2),
+                        "pc": round(float(data[1]), 2),
+                        "update_time": f"{data[10]} {data[11]}"
                     }
                     logger.info(f"获取 {symbol} 报价成功: {quote}")
                     return quote
-            elif symbol == "VIX" and 'var hq_str_gb_VIX="' in text:
-                s = text.split('"')[1].split(',')
-                if len(s) >= 5:
+            elif 'hq_str_gb_VIX' in text:
+                data = text.split('"')[1].split(',')
+                if len(data) >= 12:
                     quote = {
-                        "c": float(s[1]),
-                        "o": float(s[2]),
-                        "h": float(s[3]),
-                        "l": float(s[4]),
-                        "pc": float(s[2]),
-                        "update_time": f"{s[6]} {s[7]}"
+                        "c": round(float(data[1]), 2),
+                        "o": round(float(data[2]), 2),
+                        "h": round(float(data[3]), 2),
+                        "l": round(float(data[4]), 2),
+                        "pc": round(float(data[1]), 2),
+                        "update_time": f"{data[10]} {data[11]}"
                     }
                     logger.info(f"获取 {symbol} 报价成功: {quote}")
                     return quote
