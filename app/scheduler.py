@@ -276,7 +276,7 @@ async def full_crawl():
     doubao_analyzer = get_doubao_analyzer()
     openrouter_analyzer = get_knowledge_analyzer()
 
-    # 定义新闻源与大模型、飞书的映射关系
+    # 定义新闻源与大模型、飞书的映射关系（使用 in 进行部分匹配）
     doubao_sources = ["东方财富", "纽约时报"]
     openrouter_sources = ["财联社", "BBC"]
 
@@ -300,19 +300,23 @@ async def full_crawl():
 
             news_to_analyze = news_list[:2]
 
-            # 确定使用哪个分析器
-            if source in doubao_sources:
-                analyzer = doubao_analyzer
-                model_name = "豆包"
-            elif source in openrouter_sources:
-                analyzer = openrouter_analyzer
-                model_name = "OpenRouter"
-            else:
-                log_crawl(f"⚠️ 未知新闻源: {source}，跳过分析")
-                continue
+            # 确定使用哪个分析器（使用 in 进行部分匹配）
+            analyzer = None
+            model_name = None
+            for ds in doubao_sources:
+                if ds in source:
+                    analyzer = doubao_analyzer
+                    model_name = "豆包"
+                    break
+            if not analyzer:
+                for os in openrouter_sources:
+                    if os in source:
+                        analyzer = openrouter_analyzer
+                        model_name = "OpenRouter"
+                        break
 
             if not analyzer:
-                log_crawl(f"❌ {model_name}分析器未初始化，跳过{source}")
+                log_crawl(f"⚠️ 未知新闻源: {source}，跳过分析")
                 continue
 
             for idx, news in enumerate(news_to_analyze, 1):
