@@ -19,6 +19,7 @@ from app.crawlers import (
 from app.utils.image_downloader import download_image
 from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
+from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
