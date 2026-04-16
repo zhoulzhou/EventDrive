@@ -280,6 +280,9 @@ async def full_crawl():
     doubao_sources = ["东方财富", "纽约时报"]
     openrouter_sources = ["财联社", "BBC"]
 
+    log_crawl(f"📊 豆包分析器状态: {doubao_analyzer is not None}")
+    log_crawl(f"📊 OpenRouter分析器状态: {openrouter_analyzer is not None}")
+
     if all_saved_news:
         log_crawl("=" * 50)
         log_crawl("🧠 开始大模型新闻分析...")
