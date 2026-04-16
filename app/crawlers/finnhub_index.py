@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import httpx
+import asyncio
 import logging
 from datetime import datetime, date
 from typing import Dict, Any, Optional
@@ -9,39 +10,53 @@ from app import crud, schemas
 
 logger = logging.getLogger(__name__)
 
+_client = httpx.AsyncClient(
+    timeout=10,
+    headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+)
+
 
 class FinnhubIndexCrawler:
-    source_name = "Finnhub 指数"
+    source_name = "腾讯指数"
     NDX_INITIAL_HIGH = 26011.75
 
     def __init__(self):
-        self.api_key = settings.FINNHUB_API_KEY
-        self.base_url = "https://finnhub.io/api/v1"
         self.alert_messages = []
         self.db = SessionLocal()
 
     async def fetch_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         symbol_map = {
-            "NDX": "%5ENDX",
-            "VIX": "%5EVIX"
+            "NDX": "usNDX",
+            "VIX": "usVIX"
         }
-        yahoo_symbol = symbol_map.get(symbol, symbol)
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
+        tencent_symbol = symbol_map.get(symbol, symbol)
+        url = f"https://qt.gtimg.cn/q={tencent_symbol}"
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                data = response.json()
-                result = data["chart"]["result"][0]["meta"]
-                quote = {
-                    "c": result["regularMarketPrice"],
-                    "h": result.get("regularMarketDayHigh"),
-                    "l": result.get("regularMarketDayLow"),
-                    "o": result.get("regularMarketOpen"),
-                    "pc": result.get("previousClose")
-                }
-                logger.info(f"获取 {symbol} 报价成功: {quote}")
-                return quote
+            await asyncio.sleep(0.5)
+            response = await _client.get(url)
+            if response.status_code != 200:
+                logger.error(f"请求失败 {symbol}: {response.status_code}")
+                return None
+            text = response.text.strip()
+            if "none_match" in text:
+                logger.error(f"未找到 {symbol} 数据")
+                return None
+            parts = text.split("~")
+            if len(parts) < 31:
+                logger.error(f"数据解析失败 {symbol}: {text}")
+                return None
+            quote = {
+                "c": float(parts[3]),
+                "h": float(parts[4]) if parts[4] else 0,
+                "l": float(parts[5]) if parts[5] else 0,
+                "o": 0,
+                "pc": 0,
+                "update_time": parts[30]
+            }
+            logger.info(f"获取 {symbol} 报价成功: {quote}")
+            return quote
         except Exception as e:
             logger.error(f"获取 {symbol} 报价失败: {e}", exc_info=True)
             return None
@@ -76,36 +91,38 @@ class FinnhubIndexCrawler:
         end_ts = int(datetime(year, 1, 2).timestamp())
 
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(url, params={
-                    "period1": year_start_ts,
-                    "period2": end_ts,
-                    "interval": "1d"
-                })
-                if response.status_code == 200:
-                    data = response.json()
-                    result = data["chart"]["result"]
-                    if result and result[0].get("indicators") and result[0]["indicators"].get("quote"):
-                        closes = result[0]["indicators"]["quote"][0].get("close")
-                        if closes:
-                            first_close = next((c for c in closes if c is not None), None)
-                            if first_close:
-                                logger.info(f"{symbol} 年初价格: {first_close}")
-
-                                try:
-                                    saved_data = {}
-                                    if data_file.exists():
-                                        with open(data_file, 'r') as f:
-                                            saved_data = json.load(f)
-                                    saved_data[symbol] = {"year": year, "price": first_close}
-                                    with open(data_file, 'w') as f:
-                                        json.dump(saved_data, f)
-                                except Exception as e:
-                                    logger.warning(f"保存本地价格文件失败: {e}")
-
-                                return first_close
-                logger.warning(f"{symbol} 未找到年初价格数据，使用默认估算")
+            await asyncio.sleep(1)
+            response = await _client.get(url, params={
+                "period1": year_start_ts,
+                "period2": end_ts,
+                "interval": "1d"
+            })
+            if response.status_code != 200:
+                logger.warning(f"{symbol} 请求失败: {response.status_code}")
                 return None
+            data = response.json()
+            result = data["chart"]["result"]
+            if result and result[0].get("indicators") and result[0]["indicators"].get("quote"):
+                closes = result[0]["indicators"]["quote"][0].get("close")
+                if closes:
+                    first_close = next((c for c in closes if c is not None), None)
+                    if first_close:
+                        logger.info(f"{symbol} 年初价格: {first_close}")
+
+                        try:
+                            saved_data = {}
+                            if data_file.exists():
+                                with open(data_file, 'r') as f:
+                                    saved_data = json.load(f)
+                            saved_data[symbol] = {"year": year, "price": first_close}
+                            with open(data_file, 'w') as f:
+                                json.dump(saved_data, f)
+                        except Exception as e:
+                            logger.warning(f"保存本地价格文件失败: {e}")
+
+                        return first_close
+            logger.warning(f"{symbol} 未找到年初价格数据，使用默认估算")
+            return None
         except Exception as e:
             logger.error(f"获取 {symbol} 年初价格失败: {e}", exc_info=True)
             return None
@@ -165,6 +182,8 @@ class FinnhubIndexCrawler:
         ndx_alert_level = None
         vix_alert_level = None
         ndx_high_updated = False
+        ndx_update_time = ndx_quote.get("update_time") if ndx_quote else None
+        vix_update_time = vix_quote.get("update_time") if vix_quote else None
 
         if ndx_quote and ndx_quote.get("c", 0) > 0:
             current_price = ndx_quote["c"]
@@ -181,7 +200,7 @@ class FinnhubIndexCrawler:
                 ndx_alert_level = self.get_ndx_alert_level(drop_percent)
 
                 self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
-                self.alert_messages.append(f"   当前价格: {current_price:.2f}")
+                self.alert_messages.append(f"   当前价格: {current_price:.2f}  ({ndx_update_time})")
                 self.alert_messages.append(f"   年初价格: {year_start_price:.2f}")
                 self.alert_messages.append(f"   年内涨跌幅: { -drop_percent:.2f}%")
 
@@ -197,7 +216,7 @@ class FinnhubIndexCrawler:
                     self.alert_messages.append(f"   🟢 正常")
             else:
                 self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
-                self.alert_messages.append(f"   当前价格: {current_price:.2f}")
+                self.alert_messages.append(f"   当前价格: {current_price:.2f}  ({ndx_update_time})")
 
                 if high_result:
                     self.alert_messages.append(f"   历史高点: {high_result['new_high']}")
@@ -212,7 +231,7 @@ class FinnhubIndexCrawler:
 
             self.alert_messages.append("")
             self.alert_messages.append(f"📈 VIX 恐慌指数 (VIX)")
-            self.alert_messages.append(f"   当前值: {vix_value:.2f}")
+            self.alert_messages.append(f"   当前值: {vix_value:.2f}  ({vix_update_time})")
 
             if vix_alert_level:
                 self.alert_messages.append(f"   {vix_alert_level}")
