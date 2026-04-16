@@ -41,14 +41,14 @@ class FinnhubIndexCrawler:
                 logger.error(f"未找到 {symbol} 数据")
                 return None
 
-            _, _, open_, high, low, close = lines[1].split(',')
+            parts = lines[1].split(',')
             quote = {
-                "c": float(close),
-                "h": float(high),
-                "l": float(low),
-                "o": float(open_),
+                "c": float(parts[6]),
+                "h": float(parts[4]),
+                "l": float(parts[5]),
+                "o": float(parts[3]),
                 "pc": 0.0,
-                "update_time": lines[1].split(',')[0]
+                "update_time": parts[1]
             }
             logger.info(f"获取 {symbol} 报价成功: {quote}")
             return quote
