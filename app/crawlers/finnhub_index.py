@@ -10,13 +10,7 @@ from app import crud, schemas
 
 logger = logging.getLogger(__name__)
 
-_client = httpx.AsyncClient(
-    timeout=10,
-    headers={
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://finance.sina.com.cn/"
-    }
-)
+_client = httpx.AsyncClient(timeout=10)
 
 
 class FinnhubIndexCrawler:
@@ -30,9 +24,9 @@ class FinnhubIndexCrawler:
     async def fetch_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         try:
             if symbol == "NDX":
-                url = "https://hq.sinajs.cn/list=gb_NDX"
+                url = "https://stooq.com/q/l/?s=ndx&f=sd2t2ohlcv&h&e=csv"
             elif symbol == "VIX":
-                url = "https://hq.sinajs.cn/list=gb_VIX"
+                url = "https://stooq.com/q/l/?s=vix&f=sd2t2ohlcv&h&e=csv"
             else:
                 return None
 
@@ -42,38 +36,22 @@ class FinnhubIndexCrawler:
                 logger.error(f"请求失败 {symbol}: {response.status_code}")
                 return None
 
-            response.encoding = "gbk"
-            text = response.text.strip()
+            lines = response.text.strip().splitlines()
+            if len(lines) < 2:
+                logger.error(f"未找到 {symbol} 数据")
+                return None
 
-            if symbol == "NDX" and 'hq_str_gb_NDX' in text and '","' not in text:
-                data = text.split('"')[1].split(',')
-                if len(data) >= 12:
-                    quote = {
-                        "c": round(float(data[1]), 2),
-                        "o": round(float(data[2]), 2),
-                        "h": round(float(data[3]), 2),
-                        "l": round(float(data[4]), 2),
-                        "pc": round(float(data[1]), 2),
-                        "update_time": f"{data[10]} {data[11]}"
-                    }
-                    logger.info(f"获取 {symbol} 报价成功: {quote}")
-                    return quote
-            elif symbol == "VIX" and 'hq_str_gb_VIX' in text and '","' not in text:
-                data = text.split('"')[1].split(',')
-                if len(data) >= 12:
-                    quote = {
-                        "c": round(float(data[1]), 2),
-                        "o": round(float(data[2]), 2),
-                        "h": round(float(data[3]), 2),
-                        "l": round(float(data[4]), 2),
-                        "pc": round(float(data[1]), 2),
-                        "update_time": f"{data[10]} {data[11]}"
-                    }
-                    logger.info(f"获取 {symbol} 报价成功: {quote}")
-                    return quote
-
-            logger.error(f"未找到 {symbol} 数据: {text}")
-            return None
+            _, _, open_, high, low, close = lines[1].split(',')
+            quote = {
+                "c": float(close),
+                "h": float(high),
+                "l": float(low),
+                "o": float(open_),
+                "pc": 0.0,
+                "update_time": lines[1].split(',')[0]
+            }
+            logger.info(f"获取 {symbol} 报价成功: {quote}")
+            return quote
         except Exception as e:
             logger.error(f"获取 {symbol} 报价失败: {e}", exc_info=True)
             return None
