@@ -11,9 +11,10 @@ from app import crud, schemas
 logger = logging.getLogger(__name__)
 
 _client = httpx.AsyncClient(
-    timeout=10,
+    timeout=8,
     headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://finance.qq.com/"
     }
 )
 
@@ -28,8 +29,8 @@ class FinnhubIndexCrawler:
 
     async def fetch_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         symbol_map = {
-            "NDX": "usNDX",
-            "VIX": "usVIX"
+            "NDX": "hf_NDX",
+            "VIX": "hf_VIX"
         }
         tencent_symbol = symbol_map.get(symbol, symbol)
         url = f"https://qt.gtimg.cn/q={tencent_symbol}"
@@ -39,21 +40,22 @@ class FinnhubIndexCrawler:
             if response.status_code != 200:
                 logger.error(f"请求失败 {symbol}: {response.status_code}")
                 return None
+            response.encoding = "gbk"
             text = response.text.strip()
             if "none_match" in text:
                 logger.error(f"未找到 {symbol} 数据")
                 return None
             parts = text.split("~")
-            if len(parts) < 31:
+            if len(parts) < 11:
                 logger.error(f"数据解析失败 {symbol}: {text}")
                 return None
             quote = {
-                "c": float(parts[3]),
-                "h": float(parts[4]) if parts[4] else 0,
-                "l": float(parts[5]) if parts[5] else 0,
-                "o": 0,
-                "pc": 0,
-                "update_time": parts[30]
+                "c": round(float(parts[3]), 2),
+                "h": round(float(parts[6]), 2),
+                "l": round(float(parts[7]), 2),
+                "o": round(float(parts[8]), 2),
+                "pc": round(float(parts[8]), 2),
+                "update_time": parts[10]
             }
             logger.info(f"获取 {symbol} 报价成功: {quote}")
             return quote
