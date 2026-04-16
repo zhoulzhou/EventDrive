@@ -42,8 +42,12 @@ class FinnhubIndexCrawler:
                 return None
 
             parts = lines[1].split(',')
+            close = parts[6]
+            if close == "N/D":
+                logger.error(f"{symbol} 数据无效: N/D")
+                return None
             quote = {
-                "c": float(parts[6]),
+                "c": float(close),
                 "h": float(parts[4]),
                 "l": float(parts[5]),
                 "o": float(parts[3]),
