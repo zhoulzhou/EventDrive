@@ -21,18 +21,27 @@ class FinnhubIndexCrawler:
         self.db = SessionLocal()
 
     async def fetch_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
-        url = f"{self.base_url}/quote"
-        params = {
-            "symbol": symbol,
-            "token": self.api_key
+        symbol_map = {
+            "NDX": "%5ENDX",
+            "VIX": "%5EVIX"
         }
+        yahoo_symbol = symbol_map.get(symbol, symbol)
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(url, params=params)
+                response = await client.get(url)
                 response.raise_for_status()
                 data = response.json()
-                logger.info(f"获取 {symbol} 报价成功: {data}")
-                return data
+                result = data["chart"]["result"][0]["meta"]
+                quote = {
+                    "c": result["regularMarketPrice"],
+                    "h": result.get("regularMarketDayHigh"),
+                    "l": result.get("regularMarketDayLow"),
+                    "o": result.get("regularMarketOpen"),
+                    "pc": result.get("previousClose")
+                }
+                logger.info(f"获取 {symbol} 报价成功: {quote}")
+                return quote
         except Exception as e:
             logger.error(f"获取 {symbol} 报价失败: {e}", exc_info=True)
             return None
@@ -40,11 +49,11 @@ class FinnhubIndexCrawler:
     async def fetch_year_start_price(self, symbol: str) -> Optional[float]:
         from pathlib import Path
         import json
-        
+
         data_file = settings.DATA_DIR / "index_prices.json"
         today = date.today()
         year = today.year
-        
+
         if data_file.exists():
             try:
                 with open(data_file, 'r') as f:
@@ -55,39 +64,46 @@ class FinnhubIndexCrawler:
                         return price
             except Exception as e:
                 logger.warning(f"读取本地价格文件失败: {e}")
-        
-        year_start = date(year, 1, 1)
-        end_date = date(year, 1, 31)
-        
-        url = f"{self.base_url}/stock/candle"
-        params = {
-            "symbol": symbol,
-            "resolution": "W",
-            "from": int(datetime.combine(year_start, datetime.min.time()).timestamp()),
-            "to": int(datetime.combine(end_date, datetime.max.time()).timestamp()),
-            "token": self.api_key
+
+        symbol_map = {
+            "NDX": "%5ENDX",
+            "VIX": "%5EVIX"
         }
+        yahoo_symbol = symbol_map.get(symbol, symbol)
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
+
+        year_start_ts = int(datetime(year, 1, 1).timestamp())
+        end_ts = int(datetime(year, 1, 2).timestamp())
+
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(url, params=params)
+                response = await client.get(url, params={
+                    "period1": year_start_ts,
+                    "period2": end_ts,
+                    "interval": "1d"
+                })
                 if response.status_code == 200:
                     data = response.json()
-                    if data.get("s") == "ok" and data.get("c"):
-                        first_close = data["c"][0]
-                        logger.info(f"{symbol} 年初价格: {first_close}")
-                        
-                        try:
-                            saved_data = {}
-                            if data_file.exists():
-                                with open(data_file, 'r') as f:
-                                    saved_data = json.load(f)
-                            saved_data[symbol] = {"year": year, "price": first_close}
-                            with open(data_file, 'w') as f:
-                                json.dump(saved_data, f)
-                        except Exception as e:
-                            logger.warning(f"保存本地价格文件失败: {e}")
-                        
-                        return first_close
+                    result = data["chart"]["result"]
+                    if result and result[0].get("indicators") and result[0]["indicators"].get("quote"):
+                        closes = result[0]["indicators"]["quote"][0].get("close")
+                        if closes:
+                            first_close = next((c for c in closes if c is not None), None)
+                            if first_close:
+                                logger.info(f"{symbol} 年初价格: {first_close}")
+
+                                try:
+                                    saved_data = {}
+                                    if data_file.exists():
+                                        with open(data_file, 'r') as f:
+                                            saved_data = json.load(f)
+                                    saved_data[symbol] = {"year": year, "price": first_close}
+                                    with open(data_file, 'w') as f:
+                                        json.dump(saved_data, f)
+                                except Exception as e:
+                                    logger.warning(f"保存本地价格文件失败: {e}")
+
+                                return first_close
                 logger.warning(f"{symbol} 未找到年初价格数据，使用默认估算")
                 return None
         except Exception as e:
