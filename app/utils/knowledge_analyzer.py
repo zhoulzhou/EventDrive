@@ -142,7 +142,7 @@ def init_knowledge_analyzer(
         feishu_webhook_url=feishu_webhook_url,
         keyword=keyword
     )
-    logger.info(f"OpenRouter 大模型分析器已初始化，模型: {analyzer.model if analyzer else 'unknown'}")
+    logger.info(f"OpenRouter 大模型分析器已初始化，模型: {_analyzer.model if _analyzer else 'unknown'}")
 
 
 def init_knowledge_analyzer_with_ak_sk(
