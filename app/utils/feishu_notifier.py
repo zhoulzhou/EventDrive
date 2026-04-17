@@ -366,31 +366,63 @@ async def notify_index_alert(alert_content: str) -> bool:
     return False
 
 
-async def notify_new_news(news_list: List[dict], source: str) -> bool:
+async def dfcf_feishu_notify(news_list: List[dict], source: str) -> bool:
+    notifier = get_em_feishu_notifier()
+    if notifier:
+        return notifier.send_news_notification(news_list, source)
+    return False
+
+
+async def cls_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_cls_feishu_notifier() or get_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
 
 
-async def notify_nyt_news(news_list: List[dict], source: str) -> bool:
+async def nyt_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_nyt_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
 
 
-async def notify_bbc_news(news_list: List[dict], source: str) -> bool:
+async def bbc_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_bbc_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
 
 
-async def notify_em_news(news_list: List[dict], source: str) -> bool:
-    notifier = get_em_feishu_notifier()
+async def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
+    notifier = get_kb_feishu_notifier()
     if notifier:
-        return notifier.send_news_notification(news_list, source)
+        content_lines = [
+            f"【Talk】📰 新闻深度分析",
+            f"来源: {source}",
+            f"标题: {news_title}",
+            "",
+            "===== 分析结果 =====",
+            analysis_result
+        ]
+        content = "\n".join(content_lines)
+        return notifier.send_message(content)
+    return False
+
+
+async def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
+    notifier = get_openrouter_feishu_notifier()
+    if notifier:
+        content_lines = [
+            f"【Talk】📰 新闻深度分析",
+            f"来源: {source}",
+            f"标题: {news_title}",
+            "",
+            "===== 分析结果 =====",
+            analysis_result
+        ]
+        content = "\n".join(content_lines)
+        return notifier.send_message(content)
     return False
 
 

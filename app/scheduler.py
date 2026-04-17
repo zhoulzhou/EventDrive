@@ -17,7 +17,7 @@ from app.crawlers import (
     NewsItem
 )
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier, send_analysis_to_feishu
+from app.utils.feishu_notifier import dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify, doubao_feishu_notify, openrouter_feishu_notify, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier, init_cls_feishu_notifier, init_kb_feishu_notifier, init_openrouter_feishu_notifier
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
 
@@ -183,15 +183,15 @@ async def full_crawl():
     count, saved_news = await crawl_single_source(EastmoneyDepthCrawler)
     total_saved += count
     if saved_news:
-        await notify_em_news(saved_news[:5], "东方财富")
+        dfcf_feishu_notify(saved_news[:5], "东方财富")
         if doubao_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
                 content = news.get('content', news.get('summary', ''))
-                log_crawl(f"� [豆包] 正在分析: {title[:50]}...")
+                log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
                 result = doubao_analyzer.analyze_only(title, content, "东方财富")
                 if result:
-                    send_analysis_to_feishu(title, result, "东方财富", "kb")
+                    doubao_feishu_notify(title, result, "东方财富")
                     log_crawl(f"✅ [豆包] 分析并推送成功")
                 else:
                     log_crawl(f"❌ [豆包] 分析失败")
@@ -205,7 +205,7 @@ async def full_crawl():
     count, saved_news = await crawl_single_source(CLSDepthCrawler)
     total_saved += count
     if saved_news:
-        await notify_new_news(saved_news[:5], "财联社")
+        cls_feishu_notify(saved_news[:5], "财联社")
         if openrouter_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
@@ -213,7 +213,7 @@ async def full_crawl():
                 log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
                 result = openrouter_analyzer.analyze_only(title, content, "财联社")
                 if result:
-                    send_analysis_to_feishu(title, result, "财联社", "openrouter")
+                    openrouter_feishu_notify(title, result, "财联社")
                     log_crawl(f"✅ [OpenRouter] 分析并推送成功")
                 else:
                     log_crawl(f"❌ [OpenRouter] 分析失败")
@@ -227,7 +227,7 @@ async def full_crawl():
     count, saved_news = await crawl_single_source(NYTDepthCrawler)
     total_saved += count
     if saved_news:
-        await notify_nyt_news(saved_news[:5], "纽约时报")
+        nyt_feishu_notify(saved_news[:5], "纽约时报")
         if doubao_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
@@ -235,7 +235,7 @@ async def full_crawl():
                 log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
                 result = doubao_analyzer.analyze_only(title, content, "纽约时报")
                 if result:
-                    send_analysis_to_feishu(title, result, "纽约时报", "kb")
+                    doubao_feishu_notify(title, result, "纽约时报")
                     log_crawl(f"✅ [豆包] 分析并推送成功")
                 else:
                     log_crawl(f"❌ [豆包] 分析失败")
@@ -249,7 +249,7 @@ async def full_crawl():
     count, saved_news = await crawl_single_source(BBCCrawler)
     total_saved += count
     if saved_news:
-        await notify_bbc_news(saved_news[:5], "BBC")
+        bbc_feishu_notify(saved_news[:5], "BBC")
         if openrouter_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
@@ -257,7 +257,7 @@ async def full_crawl():
                 log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
                 result = openrouter_analyzer.analyze_only(title, content, "BBC")
                 if result:
-                    send_analysis_to_feishu(title, result, "BBC", "openrouter")
+                    openrouter_feishu_notify(title, result, "BBC")
                     log_crawl(f"✅ [OpenRouter] 分析并推送成功")
                 else:
                     log_crawl(f"❌ [OpenRouter] 分析失败")
