@@ -3,7 +3,7 @@ import httpx
 import asyncio
 import logging
 import re
-from datetime import datetime, date
+from datetime import datetime
 from typing import Dict, Any, Optional
 from app.config import settings
 from app.database import SessionLocal
@@ -77,71 +77,12 @@ class FinnhubIndexCrawler:
             logger.error(f"获取 {symbol} 报价失败: {e}", exc_info=True)
             return None
 
-    async def fetch_year_start_price(self, symbol: str) -> Optional[float]:
-        from pathlib import Path
-        import json
-
-        data_file = settings.DATA_DIR / "index_prices.json"
-        today = date.today()
-        year = today.year
-
-        if data_file.exists():
-            try:
-                with open(data_file, 'r') as f:
-                    saved_data = json.load(f)
-                    if symbol in saved_data and saved_data[symbol].get("year") == year:
-                        price = saved_data[symbol]["price"]
-                        logger.info(f"从本地文件加载 {symbol} 年初价格: {price}")
-                        return price
-            except Exception as e:
-                logger.warning(f"读取本地价格文件失败: {e}")
-
-        symbol_map = {
-            "NDX": "%5ENDX",
-            "VIX": "%5EVIX"
-        }
-        yahoo_symbol = symbol_map.get(symbol, symbol)
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
-
-        year_start_ts = int(datetime(year, 1, 1).timestamp())
-        end_ts = int(datetime(year, 1, 2).timestamp())
-
-        try:
-            await asyncio.sleep(1)
-            response = await _client.get(url, params={
-                "period1": year_start_ts,
-                "period2": end_ts,
-                "interval": "1d"
-            })
-            if response.status_code != 200:
-                logger.warning(f"{symbol} 请求失败: {response.status_code}")
-                return None
-            data = response.json()
-            result = data["chart"]["result"]
-            if result and result[0].get("indicators") and result[0]["indicators"].get("quote"):
-                closes = result[0]["indicators"]["quote"][0].get("close")
-                if closes:
-                    first_close = next((c for c in closes if c is not None), None)
-                    if first_close:
-                        logger.info(f"{symbol} 年初价格: {first_close}")
-
-                        try:
-                            saved_data = {}
-                            if data_file.exists():
-                                with open(data_file, 'r') as f:
-                                    saved_data = json.load(f)
-                            saved_data[symbol] = {"year": year, "price": first_close}
-                            with open(data_file, 'w') as f:
-                                json.dump(saved_data, f)
-                        except Exception as e:
-                            logger.warning(f"保存本地价格文件失败: {e}")
-
-                        return first_close
-            logger.warning(f"{symbol} 未找到年初价格数据，使用默认估算")
-            return None
-        except Exception as e:
-            logger.error(f"获取 {symbol} 年初价格失败: {e}", exc_info=True)
-            return None
+    def get_vix_alert_level(self, vix_value: float) -> Optional[str]:
+        if vix_value >= 30:
+            return "🔴 极度恐慌警报"
+        elif vix_value >= 25:
+            return "🟠 恐慌预警"
+        return None
 
     def get_ndx_alert_level(self, drop_percent: float) -> Optional[str]:
         if drop_percent >= 30:
@@ -156,11 +97,16 @@ class FinnhubIndexCrawler:
             return "🟢 注意"
         return None
 
-    def get_vix_alert_level(self, vix_value: float) -> Optional[str]:
-        if vix_value >= 30:
-            return "🔴 极度恐慌警报"
-        elif vix_value >= 25:
-            return "🟠 恐慌预警"
+    def get_ndx_high_alert(self, current_price: float, year_high: float) -> Optional[str]:
+        if current_price > year_high:
+            return None
+        drop_from_high = ((year_high - current_price) / year_high) * 100
+        if drop_from_high >= 10:
+            return f"⚠️ 偏离年内高点 {drop_from_high:.2f}%"
+        elif drop_from_high >= 5:
+            return f"📉 偏离年内高点 {drop_from_high:.2f}%"
+        elif drop_from_high >= 3:
+            return f"📊 偏离年内高点 {drop_from_high:.2f}%"
         return None
 
     def update_index_high(self, symbol: str, current_price: float) -> Optional[Dict[str, Any]]:
@@ -195,51 +141,42 @@ class FinnhubIndexCrawler:
         vix_quote = await self.fetch_quote(vix_symbol)
         logger.info(f"📈 VIX 报价响应: {vix_quote}")
 
-        ndx_alert_level = None
         vix_alert_level = None
         ndx_high_updated = False
         ndx_update_time = ndx_quote.get("update_time") if ndx_quote else None
         vix_update_time = vix_quote.get("update_time") if vix_quote else None
 
+        year_high = self.NDX_INITIAL_HIGH
+
         if ndx_quote and ndx_quote.get("c", 0) > 0:
             current_price = ndx_quote["c"]
             logger.info(f"📊 NDX 当前价格: {current_price}")
 
-            year_start_price = await self.fetch_year_start_price(ndx_symbol)
-            logger.info(f"📅 NDX 年初价格: {year_start_price}")
-
             high_result = self.update_index_high(ndx_symbol, current_price)
             ndx_high_updated = high_result.get('updated', False) if high_result else False
 
-            if year_start_price:
-                drop_percent = ((year_start_price - current_price) / year_start_price) * 100
-                ndx_alert_level = self.get_ndx_alert_level(drop_percent)
+            if high_result:
+                year_high = high_result['new_high']
 
-                self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
-                self.alert_messages.append(f"   当前价格: {current_price:.2f}  ({ndx_update_time})")
-                self.alert_messages.append(f"   年初价格: {year_start_price:.2f}")
-                self.alert_messages.append(f"   年内涨跌幅: { -drop_percent:.2f}%")
+            ndx_high_alert = self.get_ndx_high_alert(current_price, year_high)
+            drop_percent = ((year_high - current_price) / year_high) * 100
+            ndx_alert_level = self.get_ndx_alert_level(drop_percent)
 
-                if high_result:
-                    self.alert_messages.append(f"   历史高点: {high_result['new_high']}")
-                    if ndx_high_updated:
-                        self.alert_messages.append(f"   🎉 突破历史新高! (前高: {high_result['old_high']})")
+            self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
+            self.alert_messages.append(f"   当前价格: {current_price:.2f}  ({ndx_update_time})")
+            self.alert_messages.append(f"   年内高点: {year_high:.2f}")
 
-                if ndx_alert_level:
-                    self.alert_messages.append(f"   {ndx_alert_level}: 年内下跌 {drop_percent:.2f}%")
-                    has_alert = True
-                else:
-                    self.alert_messages.append(f"   🟢 正常")
-            else:
-                self.alert_messages.append(f"📊 纳斯达克100指数 (NDX)")
-                self.alert_messages.append(f"   当前价格: {current_price:.2f}  ({ndx_update_time})")
+            if ndx_high_updated:
+                self.alert_messages.append(f"   🎉 突破历史新高! (前高: {high_result['old_high']})")
+                has_alert = True
 
-                if high_result:
-                    self.alert_messages.append(f"   历史高点: {high_result['new_high']}")
-                    if ndx_high_updated:
-                        self.alert_messages.append(f"   🎉 突破历史新高! (前高: {high_result['old_high']})")
+            if ndx_high_alert:
+                self.alert_messages.append(f"   {ndx_high_alert}")
+                has_alert = True
 
-                self.alert_messages.append(f"   警告: 无法获取年初价格")
+            if ndx_alert_level:
+                self.alert_messages.append(f"   {ndx_alert_level}")
+                has_alert = True
 
         if vix_quote and vix_quote.get("c", 0) > 0:
             vix_value = vix_quote["c"]
@@ -252,8 +189,6 @@ class FinnhubIndexCrawler:
             if vix_alert_level:
                 self.alert_messages.append(f"   {vix_alert_level}")
                 has_alert = True
-            else:
-                self.alert_messages.append(f"   🟢 正常")
 
         logger.info(f"🔔 指数警报状态: has_alert={has_alert}, ndx_high_updated={ndx_high_updated}")
 
