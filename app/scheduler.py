@@ -157,29 +157,16 @@ async def full_crawl():
     log_crawl("=" * 50)
     start_time = datetime.now()
 
-    crawlers = [
-        ("东方财富", EastmoneyDepthCrawler, notify_em_news, "豆包"),
-        ("财联社", CLSDepthCrawler, notify_new_news, "OpenRouter"),
-        ("纽约时报", NYTDepthCrawler, notify_nyt_news, "豆包"),
-        ("BBC", BBCCrawler, notify_bbc_news, "OpenRouter"),
-    ]
-
     if settings.KB_API_KEY:
         try:
-            init_doubao_analyzer(
-                api_key=settings.KB_API_KEY,
-                model=settings.KB_MODEL_ID,
-                region=settings.KB_REGION
-            )
+            init_doubao_analyzer(api_key=settings.KB_API_KEY, model=settings.KB_MODEL_ID, region=settings.KB_REGION)
             log_crawl("✅ 豆包大模型分析器初始化完成")
         except Exception as e:
             logger.error(f"❌ 豆包分析器初始化失败: {e}", exc_info=True)
 
     if settings.OPENROUTER_API_KEY:
         try:
-            init_knowledge_analyzer(
-                api_key=settings.OPENROUTER_API_KEY
-            )
+            init_knowledge_analyzer(api_key=settings.OPENROUTER_API_KEY)
             log_crawl("✅ OpenRouter大模型分析器初始化完成")
         except Exception as e:
             logger.error(f"❌ OpenRouter分析器初始化失败: {e}", exc_info=True)
@@ -187,80 +174,106 @@ async def full_crawl():
     doubao_analyzer = get_doubao_analyzer()
     openrouter_analyzer = get_knowledge_analyzer()
 
-    log_crawl(f"📊 豆包分析器状态: {doubao_analyzer is not None}")
-    log_crawl(f"📊 OpenRouter分析器状态: {openrouter_analyzer is not None}")
-
     total_saved = 0
     total_analyzed = 0
 
-    for idx, (source_name, crawler_class, notify_func, model_name) in enumerate(crawlers):
-        log_crawl(f"--- 第 {idx+1}/{len(crawlers)} 个新闻源: {source_name} ---")
-        count, saved_news = await crawl_single_source(crawler_class)
-        total_saved += count
-
-        if not saved_news:
-            log_crawl(f"📭 {source_name} 没有新新闻")
-            continue
-
-        log_crawl(f"📤 正在发送 {source_name} 飞书通知...")
-        try:
-            result = await notify_func(saved_news[:5], source_name)
-            log_crawl(f"📤 {source_name} 飞书通知发送结果: {result}")
-        except Exception as e:
-            logger.error(f"{source_name} 飞书通知发送失败: {e}", exc_info=True)
-
-        analyzer = doubao_analyzer if model_name == "豆包" else openrouter_analyzer
-        analyzer_type = "kb" if model_name == "豆包" else "openrouter"
-
-        if not analyzer:
-            log_crawl(f"⚠️ {model_name}分析器未初始化，跳过分析")
-        else:
-            news_to_analyze = saved_news[:2]
-            for n_idx, news in enumerate(news_to_analyze, 1):
-                news_title = news.get('title', '')
-                news_content = news.get('content', news.get('summary', ''))
-
-                log_crawl(f"🔍 [{model_name}] 正在分析 {source_name} 第 {n_idx}/{len(news_to_analyze)} 条: {news_title[:50]}...")
-
-                try:
-                    analysis_result = analyzer.analyze_only(
-                        news_title=news_title,
-                        news_content=news_content,
-                        source=source_name
-                    )
-                    if analysis_result:
-                        push_ok = send_analysis_to_feishu(news_title, analysis_result, source_name, analyzer_type)
-                        if push_ok:
-                            log_crawl(f"✅ [{model_name}] {source_name} 第 {n_idx} 条分析并推送成功")
-                            total_analyzed += 1
-                        else:
-                            log_crawl(f"❌ [{model_name}] {source_name} 第 {n_idx} 条推送失败")
-                    else:
-                        log_crawl(f"❌ [{model_name}] {source_name} 第 {n_idx} 条分析失败")
-                except Exception as e:
-                    logger.error(f"❌ [{model_name}] {source_name} 第 {n_idx} 条分析异常: {e}", exc_info=True)
-
-                if n_idx < len(news_to_analyze):
-                    await asyncio.sleep(2)
+    log_crawl("=" * 50)
+    log_crawl("📰 第1个新闻源: 东方财富")
+    log_crawl("=" * 50)
+    count, saved_news = await crawl_single_source(EastmoneyDepthCrawler)
+    total_saved += count
+    if saved_news:
+        await notify_em_news(saved_news[:5], "东方财富")
+        if doubao_analyzer:
+            for news in saved_news[:2]:
+                title = news.get('title', '')
+                content = news.get('content', news.get('summary', ''))
+                log_crawl(f"� [豆包] 正在分析: {title[:50]}...")
+                result = doubao_analyzer.analyze_only(title, content, "东方财富")
+                if result:
+                    send_analysis_to_feishu(title, result, "东方财富", "kb")
+                    log_crawl(f"✅ [豆包] 分析并推送成功")
+                else:
+                    log_crawl(f"❌ [豆包] 分析失败")
+                await asyncio.sleep(2)
+    else:
+        log_crawl("📭 东方财富没有新新闻")
 
     log_crawl("=" * 50)
-    log_crawl(f"✅ 所有新闻源抓取完成! 保存: {total_saved} 条, 分析: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
+    log_crawl("📰 第2个新闻源: 财联社")
     log_crawl("=" * 50)
+    count, saved_news = await crawl_single_source(CLSDepthCrawler)
+    total_saved += count
+    if saved_news:
+        await notify_new_news(saved_news[:5], "财联社")
+        if openrouter_analyzer:
+            for news in saved_news[:2]:
+                title = news.get('title', '')
+                content = news.get('content', news.get('summary', ''))
+                log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
+                result = openrouter_analyzer.analyze_only(title, content, "财联社")
+                if result:
+                    send_analysis_to_feishu(title, result, "财联社", "openrouter")
+                    log_crawl(f"✅ [OpenRouter] 分析并推送成功")
+                else:
+                    log_crawl(f"❌ [OpenRouter] 分析失败")
+                await asyncio.sleep(2)
+    else:
+        log_crawl("📭 财联社没有新新闻")
 
+    log_crawl("=" * 50)
+    log_crawl("📰 第3个新闻源: 纽约时报")
+    log_crawl("=" * 50)
+    count, saved_news = await crawl_single_source(NYTDepthCrawler)
+    total_saved += count
+    if saved_news:
+        await notify_nyt_news(saved_news[:5], "纽约时报")
+        if doubao_analyzer:
+            for news in saved_news[:2]:
+                title = news.get('title', '')
+                content = news.get('content', news.get('summary', ''))
+                log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
+                result = doubao_analyzer.analyze_only(title, content, "纽约时报")
+                if result:
+                    send_analysis_to_feishu(title, result, "纽约时报", "kb")
+                    log_crawl(f"✅ [豆包] 分析并推送成功")
+                else:
+                    log_crawl(f"❌ [豆包] 分析失败")
+                await asyncio.sleep(2)
+    else:
+        log_crawl("📭 纽约时报没有新新闻")
+
+    log_crawl("=" * 50)
+    log_crawl("📰 第4个新闻源: BBC")
+    log_crawl("=" * 50)
+    count, saved_news = await crawl_single_source(BBCCrawler)
+    total_saved += count
+    if saved_news:
+        await notify_bbc_news(saved_news[:5], "BBC")
+        if openrouter_analyzer:
+            for news in saved_news[:2]:
+                title = news.get('title', '')
+                content = news.get('content', news.get('summary', ''))
+                log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
+                result = openrouter_analyzer.analyze_only(title, content, "BBC")
+                if result:
+                    send_analysis_to_feishu(title, result, "BBC", "openrouter")
+                    log_crawl(f"✅ [OpenRouter] 分析并推送成功")
+                else:
+                    log_crawl(f"❌ [OpenRouter] 分析失败")
+                await asyncio.sleep(2)
+    else:
+        log_crawl("📭 BBC没有新新闻")
+
+    log_crawl("=" * 50)
     log_crawl("📊 开始指数监控...")
+    log_crawl("=" * 50)
     await crawl_indices()
     log_crawl("✅ Finnhub 指数监控完成")
 
     log_crawl("=" * 50)
-    log_crawl(f"✅ 所有新闻源抓取完成! 保存: {total_saved} 条, 分析: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
+    log_crawl(f"✅ 所有任务完成! 保存: {total_saved} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
     log_crawl("=" * 50)
-
-    log_crawl("=" * 50)
-    log_crawl("📊 开始指数监控...")
-    log_crawl("=" * 50)
-    await crawl_indices()
-    log_crawl("=" * 50)
-    log_crawl("✅ Finnhub 指数监控完成")
     log_crawl("=" * 50)
 
 
