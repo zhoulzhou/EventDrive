@@ -351,35 +351,35 @@ async def notify_index_alert(alert_content: str) -> bool:
     return False
 
 
-async def dfcf_feishu_notify(news_list: List[dict], source: str) -> bool:
+def dfcf_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_dfcf_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
 
 
-async def cls_feishu_notify(news_list: List[dict], source: str) -> bool:
+def cls_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_cls_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
 
 
-async def nyt_feishu_notify(news_list: List[dict], source: str) -> bool:
+def nyt_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_nyt_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
 
 
-async def bbc_feishu_notify(news_list: List[dict], source: str) -> bool:
+def bbc_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_bbc_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
 
 
-async def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
+def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
     notifier = get_kb_feishu_notifier()
     if notifier:
         content_lines = [
@@ -395,7 +395,7 @@ async def doubao_feishu_notify(news_title: str, analysis_result: str, source: st
     return False
 
 
-async def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
+def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
     notifier = get_openrouter_feishu_notifier()
     if notifier:
         content_lines = [
