@@ -55,6 +55,7 @@ class FinnhubIndexCrawler:
                 return quote
             except (ValueError, IndexError):
                 logger.warning(f"⚠️ {symbol} 休市或数据无效")
+                logger.warning(f"原始数据: {response.text}")
                 return None
         except Exception as e:
             logger.error(f"获取 {symbol} 报价失败: {e}", exc_info=True)
