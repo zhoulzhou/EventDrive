@@ -210,7 +210,7 @@ async def full_crawl():
             logger.error(f"{source_name} 飞书通知发送失败: {e}", exc_info=True)
 
         analyzer = doubao_analyzer if model_name == "豆包" else openrouter_analyzer
-        keyword = settings.KB_KEYWORD if model_name == "豆包" else settings.OPENROUTER_KEYWORD
+        analyzer_type = "kb" if model_name == "豆包" else "openrouter"
 
         if not analyzer:
             log_crawl(f"⚠️ {model_name}分析器未初始化，跳过分析")
@@ -229,7 +229,7 @@ async def full_crawl():
                         source=source_name
                     )
                     if analysis_result:
-                        push_ok = send_analysis_to_feishu(news_title, analysis_result, source_name, keyword)
+                        push_ok = send_analysis_to_feishu(news_title, analysis_result, source_name, analyzer_type)
                         if push_ok:
                             log_crawl(f"✅ [{model_name}] {source_name} 第 {n_idx} 条分析并推送成功")
                             total_analyzed += 1
