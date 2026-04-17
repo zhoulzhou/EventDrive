@@ -17,7 +17,7 @@ from app.crawlers import (
     NewsItem
 )
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify, doubao_feishu_notify, openrouter_feishu_notify, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier, init_cls_feishu_notifier, init_kb_feishu_notifier, init_openrouter_feishu_notifier
+from app.utils.feishu_notifier import dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify, doubao_feishu_notify, openrouter_feishu_notify, notify_index_alert
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
 

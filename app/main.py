@@ -10,7 +10,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base
 from app.api import news, crawl, filter, logs, feishu, login
-from app.utils.feishu_notifier import init_feishu_notifier, init_all_notifiers
+from app.utils.feishu_notifier import init_all_notifiers
 from app.scheduler import start_scheduler, stop_scheduler
 from app.api.login import is_logged_in
 
@@ -24,9 +24,6 @@ Base.metadata.create_all(bind=engine)
 print("✅ 数据库表初始化完成")
 
 init_all_notifiers(
-    feishu_url=settings.FEISHU_WEBHOOK_URL,
-    feishu_secret=settings.FEISHU_SECRET or "",
-    feishu_keyword=settings.FEISHU_KEYWORD,
     nyt_url=settings.NYT_FEISHU_WEBHOOK_URL or "",
     nyt_keyword=settings.NYT_FEISHU_KEYWORD,
     bbc_url=settings.BBC_FEISHU_WEBHOOK_URL or "",
