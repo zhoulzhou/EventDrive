@@ -190,8 +190,6 @@ _nyt_feishu_notifier: Optional[FeishuNotifier] = None
 _bbc_feishu_notifier: Optional[FeishuNotifier] = None
 _em_feishu_notifier: Optional[FeishuNotifier] = None
 _index_feishu_notifier: Optional[FeishuNotifier] = None
-_kb_feishu_notifier: Optional[FeishuNotifier] = None
-_openrouter_feishu_notifier: Optional[FeishuNotifier] = None
 
 
 def init_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
@@ -224,26 +222,6 @@ def init_index_feishu_notifier(webhook_url: str, secret: str, keyword: str = "�
     logger.info(f"指数飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
 
 
-def init_kb_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"):
-    global _kb_feishu_notifier
-    _kb_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"豆包分析器飞书推送已初始化，关键词: '{keyword}'")
-
-
-def init_openrouter_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"):
-    global _openrouter_feishu_notifier
-    _openrouter_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"OpenRouter分析器飞书推送已初始化，关键词: '{keyword}'")
-
-
-def get_kb_feishu_notifier() -> Optional[FeishuNotifier]:
-    return _kb_feishu_notifier
-
-
-def get_openrouter_feishu_notifier() -> Optional[FeishuNotifier]:
-    return _openrouter_feishu_notifier
-
-
 def init_all_notifiers(
     feishu_url: str = "",
     feishu_secret: str = "",
@@ -256,10 +234,6 @@ def init_all_notifiers(
     em_keyword: str = "头条",
     index_url: str = "",
     index_keyword: str = "指数",
-    kb_url: str = "",
-    kb_keyword: str = "Talk",
-    openrouter_url: str = "",
-    openrouter_keyword: str = "Talk",
 ):
     """
     统一初始化所有飞书推送实例，新增飞书配置都在这里加
@@ -274,10 +248,6 @@ def init_all_notifiers(
         init_em_feishu_notifier(em_url, "", em_keyword)
     if index_url:
         init_index_feishu_notifier(index_url, "", index_keyword)
-    if kb_url:
-        init_kb_feishu_notifier(kb_url, "", kb_keyword)
-    if openrouter_url:
-        init_openrouter_feishu_notifier(openrouter_url, "", openrouter_keyword)
 
 
 def get_feishu_notifier() -> Optional[FeishuNotifier]:

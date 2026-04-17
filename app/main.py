@@ -35,10 +35,6 @@ init_all_notifiers(
     em_keyword=settings.EM_FEISHU_KEYWORD,
     index_url=settings.INDEX_FEISHU_WEBHOOK_URL or "",
     index_keyword=settings.INDEX_KEYWORD,
-    kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
-    kb_keyword=settings.KB_KEYWORD,
-    openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",
-    openrouter_keyword=settings.OPENROUTER_KEYWORD,
 )
 print("✅ 飞书推送初始化完成")
 
