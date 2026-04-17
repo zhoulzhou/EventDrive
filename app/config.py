@@ -39,8 +39,11 @@ class Settings:
     BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/3d2a80af-aa97-48aa-864e-dec19d48ac08")
     BBC_FEISHU_KEYWORD: str = os.getenv("BBC_FEISHU_KEYWORD", "HOT")
 
-    EM_FEISHU_WEBHOOK_URL: str = os.getenv("EM_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/1d418960-b397-428e-9808-f9a36a0e2edf")
-    EM_FEISHU_KEYWORD: str = os.getenv("EM_FEISHU_KEYWORD", "头条")
+    DFCF_FEISHU_WEBHOOK_URL: str = os.getenv("DFCF_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/1d418960-b397-428e-9808-f9a36a0e2edf")
+    DFCF_FEISHU_KEYWORD: str = os.getenv("DFCF_FEISHU_KEYWORD", "头条")
+
+    CLS_FEISHU_WEBHOOK_URL: str = os.getenv("CLS_FEISHU_WEBHOOK_URL", "")
+    CLS_FEISHU_KEYWORD: str = os.getenv("CLS_FEISHU_KEYWORD", "头条")
 
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     OPENROUTER_FEISHU_WEBHOOK_URL: str = os.getenv("OPENROUTER_FEISHU_WEBHOOK_URL", "")
