@@ -1,6 +1,6 @@
 import logging
-import requests
 from typing import Optional
+from app.utils.feishu_notifier import get_feishu_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -127,8 +127,9 @@ class DoubaoAnalyzer:
         """
         将分析结果发送到飞书
         """
-        if not self.feishu_webhook_url:
-            logger.warning("飞书 webhook 未配置")
+        notifier = get_feishu_notifier()
+        if not notifier:
+            logger.warning("飞书 notifier 未初始化，跳过推送")
             return False
 
         content_lines = [
@@ -141,26 +142,7 @@ class DoubaoAnalyzer:
         ]
 
         content = "\n".join([line for line in content_lines if line])
-
-        payload = {
-            "msg_type": "text",
-            "content": {
-                "text": content
-            }
-        }
-
-        try:
-            response = requests.post(self.feishu_webhook_url, json=payload, timeout=10)
-            result = response.json()
-            if result.get("code") == 0:
-                logger.info(f"飞书推送成功: {news_title}")
-                return True
-            else:
-                logger.warning(f"飞书推送失败: {result.get('msg')}")
-                return False
-        except Exception as e:
-            logger.error(f"飞书推送异常: {e}", exc_info=True)
-            return False
+        return notifier.send_message(content)
 
     def analyze_and_push(self, news_title: str, news_content: str, source: str = "") -> bool:
         """

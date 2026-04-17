@@ -8,6 +8,9 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
+LAST_SEND_TIME = 0.0
+PUSH_COOLDOWN = 30
+
 
 class FeishuNotifier:
     def __init__(self, webhook_url: str, secret: str, keyword: str = "头条"):
@@ -27,6 +30,13 @@ class FeishuNotifier:
         return timestamp, sign
 
     def send_message(self, content: str) -> bool:
+        global LAST_SEND_TIME
+        now = time.time()
+        if now - LAST_SEND_TIME < PUSH_COOLDOWN:
+            wait_time = int(PUSH_COOLDOWN - (now - LAST_SEND_TIME))
+            logger.warning(f"飞书推送冷却中，还需等待 {wait_time} 秒")
+            return False
+
         logger.info(f"飞书推送检查: 关键词='{self.keyword}', 内容长度={len(content)}")
 
         if self.keyword and self.keyword not in content:
@@ -56,6 +66,7 @@ class FeishuNotifier:
                 result = response.json()
                 logger.info(f"飞书推送响应: code={result.get('code')}, msg={result.get('msg')}, 状态码={response.status_code}")
                 if result.get("code") == 0:
+                    LAST_SEND_TIME = time.time()
                     logger.info("飞书推送成功")
                     return True
                 else:
@@ -158,6 +169,19 @@ def get_em_feishu_notifier() -> Optional[FeishuNotifier]:
 
 def get_index_feishu_notifier() -> Optional[FeishuNotifier]:
     return _index_feishu_notifier
+
+
+def send_with_cooldown(content: str) -> bool:
+    """
+    统一推送入口，带30秒冷却限制
+    所有飞书推送都走这个函数
+    """
+    global _feishu_notifier, LAST_SEND_TIME
+    notifier = _feishu_notifier
+    if not notifier:
+        logger.warning("飞书 notifier 未初始化，跳过推送")
+        return False
+    return notifier.send_message(content)
 
 
 async def notify_index_alert(alert_content: str) -> bool:
