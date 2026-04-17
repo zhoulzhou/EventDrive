@@ -17,7 +17,7 @@ from app.crawlers import (
     NewsItem
 )
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier
+from app.utils.feishu_notifier import notify_new_news, notify_nyt_news, notify_bbc_news, notify_em_news, notify_no_news, notify_index_alert, init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier, init_index_feishu_notifier, send_analysis_to_feishu
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
 
@@ -158,36 +158,29 @@ async def full_crawl():
     start_time = datetime.now()
 
     crawlers = [
-        CLSDepthCrawler,
-        EastmoneyDepthCrawler,
-        NYTDepthCrawler,
-        BBCCrawler
+        ("东方财富", EastmoneyDepthCrawler, notify_em_news, "豆包"),
+        ("财联社", CLSDepthCrawler, notify_new_news, "OpenRouter"),
+        ("纽约时报", NYTDepthCrawler, notify_nyt_news, "豆包"),
+        ("BBC", BBCCrawler, notify_bbc_news, "OpenRouter"),
     ]
-
-    doubao_sources = ["东方财富", "纽约时报"]
-    openrouter_sources = ["财联社", "BBC"]
 
     if settings.KB_API_KEY:
         try:
             init_doubao_analyzer(
                 api_key=settings.KB_API_KEY,
                 model=settings.KB_MODEL_ID,
-                region=settings.KB_REGION,
-                feishu_webhook_url=settings.KB_FEISHU_WEBHOOK_URL,
-                keyword=settings.KB_KEYWORD
+                region=settings.KB_REGION
             )
-            log_crawl("✅ 豆包大模型分析器初始化完成 (东方财富、纽约时报)")
+            log_crawl("✅ 豆包大模型分析器初始化完成")
         except Exception as e:
             logger.error(f"❌ 豆包分析器初始化失败: {e}", exc_info=True)
 
     if settings.OPENROUTER_API_KEY:
         try:
             init_knowledge_analyzer(
-                api_key=settings.OPENROUTER_API_KEY,
-                feishu_webhook_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL,
-                keyword=settings.OPENROUTER_KEYWORD
+                api_key=settings.OPENROUTER_API_KEY
             )
-            log_crawl("✅ OpenRouter大模型分析器初始化完成 (财联社、BBC)")
+            log_crawl("✅ OpenRouter大模型分析器初始化完成")
         except Exception as e:
             logger.error(f"❌ OpenRouter分析器初始化失败: {e}", exc_info=True)
 
@@ -200,86 +193,63 @@ async def full_crawl():
     total_saved = 0
     total_analyzed = 0
 
-    for idx, crawler_class in enumerate(crawlers):
-        log_crawl(f"--- 第 {idx+1}/{len(crawlers)} 个新闻源 ---")
+    for idx, (source_name, crawler_class, notify_func, model_name) in enumerate(crawlers):
+        log_crawl(f"--- 第 {idx+1}/{len(crawlers)} 个新闻源: {source_name} ---")
         count, saved_news = await crawl_single_source(crawler_class)
         total_saved += count
 
         if not saved_news:
-            log_crawl(f"📭 {crawler_class.__name__} 没有新新闻")
+            log_crawl(f"📭 {source_name} 没有新新闻")
             continue
 
-        source = saved_news[0].get('source', '未知来源')
-        news_type = saved_news[0].get('news_type')
-        if news_type in ('wire', 'topstories'):
-            key = f"{source}_{news_type}"
-        else:
-            key = source
-
-        if 'wire' in key:
-            display_source = "纽约时报最新资讯"
-            notify_func = notify_nyt_news
-        elif 'topstories' in key:
-            display_source = "纽约时报精选"
-            notify_func = notify_nyt_news
-        elif 'bbc' in key.lower():
-            display_source = "BBC新闻"
-            notify_func = notify_bbc_news
-        elif 'eastmoney' in key.lower() or '东方财富' in key:
-            display_source = "东方财富"
-            notify_func = notify_em_news
-        else:
-            display_source = key
-            notify_func = notify_new_news
-
-        log_crawl(f"📤 正在发送 {display_source} 飞书通知...")
+        log_crawl(f"📤 正在发送 {source_name} 飞书通知...")
         try:
-            result = await notify_func(saved_news[:5], display_source)
-            log_crawl(f"📤 {display_source} 飞书通知发送结果: {result}")
+            result = await notify_func(saved_news[:5], source_name)
+            log_crawl(f"📤 {source_name} 飞书通知发送结果: {result}")
         except Exception as e:
-            logger.error(f"{display_source} 飞书通知发送失败: {e}", exc_info=True)
+            logger.error(f"{source_name} 飞书通知发送失败: {e}", exc_info=True)
 
-        analyzer = None
-        model_name = None
-        for ds in doubao_sources:
-            if ds in source:
-                analyzer = doubao_analyzer
-                model_name = "豆包"
-                break
-        if not analyzer:
-            for os in openrouter_sources:
-                if os in source:
-                    analyzer = openrouter_analyzer
-                    model_name = "OpenRouter"
-                    break
+        analyzer = doubao_analyzer if model_name == "豆包" else openrouter_analyzer
+        keyword = settings.KB_KEYWORD if model_name == "豆包" else settings.OPENROUTER_KEYWORD
 
         if not analyzer:
-            log_crawl(f"⚠️ 未知新闻源: {source}，跳过分析")
-            continue
+            log_crawl(f"⚠️ {model_name}分析器未初始化，跳过分析")
+        else:
+            news_to_analyze = saved_news[:2]
+            for n_idx, news in enumerate(news_to_analyze, 1):
+                news_title = news.get('title', '')
+                news_content = news.get('content', news.get('summary', ''))
 
-        news_to_analyze = saved_news[:2]
-        for n_idx, news in enumerate(news_to_analyze, 1):
-            news_title = news.get('title', '')
-            news_content = news.get('content', news.get('summary', ''))
+                log_crawl(f"🔍 [{model_name}] 正在分析 {source_name} 第 {n_idx}/{len(news_to_analyze)} 条: {news_title[:50]}...")
 
-            log_crawl(f"🔍 [{model_name}] 正在分析 {source} 的第 {n_idx}/{len(news_to_analyze)} 条新闻: {news_title[:50]}...")
+                try:
+                    analysis_result = analyzer.analyze_only(
+                        news_title=news_title,
+                        news_content=news_content,
+                        source=source_name
+                    )
+                    if analysis_result:
+                        push_ok = send_analysis_to_feishu(news_title, analysis_result, source_name, keyword)
+                        if push_ok:
+                            log_crawl(f"✅ [{model_name}] {source_name} 第 {n_idx} 条分析并推送成功")
+                            total_analyzed += 1
+                        else:
+                            log_crawl(f"❌ [{model_name}] {source_name} 第 {n_idx} 条推送失败")
+                    else:
+                        log_crawl(f"❌ [{model_name}] {source_name} 第 {n_idx} 条分析失败")
+                except Exception as e:
+                    logger.error(f"❌ [{model_name}] {source_name} 第 {n_idx} 条分析异常: {e}", exc_info=True)
 
-            try:
-                success = analyzer.analyze_and_push(
-                    news_title=news_title,
-                    news_content=news_content,
-                    source=source
-                )
-                if success:
-                    log_crawl(f"✅ [{model_name}] {source} 第 {n_idx} 条新闻分析并推送成功")
-                    total_analyzed += 1
-                else:
-                    log_crawl(f"❌ [{model_name}] {source} 第 {n_idx} 条新闻分析或推送失败")
-            except Exception as e:
-                logger.error(f"❌ [{model_name}] {source} 第 {n_idx} 条新闻分析异常: {e}", exc_info=True)
+                if n_idx < len(news_to_analyze):
+                    await asyncio.sleep(2)
 
-            if n_idx < len(news_to_analyze):
-                await asyncio.sleep(2)
+    log_crawl("=" * 50)
+    log_crawl(f"✅ 所有新闻源抓取完成! 保存: {total_saved} 条, 分析: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
+    log_crawl("=" * 50)
+
+    log_crawl("📊 开始指数监控...")
+    await crawl_indices()
+    log_crawl("✅ Finnhub 指数监控完成")
 
     log_crawl("=" * 50)
     log_crawl(f"✅ 所有新闻源抓取完成! 保存: {total_saved} 条, 分析: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")

@@ -184,6 +184,32 @@ class FeishuNotifier:
         logger.info(f"飞书无新新闻通知: {content}")
         return self.send_message(content)
 
+    def send_analysis(self, keyword: str, news_title: str, analysis_result: str, source: str = "") -> bool:
+        """
+        发送大模型分析结果到飞书
+        """
+        content_lines = [
+            f"【{keyword}】📰 新闻深度分析",
+            f"来源: {source}" if source else "",
+            f"标题: {news_title}",
+            "",
+            "===== 分析结果 =====",
+            analysis_result
+        ]
+        content = "\n".join([line for line in content_lines if line])
+        return self.send_message(content)
+
+
+def send_analysis_to_feishu(news_title: str, analysis_result: str, source: str = "", keyword: str = "Talk") -> bool:
+    """
+    统一发送分析结果到飞书，优先用主飞书
+    """
+    notifier = _feishu_notifier
+    if not notifier:
+        logger.warning("飞书未初始化，跳过分析推送")
+        return False
+    return notifier.send_analysis(keyword, news_title, analysis_result, source)
+
 
 _feishu_notifier: Optional[FeishuNotifier] = None
 _nyt_feishu_notifier: Optional[FeishuNotifier] = None

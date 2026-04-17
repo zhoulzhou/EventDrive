@@ -1,6 +1,5 @@
 import logging
 from typing import Optional
-from app.utils.feishu_notifier import get_feishu_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -122,40 +121,6 @@ class DoubaoAnalyzer:
         except Exception as e:
             logger.error(f"新闻分析出错: {str(e)}", exc_info=True)
             return None
-
-    def send_to_feishu(self, news_title: str, analysis_result: str, source: str = "") -> bool:
-        """
-        将分析结果发送到飞书
-        """
-        notifier = get_feishu_notifier()
-        if not notifier:
-            logger.warning("飞书 notifier 未初始化，跳过推送")
-            return False
-
-        content_lines = [
-            f"【{self.keyword}】📰 新闻深度分析",
-            f"来源: {source}" if source else "",
-            f"标题: {news_title}",
-            "",
-            "===== 分析结果 =====",
-            analysis_result
-        ]
-
-        content = "\n".join([line for line in content_lines if line])
-        return notifier.send_message(content)
-
-    def analyze_and_push(self, news_title: str, news_content: str, source: str = "") -> bool:
-        """
-        分析新闻并推送到飞书
-        """
-        logger.info(f"开始分析新闻: {news_title}")
-
-        analysis_result = self.analyze_news(news_content, news_title)
-        if not analysis_result:
-            logger.error("新闻分析失败，跳过推送")
-            return False
-
-        return self.send_to_feishu(news_title, analysis_result, source)
 
     def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
         """
