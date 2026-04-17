@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 LAST_SEND_TIME = 0.0
 PUSH_COOLDOWN = 30
-_pending_queue: List[str] = []
+_pending_queue: List[tuple] = []
 _draining = False
 _lock = asyncio.Lock()
 
@@ -39,7 +39,7 @@ class FeishuNotifier:
         now = time.time()
 
         if now - LAST_SEND_TIME < PUSH_COOLDOWN:
-            _pending_queue.append(content)
+            _pending_queue.append((self.webhook_url, self.secret, self.keyword, content))
             wait_time = int(PUSH_COOLDOWN - (now - LAST_SEND_TIME))
             logger.warning(f"飞书推送冷却中，任务已缓存({len(_pending_queue)}条待发)，还需等待 {wait_time} 秒")
             self._start_drain_timer()
@@ -110,14 +110,14 @@ class FeishuNotifier:
             time.sleep(wait_time)
 
         while _pending_queue:
-            content = _pending_queue.pop(0)
+            webhook_url, secret, keyword, content = _pending_queue.pop(0)
             LAST_SEND_TIME = time.time()
-            logger.info(f"发送缓存任务: {content[:50]}...")
-            self._do_send(content)
+            logger.info(f"发送缓存任务到 {webhook_url}: {content[:50]}...")
+            self._do_send(webhook_url, secret, keyword, content)
 
-    def _do_send(self, content: str) -> bool:
-        if self.keyword and self.keyword not in content:
-            logger.info(f"消息中不包含关键词 '{self.keyword}'，跳过")
+    def _do_send(self, webhook_url: str, secret: str, keyword: str, content: str) -> bool:
+        if keyword and keyword not in content:
+            logger.info(f"消息中不包含关键词 '{keyword}'，跳过")
             return False
 
         payload = {
@@ -127,7 +127,7 @@ class FeishuNotifier:
             }
         }
 
-        if self.secret:
+        if secret:
             timestamp, sign = self._generate_sign()
             params = {"timestamp": timestamp, "sign": sign}
         else:
@@ -135,7 +135,7 @@ class FeishuNotifier:
 
         try:
             with httpx.Client(timeout=10) as client:
-                response = client.post(self.webhook_url, json=payload, params=params)
+                response = client.post(webhook_url, json=payload, params=params)
                 result = response.json()
                 if result.get("code") == 0:
                     logger.info("缓存任务推送成功")
