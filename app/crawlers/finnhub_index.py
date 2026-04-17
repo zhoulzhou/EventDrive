@@ -10,7 +10,7 @@ from app import crud, schemas
 
 logger = logging.getLogger(__name__)
 
-_client = httpx.AsyncClient(timeout=10)
+_client = httpx.AsyncClient(timeout=15)
 
 
 class FinnhubIndexCrawler:
@@ -42,20 +42,20 @@ class FinnhubIndexCrawler:
                 return None
 
             parts = lines[1].split(',')
-            close = parts[6]
-            if close == "N/D":
-                logger.error(f"{symbol} 数据无效: N/D")
+            try:
+                quote = {
+                    "c": float(parts[6]),
+                    "h": float(parts[4]),
+                    "l": float(parts[5]),
+                    "o": float(parts[3]),
+                    "pc": 0.0,
+                    "update_time": parts[1]
+                }
+                logger.info(f"获取 {symbol} 报价成功: {quote}")
+                return quote
+            except (ValueError, IndexError):
+                logger.warning(f"⚠️ {symbol} 休市或数据无效")
                 return None
-            quote = {
-                "c": float(close),
-                "h": float(parts[4]),
-                "l": float(parts[5]),
-                "o": float(parts[3]),
-                "pc": 0.0,
-                "update_time": parts[1]
-            }
-            logger.info(f"获取 {symbol} 报价成功: {quote}")
-            return quote
         except Exception as e:
             logger.error(f"获取 {symbol} 报价失败: {e}", exc_info=True)
             return None
