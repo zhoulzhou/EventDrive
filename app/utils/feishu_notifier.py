@@ -221,6 +221,7 @@ _nyt_feishu_notifier: Optional[FeishuNotifier] = None
 _bbc_feishu_notifier: Optional[FeishuNotifier] = None
 _em_feishu_notifier: Optional[FeishuNotifier] = None
 _index_feishu_notifier: Optional[FeishuNotifier] = None
+_cls_feishu_notifier: Optional[FeishuNotifier] = None
 _kb_feishu_notifier: Optional[FeishuNotifier] = None
 _openrouter_feishu_notifier: Optional[FeishuNotifier] = None
 
@@ -255,6 +256,12 @@ def init_index_feishu_notifier(webhook_url: str, secret: str, keyword: str = "�
     logger.info(f"指数飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
 
 
+def init_cls_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
+    global _cls_feishu_notifier
+    _cls_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
+    logger.info(f"财联社飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+
+
 def init_kb_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"):
     global _kb_feishu_notifier
     _kb_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
@@ -277,6 +284,8 @@ def init_all_notifiers(
     bbc_keyword: str = "HOT",
     em_url: str = "",
     em_keyword: str = "头条",
+    cls_url: str = "",
+    cls_keyword: str = "头条",
     index_url: str = "",
     index_keyword: str = "指数",
     kb_url: str = "",
@@ -295,6 +304,8 @@ def init_all_notifiers(
         init_bbc_feishu_notifier(bbc_url, "", bbc_keyword)
     if em_url:
         init_em_feishu_notifier(em_url, "", em_keyword)
+    if cls_url:
+        init_cls_feishu_notifier(cls_url, "", cls_keyword)
     if index_url:
         init_index_feishu_notifier(index_url, "", index_keyword)
     if kb_url:
@@ -321,6 +332,10 @@ def get_em_feishu_notifier() -> Optional[FeishuNotifier]:
 
 def get_index_feishu_notifier() -> Optional[FeishuNotifier]:
     return _index_feishu_notifier
+
+
+def get_cls_feishu_notifier() -> Optional[FeishuNotifier]:
+    return _cls_feishu_notifier
 
 
 def get_kb_feishu_notifier() -> Optional[FeishuNotifier]:
@@ -352,7 +367,7 @@ async def notify_index_alert(alert_content: str) -> bool:
 
 
 async def notify_new_news(news_list: List[dict], source: str) -> bool:
-    notifier = get_feishu_notifier()
+    notifier = get_cls_feishu_notifier() or get_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
