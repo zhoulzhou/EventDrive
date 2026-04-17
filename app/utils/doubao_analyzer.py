@@ -1,4 +1,5 @@
 import logging
+import requests
 from typing import Optional
 
 logger = logging.getLogger(__name__)
