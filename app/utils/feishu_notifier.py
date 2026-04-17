@@ -220,6 +220,7 @@ _feishu_notifier: Optional[FeishuNotifier] = None
 _nyt_feishu_notifier: Optional[FeishuNotifier] = None
 _bbc_feishu_notifier: Optional[FeishuNotifier] = None
 _em_feishu_notifier: Optional[FeishuNotifier] = None
+_dfcf_feishu_notifier: Optional[FeishuNotifier] = None
 _index_feishu_notifier: Optional[FeishuNotifier] = None
 _cls_feishu_notifier: Optional[FeishuNotifier] = None
 _kb_feishu_notifier: Optional[FeishuNotifier] = None
@@ -248,6 +249,12 @@ def init_em_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头�
     global _em_feishu_notifier
     _em_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
     logger.info(f"东方财富飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+
+
+def init_dfcf_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
+    global _dfcf_feishu_notifier
+    _dfcf_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
+    logger.info(f"东方财富(dfcf)飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
 
 
 def init_index_feishu_notifier(webhook_url: str, secret: str, keyword: str = "指数"):
@@ -284,6 +291,8 @@ def init_all_notifiers(
     bbc_keyword: str = "HOT",
     em_url: str = "",
     em_keyword: str = "头条",
+    dfcf_url: str = "",
+    dfcf_keyword: str = "头条",
     cls_url: str = "",
     cls_keyword: str = "头条",
     index_url: str = "",
@@ -304,6 +313,8 @@ def init_all_notifiers(
         init_bbc_feishu_notifier(bbc_url, "", bbc_keyword)
     if em_url:
         init_em_feishu_notifier(em_url, "", em_keyword)
+    if dfcf_url:
+        init_dfcf_feishu_notifier(dfcf_url, "", dfcf_keyword)
     if cls_url:
         init_cls_feishu_notifier(cls_url, "", cls_keyword)
     if index_url:
@@ -328,6 +339,10 @@ def get_bbc_feishu_notifier() -> Optional[FeishuNotifier]:
 
 def get_em_feishu_notifier() -> Optional[FeishuNotifier]:
     return _em_feishu_notifier
+
+
+def get_dfcf_feishu_notifier() -> Optional[FeishuNotifier]:
+    return _dfcf_feishu_notifier
 
 
 def get_index_feishu_notifier() -> Optional[FeishuNotifier]:
@@ -367,7 +382,7 @@ async def notify_index_alert(alert_content: str) -> bool:
 
 
 async def dfcf_feishu_notify(news_list: List[dict], source: str) -> bool:
-    notifier = get_em_feishu_notifier()
+    notifier = get_dfcf_feishu_notifier()
     if notifier:
         return notifier.send_news_notification(news_list, source)
     return False
