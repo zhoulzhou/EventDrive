@@ -4,12 +4,17 @@ import hmac
 import hashlib
 import httpx
 import logging
+import asyncio
 from typing import List, Optional
+from threading import Thread, Lock
 
 logger = logging.getLogger(__name__)
 
 LAST_SEND_TIME = 0.0
 PUSH_COOLDOWN = 30
+_pending_queue: List[str] = []
+_draining = False
+_lock = asyncio.Lock()
 
 
 class FeishuNotifier:
@@ -30,12 +35,15 @@ class FeishuNotifier:
         return timestamp, sign
 
     def send_message(self, content: str) -> bool:
-        global LAST_SEND_TIME
+        global LAST_SEND_TIME, _pending_queue
         now = time.time()
+
         if now - LAST_SEND_TIME < PUSH_COOLDOWN:
+            _pending_queue.append(content)
             wait_time = int(PUSH_COOLDOWN - (now - LAST_SEND_TIME))
-            logger.warning(f"飞书推送冷却中，还需等待 {wait_time} 秒")
-            return False
+            logger.warning(f"飞书推送冷却中，任务已缓存({len(_pending_queue)}条待发)，还需等待 {wait_time} 秒")
+            self._start_drain_timer()
+            return True
 
         logger.info(f"飞书推送检查: 关键词='{self.keyword}', 内容长度={len(content)}")
 
@@ -74,6 +82,69 @@ class FeishuNotifier:
                     return False
         except Exception as e:
             logger.error(f"飞书推送异常: {e}", exc_info=True)
+            return False
+
+    def _start_drain_timer(self):
+        global _draining
+        if _draining:
+            return
+        _draining = True
+
+        def drain_later():
+            time.sleep(PUSH_COOLDOWN)
+            self._drain_queue()
+            global _draining
+            _draining = False
+
+        t = Thread(target=drain_later, daemon=True)
+        t.start()
+
+    def _drain_queue(self):
+        global LAST_SEND_TIME, _pending_queue
+        if not _pending_queue:
+            return
+
+        now = time.time()
+        if now - LAST_SEND_TIME < PUSH_COOLDOWN:
+            wait_time = PUSH_COOLDOWN - (now - LAST_SEND_TIME)
+            time.sleep(wait_time)
+
+        while _pending_queue:
+            content = _pending_queue.pop(0)
+            LAST_SEND_TIME = time.time()
+            logger.info(f"发送缓存任务: {content[:50]}...")
+            self._do_send(content)
+
+    def _do_send(self, content: str) -> bool:
+        if self.keyword and self.keyword not in content:
+            logger.info(f"消息中不包含关键词 '{self.keyword}'，跳过")
+            return False
+
+        payload = {
+            "msg_type": "text",
+            "content": {
+                "text": content
+            }
+        }
+
+        if self.secret:
+            timestamp, sign = self._generate_sign()
+            params = {"timestamp": timestamp, "sign": sign}
+        else:
+            params = {}
+
+        try:
+            with httpx.Client(timeout=10) as client:
+                response = client.post(self.webhook_url, json=payload, params=params)
+                result = response.json()
+                if result.get("code") == 0:
+                    logger.info("缓存任务推送成功")
+                    return True
+                else:
+                    logger.warning(f"缓存任务推送失败: {result.get('msg')}")
+                    return False
+        except Exception as e:
+            logger.error(f"缓存任务推送异常: {e}")
             return False
 
     def send_news_notification(self, news_list: List[dict], source: str, prefix: str = None) -> bool:
