@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.database import SessionLocal
 from app import crud
-from app.utils.feishu_notifier import get_feishu_notifier, notify_new_news
+from app.utils.feishu_notifier import get_dfcf_feishu_notifier, dfcf_feishu_notify
 from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
@@ -25,10 +25,7 @@ class FeishuPushResponse(BaseModel):
 
 @router.post("/feishu/push", response_model=FeishuPushResponse)
 async def push_to_feishu(auth: bool = Depends(require_auth)):
-    if not settings.FEISHU_WEBHOOK_URL:
-        raise HTTPException(status_code=400, detail="飞书推送未配置")
-
-    notifier = get_feishu_notifier()
+    notifier = get_dfcf_feishu_notifier()
     if not notifier:
         raise HTTPException(status_code=400, detail="飞书推送未初始化")
 
@@ -59,7 +56,7 @@ async def push_to_feishu(auth: bool = Depends(require_auth)):
                 for news in news_list[:5]
             ]
             logger.info(f"飞书推送: {source} 准备推送 {len(news_data)} 条新闻")
-            success = await notify_new_news(news_data, source)
+            success = await dfcf_feishu_notify(news_data, source)
             if success:
                 total_sent += len(news_data)
                 results.append(f"{source} {len(news_data)}条")
