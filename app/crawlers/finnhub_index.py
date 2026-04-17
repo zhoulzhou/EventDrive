@@ -2,6 +2,7 @@
 import httpx
 import asyncio
 import logging
+import re
 from datetime import datetime, date
 from typing import Dict, Any, Optional
 from app.config import settings
@@ -23,39 +24,54 @@ class FinnhubIndexCrawler:
 
     async def fetch_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         try:
-            if symbol == "NDX":
-                url = "https://stooq.com/q/l/?s=ndx&f=sd2t2ohlcv&h&e=csv"
-            elif symbol == "VIX":
-                url = "https://stooq.com/q/l/?s=vix&f=sd2t2ohlcv&h&e=csv"
-            else:
+            tencent_map = {
+                "NDX": "usNDX",
+                "VIX": "usVIX"
+            }
+            code = tencent_map.get(symbol)
+            if not code:
                 return None
 
+            url = f"http://qt.gtimg.cn/q={code}"
             await asyncio.sleep(0.5)
             response = await _client.get(url)
             if response.status_code != 200:
                 logger.error(f"请求失败 {symbol}: {response.status_code}")
                 return None
 
-            lines = response.text.strip().splitlines()
-            if len(lines) < 2:
-                logger.error(f"未找到 {symbol} 数据")
+            content = response.text
+            match = re.search(rf'{code}="([^"]+)"', content)
+            if not match:
+                logger.warning(f"⚠️ {symbol} 未找到数据")
                 return None
 
-            parts = lines[1].split(',')
+            parts = match.group(1).split("~")
             try:
+                current = float(parts[3])
+                pre_close = float(parts[4])
+                open_price = float(parts[5])
+                high = float(parts[33]) if parts[33] and parts[33].replace(".", "").replace("-", "").isdigit() else current
+                low = float(parts[34]) if parts[34] and parts[34].replace(".", "").replace("-", "").isdigit() else current
+                update_time = parts[30] if len(parts) > 30 else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                if high == 0:
+                    high = current
+                if low == 0:
+                    low = current
+
                 quote = {
-                    "c": float(parts[6]),
-                    "h": float(parts[4]),
-                    "l": float(parts[5]),
-                    "o": float(parts[3]),
-                    "pc": 0.0,
-                    "update_time": parts[1]
+                    "c": current,
+                    "h": high,
+                    "l": low,
+                    "o": open_price,
+                    "pc": pre_close,
+                    "update_time": update_time
                 }
                 logger.info(f"获取 {symbol} 报价成功: {quote}")
                 return quote
             except (ValueError, IndexError):
-                logger.warning(f"⚠️ {symbol} 休市或数据无效")
-                logger.warning(f"原始数据: {response.text}")
+                logger.warning(f"⚠️ {symbol} 解析数据失败")
+                logger.warning(f"原始数据: {content}")
                 return None
         except Exception as e:
             logger.error(f"获取 {symbol} 报价失败: {e}", exc_info=True)
