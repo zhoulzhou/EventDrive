@@ -10,7 +10,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base
 from app.api import news, crawl, filter, logs, feishu, login
-from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier
+from app.utils.feishu_notifier import init_feishu_notifier, init_all_notifiers
 from app.scheduler import start_scheduler, stop_scheduler
 from app.api.login import is_logged_in
 
@@ -23,45 +23,24 @@ print("=" * 60)
 Base.metadata.create_all(bind=engine)
 print("✅ 数据库表初始化完成")
 
-if settings.FEISHU_WEBHOOK_URL and settings.FEISHU_SECRET:
-    init_feishu_notifier(
-        settings.FEISHU_WEBHOOK_URL,
-        settings.FEISHU_SECRET,
-        settings.FEISHU_KEYWORD
-    )
-    print("✅ 飞书推送已初始化")
-else:
-    print("⚠️ 飞书推送未配置 (FEISHU_WEBHOOK_URL 或 FEISHU_SECRET 未设置)")
-
-if settings.NYT_FEISHU_WEBHOOK_URL:
-    init_nyt_feishu_notifier(
-        settings.NYT_FEISHU_WEBHOOK_URL,
-        "",
-        settings.NYT_FEISHU_KEYWORD
-    )
-    print("✅ 纽约时报飞书推送已初始化")
-else:
-    print("⚠️ 纽约时报飞书推送未配置 (NYT_FEISHU_WEBHOOK_URL 未设置)")
-
-if settings.BBC_FEISHU_WEBHOOK_URL:
-    init_bbc_feishu_notifier(
-        settings.BBC_FEISHU_WEBHOOK_URL,
-        "",
-        settings.BBC_FEISHU_KEYWORD
-    )
-    print("✅ BBC飞书推送已初始化")
-else:
-    print("⚠️ BBC飞书推送未配置 (BBC_FEISHU_WEBHOOK_URL 未设置)")
-
-if settings.EM_FEISHU_WEBHOOK_URL:
-    init_em_feishu_notifier(
-        settings.EM_FEISHU_WEBHOOK_URL,
-        "",
-        settings.EM_FEISHU_KEYWORD
-    )
-    print("✅ 东方财富飞书推送已初始化")
-else:
-    print("⚠️ 东方财富飞书推送未配置 (EM_FEISHU_WEBHOOK_URL 未设置)")
+init_all_notifiers(
+    feishu_url=settings.FEISHU_WEBHOOK_URL,
+    feishu_secret=settings.FEISHU_SECRET or "",
+    feishu_keyword=settings.FEISHU_KEYWORD,
+    nyt_url=settings.NYT_FEISHU_WEBHOOK_URL or "",
+    nyt_keyword=settings.NYT_FEISHU_KEYWORD,
+    bbc_url=settings.BBC_FEISHU_WEBHOOK_URL or "",
+    bbc_keyword=settings.BBC_FEISHU_KEYWORD,
+    em_url=settings.EM_FEISHU_WEBHOOK_URL or "",
+    em_keyword=settings.EM_FEISHU_KEYWORD,
+    index_url=settings.INDEX_FEISHU_WEBHOOK_URL or "",
+    index_keyword=settings.INDEX_KEYWORD,
+    kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
+    kb_keyword=settings.KB_KEYWORD,
+    openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",
+    openrouter_keyword=settings.OPENROUTER_KEYWORD,
+)
+print("✅ 飞书推送初始化完成")
 
 
 @asynccontextmanager

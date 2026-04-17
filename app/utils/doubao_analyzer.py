@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from app.utils.feishu_notifier import get_feishu_notifier
+from app.utils.feishu_notifier import get_kb_feishu_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class DoubaoAnalyzer:
         """
         将分析结果发送到飞书
         """
-        notifier = get_feishu_notifier()
+        notifier = get_kb_feishu_notifier()
         if not notifier:
             logger.warning("飞书 notifier 未初始化，跳过推送")
             return False
