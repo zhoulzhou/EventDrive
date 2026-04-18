@@ -19,7 +19,7 @@ from app.crawlers import (
 from app.utils.image_downloader import download_image
 from app.utils.feishu_notifier import dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify, doubao_feishu_notify, openrouter_feishu_notify, notify_index_alert, init_index_feishu_notifier
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
-from app.utils.knowledge_analyzer import init_knowledge_analyzer, get_knowledge_analyzer
+from app.utils.openrouter_analyzer import init_openrouter_analyzer, get_openrouter_analyzer
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -166,13 +166,13 @@ async def full_crawl():
 
     if settings.OPENROUTER_API_KEY:
         try:
-            init_knowledge_analyzer(api_key=settings.OPENROUTER_API_KEY)
+            init_openrouter_analyzer(api_key=settings.OPENROUTER_API_KEY)
             log_crawl("✅ OpenRouter大模型分析器初始化完成")
         except Exception as e:
             logger.error(f"❌ OpenRouter分析器初始化失败: {e}", exc_info=True)
 
     doubao_analyzer = get_doubao_analyzer()
-    openrouter_analyzer = get_knowledge_analyzer()
+    openrouter_analyzer = get_openrouter_analyzer()
 
     total_saved = 0
     total_analyzed = 0
@@ -206,17 +206,17 @@ async def full_crawl():
     total_saved += count
     if saved_news:
         cls_feishu_notify(saved_news[:5], "财联社")
-        if openrouter_analyzer:
+        if doubao_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
                 content = news.get('content', news.get('summary', ''))
-                log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
-                result = openrouter_analyzer.analyze_only(title, content, "财联社")
+                log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
+                result = doubao_analyzer.analyze_only(title, content, "财联社")
                 if result:
-                    openrouter_feishu_notify(title, result, "财联社")
-                    log_crawl(f"✅ [OpenRouter] 分析并推送成功")
+                    doubao_feishu_notify(title, result, "财联社")
+                    log_crawl(f"✅ [豆包] 分析并推送成功")
                 else:
-                    log_crawl(f"❌ [OpenRouter] 分析失败")
+                    log_crawl(f"❌ [豆包] 分析失败")
                 await asyncio.sleep(2)
     else:
         log_crawl("📭 财联社没有新新闻")
@@ -228,17 +228,17 @@ async def full_crawl():
     total_saved += count
     if saved_news:
         nyt_feishu_notify(saved_news[:5], "纽约时报")
-        if doubao_analyzer:
+        if openrouter_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
                 content = news.get('content', news.get('summary', ''))
-                log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
-                result = doubao_analyzer.analyze_only(title, content, "纽约时报")
+                log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
+                result = openrouter_analyzer.analyze_only(title, content, "纽约时报", use_english=True)
                 if result:
-                    doubao_feishu_notify(title, result, "纽约时报")
-                    log_crawl(f"✅ [豆包] 分析并推送成功")
+                    openrouter_feishu_notify(title, result, "纽约时报")
+                    log_crawl(f"✅ [OpenRouter] 分析并推送成功")
                 else:
-                    log_crawl(f"❌ [豆包] 分析失败")
+                    log_crawl(f"❌ [OpenRouter] 分析失败")
                 await asyncio.sleep(2)
     else:
         log_crawl("📭 纽约时报没有新新闻")
@@ -255,7 +255,7 @@ async def full_crawl():
                 title = news.get('title', '')
                 content = news.get('content', news.get('summary', ''))
                 log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
-                result = openrouter_analyzer.analyze_only(title, content, "BBC")
+                result = openrouter_analyzer.analyze_only(title, content, "BBC", use_english=True)
                 if result:
                     openrouter_feishu_notify(title, result, "BBC")
                     log_crawl(f"✅ [OpenRouter] 分析并推送成功")
