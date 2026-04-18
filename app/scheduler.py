@@ -187,9 +187,9 @@ async def full_crawl():
         if doubao_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
-                content = news.get('content', news.get('summary', ''))
+                summary = news.get('summary', '')
                 log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
-                result = doubao_analyzer.analyze_only(title, content, "东方财富")
+                result = doubao_analyzer.analyze_only(title, summary, "东方财富")
                 if result:
                     doubao_feishu_notify(title, result, "东方财富")
                     log_crawl(f"✅ [豆包] 分析并推送成功")
@@ -209,9 +209,9 @@ async def full_crawl():
         if doubao_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
-                content = news.get('content', news.get('summary', ''))
+                summary = news.get('summary', '')
                 log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
-                result = doubao_analyzer.analyze_only(title, content, "财联社")
+                result = doubao_analyzer.analyze_only(title, summary, "财联社")
                 if result:
                     doubao_feishu_notify(title, result, "财联社")
                     log_crawl(f"✅ [豆包] 分析并推送成功")
@@ -231,9 +231,9 @@ async def full_crawl():
         if openrouter_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
-                content = news.get('content', news.get('summary', ''))
+                summary = news.get('summary', '')
                 log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
-                result = openrouter_analyzer.analyze_only(title, content, "纽约时报", use_english=True)
+                result = openrouter_analyzer.analyze_only(title, summary, "纽约时报", use_english=True)
                 if result:
                     openrouter_feishu_notify(title, result, "纽约时报")
                     log_crawl(f"✅ [OpenRouter] 分析并推送成功")
@@ -253,9 +253,9 @@ async def full_crawl():
         if openrouter_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
-                content = news.get('content', news.get('summary', ''))
+                summary = news.get('summary', '')
                 log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
-                result = openrouter_analyzer.analyze_only(title, content, "BBC", use_english=True)
+                result = openrouter_analyzer.analyze_only(title, summary, "BBC", use_english=True)
                 if result:
                     openrouter_feishu_notify(title, result, "BBC")
                     log_crawl(f"✅ [OpenRouter] 分析并推送成功")
