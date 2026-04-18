@@ -25,7 +25,7 @@ class OpenRouterAnalyzer:
 【News Title】
 {news_title}
 
-【News Content】
+【News Summary】
 {news_content}
 
 【Analysis Requirements】
