@@ -206,18 +206,6 @@ async def full_crawl():
     total_saved += count
     if saved_news:
         cls_feishu_notify(saved_news[:5], "财联社")
-        if doubao_analyzer:
-            for news in saved_news[:2]:
-                title = news.get('title', '')
-                summary = news.get('summary', '')
-                log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
-                result = doubao_analyzer.analyze_only(title, summary, "财联社")
-                if result:
-                    doubao_feishu_notify(title, result, "财联社")
-                    log_crawl(f"✅ [豆包] 分析并推送成功")
-                else:
-                    log_crawl(f"❌ [豆包] 分析失败")
-                await asyncio.sleep(2)
     else:
         log_crawl("📭 财联社没有新新闻")
 
