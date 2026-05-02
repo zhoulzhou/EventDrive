@@ -430,7 +430,7 @@ def deepseek_feishu_notify(news_title: str, analysis_result: str, source: str) -
     notifier = get_deepseek_feishu_notifier()
     if notifier:
         content_lines = [
-            f"【深度分析】📰 新闻深度分析",
+            f"【Talk】📰 DeepSeek V4 新闻分析",
             f"来源: {source}",
             f"标题: {news_title}",
             "",
