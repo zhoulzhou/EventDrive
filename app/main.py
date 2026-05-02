@@ -38,6 +38,8 @@ init_all_notifiers(
     kb_keyword=settings.KB_KEYWORD,
     openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",
     openrouter_keyword=settings.OPENROUTER_KEYWORD,
+    deepseek_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL or "",
+    deepseek_keyword=settings.DEEPSEEK_KEYWORD,
 )
 print("✅ 飞书推送初始化完成")
 

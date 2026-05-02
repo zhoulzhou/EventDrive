@@ -224,6 +224,7 @@ _index_feishu_notifier: Optional[FeishuNotifier] = None
 _cls_feishu_notifier: Optional[FeishuNotifier] = None
 _kb_feishu_notifier: Optional[FeishuNotifier] = None
 _openrouter_feishu_notifier: Optional[FeishuNotifier] = None
+_deepseek_feishu_notifier: Optional[FeishuNotifier] = None
 
 
 def init_nyt_feishu_notifier(webhook_url: str, secret: str, keyword: str = "HOT"):
@@ -268,6 +269,12 @@ def init_openrouter_feishu_notifier(webhook_url: str, secret: str, keyword: str 
     logger.info(f"OpenRouter分析飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
 
 
+def init_deepseek_feishu_notifier(webhook_url: str, secret: str, keyword: str = "深度分析"):
+    global _deepseek_feishu_notifier
+    _deepseek_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
+    logger.info(f"DeepSeek分析飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+
+
 def init_all_notifiers(
     nyt_url: str = "",
     nyt_keyword: str = "HOT",
@@ -283,6 +290,8 @@ def init_all_notifiers(
     kb_keyword: str = "Talk",
     openrouter_url: str = "",
     openrouter_keyword: str = "Talk",
+    deepseek_url: str = "",
+    deepseek_keyword: str = "深度分析",
 ):
     """
     统一初始化所有飞书推送实例，新增飞书配置都在这里加
@@ -301,6 +310,8 @@ def init_all_notifiers(
         init_kb_feishu_notifier(kb_url, "", kb_keyword)
     if openrouter_url:
         init_openrouter_feishu_notifier(openrouter_url, "", openrouter_keyword)
+    if deepseek_url:
+        init_deepseek_feishu_notifier(deepseek_url, "", deepseek_keyword)
 
 
 def get_nyt_feishu_notifier() -> Optional[FeishuNotifier]:
@@ -329,6 +340,10 @@ def get_kb_feishu_notifier() -> Optional[FeishuNotifier]:
 
 def get_openrouter_feishu_notifier() -> Optional[FeishuNotifier]:
     return _openrouter_feishu_notifier
+
+
+def get_deepseek_feishu_notifier() -> Optional[FeishuNotifier]:
+    return _deepseek_feishu_notifier
 
 
 def send_with_cooldown(content: str) -> bool:
@@ -400,6 +415,22 @@ def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str)
     if notifier:
         content_lines = [
             f"【Talk】📰 新闻深度分析",
+            f"来源: {source}",
+            f"标题: {news_title}",
+            "",
+            "===== 分析结果 =====",
+            analysis_result
+        ]
+        content = "\n".join(content_lines)
+        return notifier.send_message(content)
+    return False
+
+
+def deepseek_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
+    notifier = get_deepseek_feishu_notifier()
+    if notifier:
+        content_lines = [
+            f"【深度分析】📰 新闻深度分析",
             f"来源: {source}",
             f"标题: {news_title}",
             "",
