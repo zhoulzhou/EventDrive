@@ -198,18 +198,6 @@ async def full_crawl():
     total_saved += count
     if saved_news:
         dfcf_feishu_notify(saved_news[:5], "东方财富")
-        if doubao_analyzer:
-            for news in saved_news[:2]:
-                title = news.get('title', '')
-                summary = news.get('summary', '')
-                log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
-                result = doubao_analyzer.analyze_only(title, summary, "东方财富")
-                if result:
-                    doubao_feishu_notify(title, result, "东方财富")
-                    log_crawl(f"✅ [豆包] 分析并推送成功")
-                else:
-                    log_crawl(f"❌ [豆包] 分析失败")
-                await asyncio.sleep(2)
         if deepseek_analyzer:
             for news in saved_news[:2]:
                 title = news.get('title', '')
@@ -221,6 +209,18 @@ async def full_crawl():
                     log_crawl(f"✅ [DeepSeek] 分析并推送成功")
                 else:
                     log_crawl(f"❌ [DeepSeek] 分析失败")
+                await asyncio.sleep(2)
+        if doubao_analyzer:
+            for news in saved_news[:2]:
+                title = news.get('title', '')
+                summary = news.get('summary', '')
+                log_crawl(f"🔍 [豆包] 正在分析: {title[:50]}...")
+                result = doubao_analyzer.analyze_only(title, summary, "东方财富")
+                if result:
+                    doubao_feishu_notify(title, result, "东方财富")
+                    log_crawl(f"✅ [豆包] 分析并推送成功")
+                else:
+                    log_crawl(f"❌ [豆包] 分析失败")
                 await asyncio.sleep(2)
     else:
         log_crawl("📭 东方财富没有新新闻")
