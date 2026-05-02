@@ -42,6 +42,10 @@ init_all_notifiers(
     deepseek_keyword=settings.DEEPSEEK_KEYWORD,
 )
 print("✅ 飞书推送初始化完成")
+if settings.DEEPSEEK_FEISHU_WEBHOOK_URL:
+    print(f"  - DeepSeek 飞书推送: ✅ (关键词: {settings.DEEPSEEK_KEYWORD})")
+if settings.KB_FEISHU_WEBHOOK_URL:
+    print(f"  - 豆包飞书推送: ✅ (关键词: {settings.KB_KEYWORD})")
 
 
 @asynccontextmanager
