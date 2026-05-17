@@ -410,17 +410,21 @@ def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> 
     return False
 
 
-def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
+def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str, model: str = "") -> bool:
     notifier = get_openrouter_feishu_notifier()
     if notifier:
         content_lines = [
             f"【Talk】📰 新闻深度分析",
             f"来源: {source}",
             f"标题: {news_title}",
+        ]
+        if model:
+            content_lines.append(f"模型: {model}")
+        content_lines.extend([
             "",
             "===== 分析结果 =====",
             analysis_result
-        ]
+        ])
         content = "\n".join(content_lines)
         return notifier.send_message(content)
     return False

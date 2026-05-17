@@ -16,13 +16,14 @@ class OpenRouterAnalyzer:
         self.model = "openrouter/free"
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
+        self.last_used_model = ""
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key
         )
 
     def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
-        prompt = f"""You are a professional US stock market analyst. Based on the news below, analyze the impact on US listed companies.
+        prompt = f"""You are a professional financial news analyst. Provide a deep, structured analysis of the following news, strictly following the 4 dimensions below:
 
 【News Title】
 {news_title}
@@ -30,20 +31,52 @@ class OpenRouterAnalyzer:
 【News Summary】
 {news_content}
 
-Structure your answer strictly in 4 parts, concise and investment-ready:
+【Analysis Requirements】
+1. Core Event
+   - Summarize the core facts in one sentence
+   - Identify the time, key entities, and critical data
 
-1. Overall Impact
-- Sentiment: Positive / Negative / Neutral
-- Magnitude: Strong / Moderate / Weak
+2. Key Impact
+   - Impact on macro economy / policy
+   - Impact on related industries
+   - Impact on capital markets (stocks, bonds, forex, etc.)
 
-2. Benefiting US Companies & Logic
-List company names + core reasons (revenue, profit, demand, regulation, cost, etc.)
+3. Market Sentiment
+   - Overall sentiment: Optimistic / Neutral / Pessimistic
+   - Driving factors behind the sentiment
+   - Comparison with similar historical events
 
-3. Hurting US Companies & Logic
-List company names + core negative impacts
+4. Risk Warning
+   - List 2-3 key risks to watch
+   - Trigger conditions for each risk
+   - Recommended response strategies
 
-4. Investment Recommendations
-Clear action for each related stock: Buy / Add / Hold / Reduce / Sell / Avoid
+【Output Format】Strictly follow this structure, no extra text
+### 1. Core Event
+- Summary:
+- Key Entities:
+- Critical Data:
+
+### 2. Key Impact
+- Macro Impact:
+- Industry Impact:
+- Capital Market Impact:
+
+### 3. Market Sentiment
+- Overall Sentiment:
+- Driving Factors:
+- Historical Reference:
+
+### 4. Risk Warning
+1. Risk 1:
+   - Trigger Condition:
+   - Response Strategy:
+2. Risk 2:
+   - Trigger Condition:
+   - Response Strategy:
+3. Risk 3:
+   - Trigger Condition:
+   - Response Strategy:
 """
 
         try:
@@ -54,8 +87,8 @@ Clear action for each related stock: Buy / Add / Hold / Reduce / Sell / Avoid
                 stream=False
             )
 
-            actual_model = resp.model
-            logger.info(f"OpenRouter分析成功: {news_title} (实际模型: {actual_model})")
+            self.last_used_model = resp.model or ""
+            logger.info(f"OpenRouter分析成功: {news_title} (实际模型: {self.last_used_model})")
 
             if resp.choices and len(resp.choices) > 0:
                 return resp.choices[0].message.content

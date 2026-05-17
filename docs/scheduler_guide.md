@@ -89,11 +89,11 @@ for each 新闻源:
 - 市场情绪判断
 - 风险提示
 
-### OpenRouter分析（英文，美股市场）
-- Macro Investment Environment Impact
-- Overall Stock Market Impact
-- Related Companies Impact
-- Investment Operation Suggestions
+### OpenRouter分析（英文，使用 DeepSeek 风格提示词）
+- Core Event Summary
+- Key Impact (Macro / Industry / Capital Market)
+- Market Sentiment Analysis
+- Risk Warning
 
 ## 常见问题排查
 

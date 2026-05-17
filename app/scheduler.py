@@ -249,7 +249,7 @@ async def full_crawl():
                 log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
                 result = openrouter_analyzer.analyze_only(title, summary, "纽约时报")
                 if result:
-                    openrouter_feishu_notify(title, result, "纽约时报")
+                    openrouter_feishu_notify(title, result, "纽约时报", openrouter_analyzer.last_used_model)
                     log_crawl(f"✅ [OpenRouter] 分析并推送成功")
                 else:
                     log_crawl(f"❌ [OpenRouter] 分析失败")
@@ -271,7 +271,7 @@ async def full_crawl():
                 log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
                 result = openrouter_analyzer.analyze_only(title, summary, "BBC")
                 if result:
-                    openrouter_feishu_notify(title, result, "BBC")
+                    openrouter_feishu_notify(title, result, "BBC", openrouter_analyzer.last_used_model)
                     log_crawl(f"✅ [OpenRouter] 分析并推送成功")
                 else:
                     log_crawl(f"❌ [OpenRouter] 分析失败")
