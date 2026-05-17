@@ -12,7 +12,7 @@
 
 | 顺序 | 新闻源 | Crawler | 飞书推送函数 | 大模型分析 | 提示语 |
 |------|--------|---------|-------------|-----------|--------|
-| 1 | 东方财富 | `EastmoneyDepthCrawler` | `dfcf_feishu_notify` | 豆包 | 中文 |
+| 1 | 东方财富 | `EastmoneyDepthCrawler` | `dfcf_feishu_notify` | DeepSeek+豆包 | 中文 |
 | 2 | 财联社 | `CLSDepthCrawler` | `cls_feishu_notify` | 豆包 | 中文 |
 | 3 | 纽约时报 | `NYTDepthCrawler` | `nyt_feishu_notify` | OpenRouter | **英文** |
 | 4 | BBC | `BBCCrawler` | `bbc_feishu_notify` | OpenRouter | **英文** |
@@ -49,7 +49,7 @@ for each 新闻源:
 
 ### 大模型分析器（在 scheduler.py full_crawl 中）
 - 豆包分析器：使用 `KB_API_KEY`, `KB_MODEL_ID`, `KB_REGION` 配置
-- OpenRouter分析器：使用 `OPENROUTER_API_KEY` 配置
+- OpenRouter分析器：使用 `OPENROUTER_API_KEY` 配置，`model="openrouter/free"` 自动路由免费模型
 
 ### 飞书推送（在 main.py 启动时）
 - `init_all_notifiers()` — 统一初始化所有飞书推送（feishu, nyt, bbc, em, index）
@@ -83,11 +83,11 @@ for each 新闻源:
 - 标题（`title`）
 - 摘要（`summary`）
 
-### 豆包分析（中文）
-- 宏观投资环境影响
-- 整体股票市场影响
-- 相关上市公司影响（受益/受损）
-- 投资操作建议（仓位/行业/个股/风险）
+### 豆包分析（中文，使用 DeepSeek 风格提示词）
+- 核心事件概括
+- 关键影响（宏观/行业/资本市场）
+- 市场情绪判断
+- 风险提示
 
 ### OpenRouter分析（英文，美股市场）
 - Macro Investment Environment Impact

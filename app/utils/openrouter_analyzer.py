@@ -1,6 +1,6 @@
 import logging
-import requests
 from typing import Optional
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +13,13 @@ class OpenRouterAnalyzer:
         keyword: str = "Talk"
     ):
         self.api_key = api_key
-        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
-        self.model = "deepseek-chat-v3"
+        self.model = "openrouter/free"
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
+        self.client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key
+        )
 
     def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
         prompt = f"""You are a professional US stock market analyst. Based on the news below, analyze the impact on US listed companies.
@@ -44,38 +47,24 @@ Clear action for each related stock: Buy / Add / Hold / Reduce / Sell / Avoid
 """
 
         try:
-            session = requests.Session()
-            session.trust_env = False
-
-            resp = session.post(
-                self.base_url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.6,
-                    "stream": False
-                },
-                timeout=45
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.6,
+                stream=False
             )
 
-            if resp.status_code == 200:
-                result = resp.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    logger.info(f"新闻分析成功: {news_title}")
-                    return result["choices"][0]["message"]["content"]
-                else:
-                    logger.error(f"API 响应结构错误: {result}")
-                    return None
+            actual_model = resp.model
+            logger.info(f"OpenRouter分析成功: {news_title} (实际模型: {actual_model})")
+
+            if resp.choices and len(resp.choices) > 0:
+                return resp.choices[0].message.content
             else:
-                logger.error(f"分析失败 {resp.status_code}: {resp.text[:100]}")
+                logger.error(f"API 响应结构错误: 无 choices")
                 return None
 
         except Exception as e:
-            logger.error(f"新闻分析出错: {str(e)}", exc_info=True)
+            logger.error(f"OpenRouter分析出错: {str(e)}", exc_info=True)
             return None
 
     def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
@@ -98,7 +87,7 @@ def init_openrouter_analyzer(
         feishu_webhook_url=feishu_webhook_url,
         keyword=keyword
     )
-    logger.info(f"OpenRouter 大模型分析器已初始化，模型: {_analyzer.model if _analyzer else 'unknown'}")
+    logger.info(f"OpenRouter 大模型分析器已初始化，使用免费模型自动路由")
 
 
 def get_openrouter_analyzer() -> Optional[OpenRouterAnalyzer]:
