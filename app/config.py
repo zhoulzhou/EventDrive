@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -50,7 +50,7 @@ class Settings:
     OPENROUTER_KEYWORD: str = os.getenv("OPENROUTER_KEYWORD", "Talk")
 
     KB_API_KEY: str = os.getenv("KB_API_KEY", "")
-    KB_MODEL_ID: str = os.getenv("KB_MODEL_ID", "doubao-1-5-pro-32k-250115")
+    KB_MODEL_ID: str = os.getenv("KB_MODEL_ID", "doubao-1-5-pro-256k-250115")
     KB_REGION: str = os.getenv("KB_REGION", "cn-beijing")
     KB_FEISHU_WEBHOOK_URL: str = os.getenv("KB_FEISHU_WEBHOOK_URL", "")
     KB_KEYWORD: str = os.getenv("KB_KEYWORD", "Talk")

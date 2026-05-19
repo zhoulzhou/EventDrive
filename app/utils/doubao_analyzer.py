@@ -99,14 +99,14 @@ class DoubaoAnalyzer:
                     logger.info(f"豆包分析成功: {news_title}")
                     return result["choices"][0]["message"]["content"]
                 else:
-                    logger.error(f"API 响应结构错误: {result}")
+                    logger.error(f"API 响应结构错误, model={self.model}: {result}")
                     return None
             else:
-                logger.error(f"分析失败 {resp.status_code}: {resp.text}")
+                logger.error(f"豆包分析失败, model={self.model}, status={resp.status_code}: {resp.text[:500]}")
                 return None
 
         except Exception as e:
-            logger.error(f"新闻分析出错: {str(e)}", exc_info=True)
+            logger.error(f"新闻分析出错, model={self.model}: {str(e)}", exc_info=True)
             return None
 
     def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
