@@ -91,7 +91,7 @@ class DoubaoAnalyzer:
         }
 
         try:
-            resp = requests.post(self.url, headers=headers, json=data, timeout=30)
+            resp = requests.post(self.url, headers=headers, json=data, timeout=180)
 
             if resp.status_code == 200:
                 result = resp.json()
