@@ -83,7 +83,7 @@ class OpenRouterAnalyzer:
             resp = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.6,
+                temperature=0.3,
                 stream=False
             )
 
