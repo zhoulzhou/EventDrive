@@ -264,18 +264,6 @@ async def full_crawl():
     total_saved += count
     if saved_news:
         bbc_feishu_notify(saved_news[:5], "BBC")
-        if openrouter_analyzer:
-            for news in saved_news[:2]:
-                title = news.get('title', '')
-                summary = news.get('summary', '')
-                log_crawl(f"🔍 [OpenRouter] 正在分析: {title[:50]}...")
-                result = openrouter_analyzer.analyze_only(title, summary, "BBC")
-                if result:
-                    openrouter_feishu_notify(title, result, "BBC", openrouter_analyzer.last_used_model)
-                    log_crawl(f"✅ [OpenRouter] 分析并推送成功")
-                else:
-                    log_crawl(f"❌ [OpenRouter] 分析失败")
-                await asyncio.sleep(2)
     else:
         log_crawl("📭 BBC没有新新闻")
 
