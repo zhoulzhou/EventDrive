@@ -125,16 +125,15 @@ echo ""
 # ---------- 启动飞书机器人 ----------
 echo -e "${YELLOW}[4/5] 启动飞书互动助手...${NC}"
 
-PYTHONUNBUFFERED=1 python3 run_bot.py > >(tee -a logs/bot.log) 2>&1 &
+PYTHONUNBUFFERED=1 python3 -u run_bot.py &
 BOT_PID=$!
 echo $BOT_PID > logs/bot.pid
 
-sleep 3
+sleep 4
 if kill -0 "$BOT_PID" 2>/dev/null; then
     echo -e "${GREEN}  ✓ 飞书机器人已启动 (PID: $BOT_PID)${NC}"
 else
-    echo -e "${RED}  ✗ 飞书机器人启动失败, 查看日志:${NC}"
-    echo -e "${RED}$(tail -10 logs/bot.log 2>/dev/null)${NC}"
+    echo -e "${RED}  ✗ 飞书机器人启动失败${NC}"
 fi
 echo ""
 
