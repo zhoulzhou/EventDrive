@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from app.config import settings
 from app.database import engine, Base
-from app.utils.feishu_notifier import init_feishu_notifier, init_nyt_feishu_notifier, init_bbc_feishu_notifier, init_em_feishu_notifier
+from app.utils.feishu_notifier import init_all_notifiers
 from app.scheduler import start_scheduler, stop_scheduler, full_crawl
 
 def signal_handler(signum, frame):
@@ -24,45 +24,25 @@ def main():
     Base.metadata.create_all(bind=engine)
     print("✅ 数据库表初始化完成")
 
-    if settings.FEISHU_WEBHOOK_URL and settings.FEISHU_SECRET:
-        init_feishu_notifier(
-            settings.FEISHU_WEBHOOK_URL,
-            settings.FEISHU_SECRET,
-            settings.FEISHU_KEYWORD
-        )
-        print("✅ 飞书推送已初始化")
-    else:
-        print("⚠️ 飞书推送未配置")
-
-    if settings.NYT_FEISHU_WEBHOOK_URL:
-        init_nyt_feishu_notifier(
-            settings.NYT_FEISHU_WEBHOOK_URL,
-            "",
-            settings.NYT_FEISHU_KEYWORD
-        )
-        print("✅ 纽约时报飞书推送已初始化")
-    else:
-        print("⚠️ 纽约时报飞书推送未配置")
-
-    if settings.BBC_FEISHU_WEBHOOK_URL:
-        init_bbc_feishu_notifier(
-            settings.BBC_FEISHU_WEBHOOK_URL,
-            "",
-            settings.BBC_FEISHU_KEYWORD
-        )
-        print("✅ BBC飞书推送已初始化")
-    else:
-        print("⚠️ BBC飞书推送未配置")
-
-    if settings.EM_FEISHU_WEBHOOK_URL:
-        init_em_feishu_notifier(
-            settings.EM_FEISHU_WEBHOOK_URL,
-            "",
-            settings.EM_FEISHU_KEYWORD
-        )
-        print("✅ 东方财富飞书推送已初始化")
-    else:
-        print("⚠️ 东方财富飞书推送未配置")
+    init_all_notifiers(
+        nyt_url=settings.NYT_FEISHU_WEBHOOK_URL or "",
+        nyt_keyword=settings.NYT_FEISHU_KEYWORD,
+        bbc_url=settings.BBC_FEISHU_WEBHOOK_URL or "",
+        bbc_keyword=settings.BBC_FEISHU_KEYWORD,
+        dfcf_url=settings.DFCF_FEISHU_WEBHOOK_URL or "",
+        dfcf_keyword=settings.DFCF_FEISHU_KEYWORD,
+        cls_url=settings.CLS_FEISHU_WEBHOOK_URL or "",
+        cls_keyword=settings.CLS_FEISHU_KEYWORD,
+        index_url=settings.INDEX_FEISHU_WEBHOOK_URL or "",
+        index_keyword=settings.INDEX_KEYWORD,
+        kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
+        kb_keyword=settings.KB_KEYWORD,
+        openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",
+        openrouter_keyword=settings.OPENROUTER_KEYWORD,
+        deepseek_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL or "",
+        deepseek_keyword=settings.DEEPSEEK_KEYWORD,
+    )
+    print("✅ 飞书推送已初始化")
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
