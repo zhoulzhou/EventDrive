@@ -36,9 +36,8 @@ def _is_duplicate(msg_id: str) -> bool:
 
 
 def _log(msg: str):
-    """输出日志到 stderr，确保终端实时可见"""
+    """输出日志（logging 已配置输出到 stderr，终端实时可见）"""
     print(msg, file=sys.stderr, flush=True)
-    logger.info(msg)
 
 
 def start():
