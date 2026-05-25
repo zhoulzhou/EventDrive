@@ -38,10 +38,10 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  EventDrive 完整启动${NC}"
-echo -e "${BLUE}  $(date '+%Y-%m-%d %H:%M:%S')${NC}"
-echo -e "${BLUE}============================================${NC}"
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}  EventDrive 完整启动${NC}"
+echo -e "${GREEN}  $(date '+%Y-%m-%d %H:%M:%S')${NC}"
+echo -e "${GREEN}============================================${NC}"
 echo ""
 
 # ---------- 环境检查 ----------
@@ -109,13 +109,13 @@ echo $SCHEDULER_PID > logs/scheduler.pid
 sleep 1
 if kill -0 "$SCHEDULER_PID" 2>/dev/null; then
     echo -e "${GREEN}  ✓ 调度器已启动 (PID: $SCHEDULER_PID)${NC}"
-    echo -e "      日志: ${BLUE}logs/scheduler.log${NC}"
+    echo -e "      日志: ${GREEN}logs/scheduler.log${NC}"
     echo ""
-    echo -e "${BLUE}--- 调度器启动日志 ---${NC}"
+    echo -e "${GREEN}--- 调度器启动日志 ---${NC}"
     tail -5 logs/scheduler.log 2>/dev/null | while IFS= read -r line; do
         echo -e "       $line"
     done
-    echo -e "${BLUE}-----------------------${NC}"
+    echo -e "${GREEN}-----------------------${NC}"
 else
     echo -e "${RED}  ✗ 调度器启动失败, 查看日志:${NC}"
     echo -e "${RED}$(tail -10 logs/scheduler.log 2>/dev/null)${NC}"
@@ -132,13 +132,13 @@ echo $BOT_PID > logs/bot.pid
 sleep 3
 if kill -0 "$BOT_PID" 2>/dev/null; then
     echo -e "${GREEN}  ✓ 飞书机器人已启动 (PID: $BOT_PID)${NC}"
-    echo -e "      日志: ${BLUE}logs/bot.log${NC}"
+    echo -e "      日志: ${GREEN}logs/bot.log${NC}"
     echo ""
-    echo -e "${BLUE}--- 机器人启动日志 ---${NC}"
+    echo -e "${GREEN}--- 机器人启动日志 ---${NC}"
     tail -10 logs/bot.log 2>/dev/null | while IFS= read -r line; do
         echo -e "       $line"
     done
-    echo -e "${BLUE}-----------------------${NC}"
+    echo -e "${GREEN}-----------------------${NC}"
 else
     echo -e "${RED}  ✗ 飞书机器人启动失败, 查看日志:${NC}"
     echo -e "${RED}$(tail -10 logs/bot.log 2>/dev/null)${NC}"
@@ -148,7 +148,7 @@ echo ""
 # ---------- 启动 Web 服务 ----------
 echo -e "${YELLOW}[5/5] 启动 Web 管理界面...${NC}"
 echo ""
-echo -e "${BLUE}============================================${NC}"
+echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  所有服务已启动${NC}"
 echo -e ""
 echo -e "  Web 管理:  ${GREEN}http://localhost:8000${NC}"
@@ -156,11 +156,11 @@ echo -e "  API 文档:  ${GREEN}http://localhost:8000/docs${NC}"
 echo -e "  调度器PID: ${GREEN}$SCHEDULER_PID${NC}"
 echo -e "  机器人PID: ${GREEN}$BOT_PID${NC}"
 echo -e ""
-echo -e "  调度器日志: ${BLUE}tail -f logs/scheduler.log${NC}"
-echo -e "  机器人日志: ${BLUE}tail -f logs/bot.log${NC}"
+echo -e "  调度器日志: ${GREEN}tail -f logs/scheduler.log${NC}"
+echo -e "  机器人日志: ${GREEN}tail -f logs/bot.log${NC}"
 echo -e ""
 echo -e "  ${YELLOW}Ctrl+C 停止所有服务${NC}"
-echo -e "${BLUE}============================================${NC}"
+echo -e "${GREEN}============================================${NC}"
 echo ""
 
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload

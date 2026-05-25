@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import sys
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import *
@@ -12,48 +13,73 @@ from bot.analyzer_factory import AnalyzerFactory
 logger = logging.getLogger(__name__)
 
 
+def _log(msg: str):
+    """同时输出到 logger 和 stderr（确保日志文件可看到）"""
+    logger.info(msg)
+    print(msg, file=sys.stderr, flush=True)
+
+
 def start():
     """启动飞书 WebSocket 长连接监听。"""
     app_id = os.getenv("BOT_FEISHU_APP_ID", "")
     app_secret = os.getenv("BOT_FEISHU_APP_SECRET", "")
 
     if not app_id or not app_secret:
-        logger.error("BOT_FEISHU_APP_ID 或 BOT_FEISHU_APP_SECRET 环境变量未设置，无法启动飞书机器人。")
-        print("Error: BOT_FEISHU_APP_ID 或 BOT_FEISHU_APP_SECRET 环境变量未设置，无法启动飞书机器人。")
+        msg = "BOT_FEISHU_APP_ID 或 BOT_FEISHU_APP_SECRET 未设置，无法启动"
+        logger.error(msg)
+        print(f"Error: {msg}", file=sys.stderr)
         return
 
+    _log(f"飞书 App ID: {app_id[:16]}...")
+    _log("正在创建 AI 分析器...")
+
     analyzer = AnalyzerFactory.create()
+    _log(f"AI 分析器已创建: {type(analyzer).__name__}")
 
     system_prompt = "你是企业内部办公助手，回答正式简洁、逻辑稳妥，贴合职场沟通，不闲聊发散，务实解答工作各类问题。"
 
     def handle_message(event: P2ImMessageReceiveV1):
+        _log(">>> 收到飞书消息事件 <<<")
+
         msg = event.event.message
+        _log(f"消息类型: {msg.message_type}, chat_id: {msg.chat_id}")
+
         if msg.message_type != "text":
+            _log(f"非文本消息({msg.message_type})，忽略")
             return
 
-        user_text = json.loads(msg.content).get("text", "").strip()
+        try:
+            content_data = json.loads(msg.content)
+            user_text = content_data.get("text", "").strip()
+        except json.JSONDecodeError as e:
+            _log(f"消息内容 JSON 解析失败: {e}, content={msg.content[:200]}")
+            return
+
         if not user_text:
+            _log("消息文本为空，忽略")
             return
 
-        logger.info("收到用户消息: %s", user_text)
+        _log(f"用户消息原文: {user_text[:200]}")
 
         try:
+            _log("正在调用 AI...")
             ai_reply = analyzer.chat(user_text, system_prompt)
+            _log(f"AI 回复: {ai_reply[:200]}")
         except Exception as e:
-            logger.error("AI 回复生成失败: %s", e)
+            logger.exception("AI 调用异常")
             ai_reply = f"AI 回复生成失败：{e}"
-
-        logger.info("AI 回复: %s", ai_reply)
+            _log(f"AI 异常: {e}")
 
         try:
+            _log("正在发送回复到飞书...")
             client = (
                 lark.Client.builder()
                 .app_id(app_id)
                 .app_secret(app_secret)
-                .log_level(lark.LogLevel.INFO)
+                .log_level(lark.LogLevel.WARN)
                 .build()
             )
-            client.im.v1.message.create(
+            resp = client.im.v1.message.create(
                 CreateMessageRequest.builder()
                 .receive_id_type("chat_id")
                 .receive_id(msg.chat_id)
@@ -61,8 +87,10 @@ def start():
                 .content(json.dumps({"text": ai_reply}))
                 .build()
             )
+            _log(f"消息发送成功, msg_id={resp.data.message_id if resp.data else 'N/A'}")
         except Exception as e:
-            logger.error("发送飞书消息失败: %s", e)
+            logger.exception("发送消息异常")
+            _log(f"发送消息失败: {e}")
 
     dispatcher = (
         lark.EventDispatcherHandler.builder("", "")
@@ -74,10 +102,10 @@ def start():
         app_id=app_id,
         app_secret=app_secret,
         event_handler=dispatcher,
-        log_level=lark.LogLevel.INFO,
+        log_level=lark.LogLevel.WARN,
     )
 
-    model_name = getattr(analyzer, "_model", type(analyzer).__name__)
-    print(f"飞书机器人已启动，模型: {model_name}，监听私聊消息中...")
+    print(f"飞书机器人已启动，模型: {type(analyzer).__name__}，监听私聊消息中...")
+    _log("WebSocket 长连接建立中...")
 
     ws_client.start()
