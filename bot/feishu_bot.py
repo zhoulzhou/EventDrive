@@ -14,9 +14,50 @@ logger = logging.getLogger(__name__)
 
 
 def _log(msg: str):
-    """同时输出到 logger 和 stderr（确保日志文件可看到）"""
+    """同时输出到 logger 和 stderr（确保终端和日志文件都能看到）"""
     logger.info(msg)
     print(msg, file=sys.stderr, flush=True)
+
+
+def _check_event_subscription(app_id: str, app_secret: str):
+    """诊断：检查事件订阅配置是否正确"""
+    import requests
+
+    try:
+        # 获取 tenant_access_token
+        resp = requests.post(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": app_id, "app_secret": app_secret},
+            timeout=10,
+        )
+        token_data = resp.json()
+        if token_data.get("code") != 0:
+            _log(f"[诊断] 飞书 Token 获取失败，跳过事件订阅检查: {token_data}")
+            return
+
+        token = token_data["tenant_access_token"]
+
+        # 获取事件订阅列表
+        resp = requests.get(
+            "https://open.feishu.cn/open-apis/event/v1/app/event_subscription/list",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("code") == 0:
+            subs = data.get("data", {}).get("event_types", [])
+            _log(f"[诊断] 已订阅事件: {subs}")
+
+            has_msg = any("im.message.receive_v1" in s for s in subs)
+            if not has_msg:
+                _log("[诊断] ⚠️  未订阅 im.message.receive_v1 事件！")
+                _log("[诊断] 请到飞书开放平台 -> 事件订阅 -> 添加: 接收消息 v2.0")
+            else:
+                _log("[诊断] ✅ 已订阅消息事件，应该能收到飞书消息")
+        else:
+            _log(f"[诊断] 获取事件订阅列表失败 (可能应用未开通事件能力): code={data.get('code')}")
+    except Exception as e:
+        _log(f"[诊断] 事件订阅检查异常: {e}")
 
 
 def start():
@@ -107,5 +148,8 @@ def start():
 
     print(f"飞书机器人已启动，模型: {type(analyzer).__name__}，监听私聊消息中...")
     _log("WebSocket 长连接建立中...")
+
+    # 启动前诊断：检查事件订阅配置
+    _check_event_subscription(app_id, app_secret)
 
     ws_client.start()
