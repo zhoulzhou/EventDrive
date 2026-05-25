@@ -76,7 +76,7 @@ def start():
                 lark.Client.builder()
                 .app_id(app_id)
                 .app_secret(app_secret)
-                .log_level(lark.LogLevel.WARN)
+                .log_level(lark.LogLevel.WARNING)
                 .build()
             )
             resp = client.im.v1.message.create(
@@ -102,7 +102,7 @@ def start():
         app_id=app_id,
         app_secret=app_secret,
         event_handler=dispatcher,
-        log_level=lark.LogLevel.WARN,
+        log_level=lark.LogLevel.WARNING,
     )
 
     print(f"飞书机器人已启动，模型: {type(analyzer).__name__}，监听私聊消息中...")
