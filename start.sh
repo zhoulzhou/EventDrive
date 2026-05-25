@@ -125,20 +125,13 @@ echo ""
 # ---------- 启动飞书机器人 ----------
 echo -e "${YELLOW}[4/5] 启动飞书互动助手...${NC}"
 
-python3 run_bot.py > logs/bot.log 2>&1 &
+python3 run_bot.py > >(tee -a logs/bot.log) 2>&1 &
 BOT_PID=$!
 echo $BOT_PID > logs/bot.pid
 
 sleep 3
 if kill -0 "$BOT_PID" 2>/dev/null; then
     echo -e "${GREEN}  ✓ 飞书机器人已启动 (PID: $BOT_PID)${NC}"
-    echo -e "      日志: ${GREEN}logs/bot.log${NC}"
-    echo ""
-    echo -e "${GREEN}--- 机器人启动日志 ---${NC}"
-    tail -10 logs/bot.log 2>/dev/null | while IFS= read -r line; do
-        echo -e "       $line"
-    done
-    echo -e "${GREEN}-----------------------${NC}"
 else
     echo -e "${RED}  ✗ 飞书机器人启动失败, 查看日志:${NC}"
     echo -e "${RED}$(tail -10 logs/bot.log 2>/dev/null)${NC}"
