@@ -6,6 +6,7 @@ import os
 import sys
 
 import lark_oapi as lark
+from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
 from bot.analyzer_factory import AnalyzerFactory
 
@@ -80,10 +81,16 @@ def start():
                 .build()
             )
             resp = client.im.v1.message.create(
-                receive_id=msg.chat_id,
-                receive_id_type="chat_id",
-                msg_type="text",
-                content=json.dumps({"text": ai_reply}),
+                CreateMessageRequest.builder()
+                .receive_id_type("chat_id")
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(msg.chat_id)
+                    .msg_type("text")
+                    .content(json.dumps({"text": ai_reply}))
+                    .build()
+                )
+                .build()
             )
             _log(f"消息发送成功, msg_id={resp.data.message_id if resp.data else 'N/A'}")
         except Exception as e:
