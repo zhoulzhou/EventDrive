@@ -6,7 +6,6 @@ import os
 import sys
 
 import lark_oapi as lark
-from lark_oapi.api.im.v1 import *
 
 from bot.analyzer_factory import AnalyzerFactory
 
@@ -38,7 +37,8 @@ def start():
 
     system_prompt = "你是企业内部办公助手，回答正式简洁、逻辑稳妥，贴合职场沟通，不闲聊发散，务实解答工作各类问题。"
 
-    def handle_message(event: P2ImMessageReceiveV1):
+    def handle_message(event):
+        # event: lark_oapi.api.im.v1.P2ImMessageReceiveV1
         _log(">>> 收到飞书消息事件 <<<")
 
         msg = event.event.message
@@ -80,12 +80,10 @@ def start():
                 .build()
             )
             resp = client.im.v1.message.create(
-                CreateMessageRequest.builder()
-                .receive_id_type("chat_id")
-                .receive_id(msg.chat_id)
-                .msg_type("text")
-                .content(json.dumps({"text": ai_reply}))
-                .build()
+                receive_id=msg.chat_id,
+                receive_id_type="chat_id",
+                msg_type="text",
+                content=json.dumps({"text": ai_reply}),
             )
             _log(f"消息发送成功, msg_id={resp.data.message_id if resp.data else 'N/A'}")
         except Exception as e:
