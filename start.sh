@@ -125,7 +125,7 @@ echo ""
 # ---------- 启动飞书机器人 ----------
 echo -e "${YELLOW}[4/5] 启动飞书互动助手...${NC}"
 
-python3 run_bot.py > >(tee -a logs/bot.log) 2>&1 &
+PYTHONUNBUFFERED=1 python3 run_bot.py > >(tee -a logs/bot.log) 2>&1 &
 BOT_PID=$!
 echo $BOT_PID > logs/bot.pid
 
