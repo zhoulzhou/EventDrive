@@ -13,10 +13,32 @@ from bot.analyzer_factory import AnalyzerFactory
 logger = logging.getLogger(__name__)
 
 
+# 已处理的消息 ID 集合，防止 WebSocket 重连重复投递
+_processed_msg_ids: set = set()
+
+# 定时清理旧 ID，防止内存泄漏
+import time as _time
+
+_last_cleanup = _time.time()
+_CLEANUP_INTERVAL = 300
+
+
+def _is_duplicate(msg_id: str) -> bool:
+    """检查消息是否已处理过，并定期清理旧记录"""
+    global _last_cleanup
+    if _time.time() - _last_cleanup > _CLEANUP_INTERVAL:
+        _processed_msg_ids.clear()
+        _last_cleanup = _time.time()
+    if msg_id in _processed_msg_ids:
+        return True
+    _processed_msg_ids.add(msg_id)
+    return False
+
+
 def _log(msg: str):
-    """同时输出到 logger 和 stderr（确保终端和日志文件都能看到）"""
-    logger.info(msg)
+    """输出日志到 stderr，确保终端实时可见"""
     print(msg, file=sys.stderr, flush=True)
+    logger.info(msg)
 
 
 def start():
@@ -40,9 +62,16 @@ def start():
 
     def handle_message(event):
         # event: lark_oapi.api.im.v1.P2ImMessageReceiveV1
-        _log(">>> 收到飞书消息事件 <<<")
 
         msg = event.event.message
+
+        # 去重：防止 WebSocket 重连时重复投递同一事件
+        msg_id = msg.message_id
+        if _is_duplicate(msg_id):
+            _log(f">>> 重复消息已跳过: {msg_id} <<<")
+            return
+
+        _log(f">>> 收到飞书消息 <<< msg_id={msg_id}")
         _log(f"消息类型: {msg.message_type}, chat_id: {msg.chat_id}")
 
         if msg.message_type != "text":
