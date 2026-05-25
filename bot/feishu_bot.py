@@ -39,23 +39,33 @@ def _check_event_subscription(app_id: str, app_secret: str):
 
         # 获取事件订阅列表
         resp = requests.get(
-            "https://open.feishu.cn/open-apis/event/v1/app/event_subscription/list",
+            "https://open.feishu.cn/open-apis/event/v1/subscriptions",
             headers={"Authorization": f"Bearer {token}"},
             timeout=10,
         )
-        data = resp.json()
+        if not resp.text or not resp.text.strip():
+            _log("[诊断] 事件订阅查询返回空响应，可能应用未开通事件能力")
+            _log("[诊断] 请在飞书开放平台 -> 事件订阅 -> 添加: 接收消息 v2.0")
+            return
+
+        try:
+            data = resp.json()
+        except Exception:
+            _log(f"[诊断] 事件订阅响应解析失败: {resp.text[:200]}")
+            return
+
         if data.get("code") == 0:
-            subs = data.get("data", {}).get("event_types", [])
+            subs = data.get("data", {}).get("subscriptions", data.get("data", {}).get("event_types", []))
             _log(f"[诊断] 已订阅事件: {subs}")
 
-            has_msg = any("im.message.receive_v1" in s for s in subs)
+            has_msg = any("im.message.receive_v1" in str(s) for s in subs)
             if not has_msg:
                 _log("[诊断] ⚠️  未订阅 im.message.receive_v1 事件！")
                 _log("[诊断] 请到飞书开放平台 -> 事件订阅 -> 添加: 接收消息 v2.0")
             else:
                 _log("[诊断] ✅ 已订阅消息事件，应该能收到飞书消息")
         else:
-            _log(f"[诊断] 获取事件订阅列表失败 (可能应用未开通事件能力): code={data.get('code')}")
+            _log(f"[诊断] 获取事件订阅列表失败 (可能应用未开通事件能力): code={data.get('code')}, msg={data.get('msg')}")
     except Exception as e:
         _log(f"[诊断] 事件订阅检查异常: {e}")
 
