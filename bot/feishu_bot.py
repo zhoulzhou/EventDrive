@@ -57,7 +57,7 @@ def start():
     analyzer = AnalyzerFactory.create()
     _log(f"AI 分析器已创建: {type(analyzer).__name__}")
 
-    system_prompt = "你是企业内部办公助手，回答正式简洁、逻辑稳妥，贴合职场沟通，不闲聊发散，务实解答工作各类问题。"
+    system_prompt = "你是全能知识助手，精通全领域知识。作答准确客观，擅长逻辑拆解、归纳总结与对比辨析。复杂内容优先分点排版，语言自然得体，通俗易理解。聚焦问题本身，不闲聊、不编造，不确定内容如实说明，输出务实有价值的信息。"
 
     def handle_message(event):
         # event: lark_oapi.api.im.v1.P2ImMessageReceiveV1
