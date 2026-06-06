@@ -43,8 +43,10 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Test files
+# Test files (test 前缀的所有文件)
 test_*.py
+test*.py
+test_*
 debug_*.py
 check_*.py
 minimal*.py
