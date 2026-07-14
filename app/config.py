@@ -64,6 +64,17 @@ class Settings:
     INDEX_FEISHU_WEBHOOK_URL: str = os.getenv("INDEX_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/5977e5fe-e551-4091-829d-2d1e89edd721")
     INDEX_KEYWORD: str = os.getenv("INDEX_KEYWORD", "指数")
 
+    X_CONSUMER_KEY: str = os.getenv("X_CONSUMER_KEY", "")
+    X_CONSUMER_SECRET: str = os.getenv("X_CONSUMER_SECRET", "")
+    X_ACCESS_TOKEN: str = os.getenv("X_ACCESS_TOKEN", "")
+    X_ACCESS_TOKEN_SECRET: str = os.getenv("X_ACCESS_TOKEN_SECRET", "")
+    X_FEISHU_WEBHOOK_URL: str = os.getenv("X_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/76b00cec-a6f2-4f7f-b0be-e5b98a05a0de")
+    X_FEISHU_KEYWORD: str = os.getenv("X_FEISHU_KEYWORD", "X推文")
+    X_MAX_RESULTS: int = int(os.getenv("X_MAX_RESULTS", "3"))
+    X_MONTH_MAX_LIMIT: int = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
+    X_DAY_MAX_LIMIT: int = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
+    X_USER_ID: str = os.getenv("X_USER_ID", "")
+
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.IMAGES_DIR.mkdir(exist_ok=True, parents=True)

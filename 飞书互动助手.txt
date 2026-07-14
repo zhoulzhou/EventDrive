@@ -1,0 +1,176 @@
+标准运行逻辑（行业通用）
+架构：主线程跑飞书消息交互 + 守护子线程跑新闻定时抓取
+守护子线程：静默后台循环爬新闻 → AI 总结 → 自动推送飞书群，不占用主线程
+主线程：永久阻塞监听飞书私聊消息，用户发新闻 / 提问直接调用大模型实时回复
+互不阻塞：抓取休眠不影响聊天，聊天响应不耽误定时抓取
+
+import time
+import threading
+import requests
+from larksuiteoapi import Config, DOMAIN_FEISHU, AppSettings
+from larksuiteoapi.event import handle_event
+from larksuiteoapi.service.im.v1 import Service as ImService, model
+
+# ========== 1. 你的原有配置（直接沿用） ==========
+# 大模型
+MODEL_KEY = "你的大模型key"
+MODEL_URL = "大模型对话接口"
+
+# 飞书自建机器人信息
+APP_ID = "xxx"
+APP_SECRET = "xxx"
+
+# ========== 2. 原有新闻抓取推送函数（你现成代码） ==========
+def news_crawl_and_push():
+    """你原本的定时抓新闻+AI总结+发飞书 逻辑"""
+    while True:
+        # 这里放你自己的抓取代码
+        print("正在执行新闻抓取推送...")
+        time.sleep(300) # 5分钟一次
+
+# ========== 3. 通用大模型调用函数（共用同一个） ==========
+def ai_chat(text):
+    headers = {"Authorization":f"Bearer {MODEL_KEY}","Content-Type":"application/json"}
+    data = {
+        "model":"你的模型名",
+        "messages":[{"role":"user","content":text}]
+    }
+    res = requests.post(MODEL_URL,json=data,headers=headers)
+    return res.json()["choices"][0]["message"]["content"]
+
+# ========== 4. 飞书接收消息 + 自动回复AI ==========
+conf = Config.new_internal_app_settings_from_env()
+conf.set_app_settings(AppSettings(APP_ID, APP_SECRET))
+im_service = ImService(conf)
+
+def send_msg(open_id, content):
+    req = model.MessageCreateReq()
+    req.receive_id_type = "open_id"
+    req.body = model.MessageCreateBody()
+    req.body.content = f'{{"text":"{content}"}}'
+    req.body.msg_type = "text"
+    im_service.messages.create(open_id, req)
+
+def event_dispatcher(event):
+    if event.event.message.message_type == "text":
+        user_text = event.event.message.content
+        sender_id = event.event.sender.sender_id.open_id
+        print(f"飞书收到用户消息：{user_text}")
+        # 调用大模型
+        ai_res = ai_chat(user_text)
+        # 回复飞书
+        send_msg(sender_id, ai_res)
+
+# 长连接监听飞书消息
+def run_feishu_bot():
+    handle_event(DOMAIN_FEISHU, conf, event_dispatcher)
+
+# ========== 5. 双线程同时运行（核心！） ==========
+if __name__ == "__main__":
+    # 线程1：原有新闻抓取推送
+    t1 = threading.Thread(target=news_crawl_and_push, daemon=True)
+    t1.start()
+    print("新闻抓取推送服务已启动")
+
+    # 线程2：飞书实时聊天AI互动
+    print("飞书AI互动机器人已启动，可直接发消息对话")
+    run_feishu_bot()
+
+
+import lark_oapi as lark
+from lark_oapi.api.im.v1 import *
+import requests
+import json
+
+# ========== 配置项 ==========
+# 飞书应用信息
+APP_ID = "你的飞书AppID"
+APP_SECRET = "你的飞书AppSecret"
+
+# DeepSeek 配置
+DS_API_KEY = "你的DeepSeek密钥"
+DS_API_URL = "https://api.deepseek.com/chat/completions"
+MODEL = "deepseek-chat"
+# 办公互动专用 0.3 严谨稳重
+TEMP = 0.3
+
+# 职场助手人设
+SYS_PROMPT = "你是企业内部办公助手，回答正式简洁、逻辑稳妥，贴合职场沟通，不闲聊发散，务实解答工作各类问题。"
+
+# ========== 调用DeepSeek ==========
+def get_deepseek_reply(question: str) -> str:
+    headers = {
+        "Authorization": f"Bearer {DS_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYS_PROMPT},
+            {"role": "user", "content": question}
+        ],
+        "temperature": TEMP,
+        "top_p": 0.88,
+        "max_tokens": 4096,
+        "frequency_penalty": 0.08,
+        "presence_penalty": 0.05,
+        "stream": False
+    }
+    try:
+        resp = requests.post(DS_API_URL, headers=headers, json=body, timeout=25)
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"AI应答异常：{str(e)}"
+
+# ========== 监听飞书消息回调 ==========
+def handle_message(event: P2ImMessageReceiveV1) -> None:
+    msg = event.event.message
+    # 只处理文本消息
+    if msg.message_type != "text":
+        return
+
+    # 解析用户文本
+    user_text = json.loads(msg.content).get("text", "")
+    if not user_text.strip():
+        return
+
+    print(f"收到飞书消息：{user_text}")
+    ai_reply = get_deepseek_reply(user_text)
+    print(f"AI回复：{ai_reply}")
+
+    # 构造发送客户端
+    client = lark.Client.builder()\
+        .app_id(APP_ID)\
+        .app_secret(APP_SECRET)\
+        .log_level(lark.LogLevel.INFO)\
+        .build()
+
+    # 回复原会话
+    send_req = CreateMessageRequest.builder()\
+        .receive_id(msg.chat_id)\
+        .msg_type("text")\
+        .content(json.dumps({"text": ai_reply}))\
+        .build()
+    client.im.v1.message.create(send_req)
+
+# ========== 启动长连接监听 ==========
+def main():
+    # 注册消息事件
+    dispatcher = lark.EventDispatcherHandler.builder("", "")\
+        .register_p2_im_message_receive_v1(handle_message)\
+        .build()
+
+    # 建立飞书WebSocket长连接
+    ws_client = lark.ws.Client(
+        app_id=APP_ID,
+        app_secret=APP_SECRET,
+        event_handler=dispatcher,
+        log_level=lark.LogLevel.INFO
+    )
+    print("=== 飞书长连接机器人已启动 ===")
+    print("=== 已接入DeepSeek 温度0.3 办公模式 ===")
+    ws_client.start()
+
+if __name__ == "__main__":
+    main()

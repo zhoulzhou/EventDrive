@@ -1,0 +1,140 @@
+X平台推文抓取需求并推送到飞书
+飞书推送：https://open.feishu.cn/open-apis/bot/v2/hook/76b00cec-a6f2-4f7f-b0be-e5b98a05a0de
+
+## 省钱核心逻辑（解决 4 次高频抓取重复扣费问题）
+
+1. **永久缓存全局最大推文 ID（since\_id）**
+4 次抓取共用同一个记录，无论一天抓多少次，只拉取上次抓取后新增内容，不会重复扣旧推文费用。
+2. **彻底移除 expansions 用户信息**，砍掉每条 $0.01 附加费
+3. 单次请求依旧 `max_results=5`，但有增量过滤，无新增时接口返回空、**0 扣费**
+4. 增加月度抓取计数器，当月累计接近 200 条直接停止请求，锁死成本
+
+代码：
+import tweepy
+import json
+import os
+from datetime import datetime
+
+# ==================== 配置区 ====================
+CONSUMER_KEY = "你的API Key"
+CONSUMER_SECRET = "你的API Secret"
+ACCESS_TOKEN = "你的Access Token"
+ACCESS_TOKEN_SECRET = "你的Access Token Secret"
+
+MAX_RESULTS = 3          # 修改：单次仅抓取3条
+MONTH_MAX_LIMIT = 190    # 月度总额度上限
+DAY_MAX_LIMIT = 6        # 每日最大消耗条数，均分整月额度
+# 持久化文件
+STATE_ID_FILE = "last_tweet_id.json"
+MONTH_COUNT_FILE = "month_tweet_count.json"
+DAY_COUNT_FILE = "day_tweet_count.json"
+# =================================================
+
+# 记录上次抓取最大推文ID
+def load_last_tweet_id():
+    if not os.path.exists(STATE_ID_FILE):
+        return 0
+    with open(STATE_ID_FILE, "r", encoding="utf-8") as f:
+        return int(json.load(f).get("last_id", 0))
+
+def save_last_tweet_id(new_id):
+    with open(STATE_ID_FILE, "w", encoding="utf-8") as f:
+        json.dump({"last_id": str(new_id)}, f, ensure_ascii=False, indent=2)
+
+# 月度计数（每月1号清零）
+def get_month_count():
+    now = datetime.now()
+    current_month = f"{now.year}-{now.month}"
+    if not os.path.exists(MONTH_COUNT_FILE):
+        return 0, current_month
+    with open(MONTH_COUNT_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if data.get("month") != current_month:
+        save_month_count(0, current_month)
+        return 0, current_month
+    return int(data.get("count", 0)), current_month
+
+def save_month_count(count, month):
+    with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
+        json.dump({"month": month, "count": count}, f, indent=2)
+
+# 当日计数（每日0点自动清零）
+def get_day_count():
+    now = datetime.now()
+    today_key = f"{now.year}-{now.month}-{now.day}"
+    if not os.path.exists(DAY_COUNT_FILE):
+        return 0, today_key
+    with open(DAY_COUNT_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if data.get("day") != today_key:
+        save_day_count(0, today_key)
+        return 0, today_key
+    return int(data.get("count", 0)), today_key
+
+def save_day_count(count, day_key):
+    with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
+        json.dump({"day": day_key, "count": count}, f, indent=2)
+
+# 抓取主逻辑
+def fetch_timeline():
+    # 1. 月度总额度拦截
+    month_cnt, cur_month = get_month_count()
+    if month_cnt >= MONTH_MAX_LIMIT:
+        print(f"【停止】月度已抓取{month_cnt}条，达到总额度上限，本月不再抓取")
+        return []
+
+    # 2. 当日额度拦截
+    day_cnt, cur_day = get_day_count()
+    if day_cnt >= DAY_MAX_LIMIT:
+        print(f"【跳过】今日已抓取{day_cnt}条，达到当日限额{DAY_MAX_LIMIT}，等待明天")
+        return []
+
+    # 初始化API客户端
+    client = tweepy.Client(
+        consumer_key=CONSUMER_KEY,
+        consumer_secret=CONSUMER_SECRET,
+        access_token=ACCESS_TOKEN,
+        access_token_secret=ACCESS_TOKEN_SECRET
+    )
+
+    last_id = load_last_tweet_id()
+    params = {
+        "max_results": MAX_RESULTS,  # 固定单次3条
+        "tweet_fields": ["created_at", "text"]
+    }
+    if last_id > 0:
+        params["since_id"] = last_id
+
+    # 发起请求
+    res = client.get_reverse_chronological_timeline(**params)
+    new_tweets = res.data or []
+
+    if not new_tweets:
+        print(f"本次无新增推文，当日累计：{day_cnt}条，当月累计：{month_cnt}条，无扣费")
+        return []
+
+    add_num = len(new_tweets)
+    # 若本次抓取后超过当日限额，截断多余推文
+    if day_cnt + add_num > DAY_MAX_LIMIT:
+        allow_num = DAY_MAX_LIMIT - day_cnt
+        print(f"当日剩余额度仅{allow_num}条，截断本次数据，只取最新{allow_num}条")
+        new_tweets = new_tweets[:allow_num]
+        add_num = allow_num
+
+    # 更新最大推文ID
+    new_max_id = max(tw.id for tw in new_tweets)
+    save_last_tweet_id(new_max_id)
+
+    # 更新日、月计数
+    new_day_total = day_cnt + add_num
+    new_month_total = month_cnt + add_num
+    save_day_count(new_day_total, cur_day)
+    save_month_count(new_month_total, cur_month)
+
+    print(f"本次新增{add_num}条 | 当日累计{new_day_total}/{DAY_MAX_LIMIT} | 当月累计{new_month_total}/{MONTH_MAX_LIMIT}")
+    for tw in new_tweets:
+        print(f"\n推文ID:{tw.id} 时间:{tw.created_at}\n内容:{tw.text}")
+    return new_tweets
+
+if __name__ == "__main__":
+    fetch_timeline()

@@ -18,3 +18,4 @@ itsdangerous>=2.2.0
 starlette>=0.41.0
 volcengine-python-sdk[ark]>=5.0.0
 lark-oapi>=1.4.0
+tweepy>=4.15.0

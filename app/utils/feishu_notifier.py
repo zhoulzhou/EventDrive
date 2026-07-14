@@ -225,6 +225,7 @@ _cls_feishu_notifier: Optional[FeishuNotifier] = None
 _kb_feishu_notifier: Optional[FeishuNotifier] = None
 _openrouter_feishu_notifier: Optional[FeishuNotifier] = None
 _deepseek_feishu_notifier: Optional[FeishuNotifier] = None
+_x_feishu_notifier: Optional[FeishuNotifier] = None
 
 
 def init_nyt_feishu_notifier(webhook_url: str, secret: str, keyword: str = "HOT"):
@@ -275,6 +276,12 @@ def init_deepseek_feishu_notifier(webhook_url: str, secret: str, keyword: str = 
     logger.info(f"DeepSeek分析飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
 
 
+def init_x_feishu_notifier(webhook_url: str, secret: str, keyword: str = "X推文"):
+    global _x_feishu_notifier
+    _x_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
+    logger.info(f"X推文飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+
+
 def init_all_notifiers(
     nyt_url: str = "",
     nyt_keyword: str = "HOT",
@@ -292,6 +299,8 @@ def init_all_notifiers(
     openrouter_keyword: str = "Talk",
     deepseek_url: str = "",
     deepseek_keyword: str = "深度分析",
+    x_url: str = "",
+    x_keyword: str = "X推文",
 ):
     """
     统一初始化所有飞书推送实例，新增飞书配置都在这里加
@@ -312,6 +321,8 @@ def init_all_notifiers(
         init_openrouter_feishu_notifier(openrouter_url, "", openrouter_keyword)
     if deepseek_url:
         init_deepseek_feishu_notifier(deepseek_url, "", deepseek_keyword)
+    if x_url:
+        init_x_feishu_notifier(x_url, "", x_keyword)
 
 
 def get_nyt_feishu_notifier() -> Optional[FeishuNotifier]:
@@ -344,6 +355,43 @@ def get_openrouter_feishu_notifier() -> Optional[FeishuNotifier]:
 
 def get_deepseek_feishu_notifier() -> Optional[FeishuNotifier]:
     return _deepseek_feishu_notifier
+
+
+def get_x_feishu_notifier() -> Optional[FeishuNotifier]:
+    return _x_feishu_notifier
+
+
+def x_feishu_notify(tweets: List[dict]) -> bool:
+    notifier = get_x_feishu_notifier()
+    if not notifier:
+        logger.warning("X推文飞书 notifier 未初始化，跳过推送")
+        return False
+
+    if not tweets:
+        logger.info("X推文飞书通知: 没有推文，跳过")
+        return False
+
+    header = f"【{notifier.keyword}】🐦 X 推文推送"
+    content_lines = [
+        header,
+        f"共获取 {len(tweets)} 条推文",
+        "",
+    ]
+
+    for idx, tweet in enumerate(tweets[:10], 1):
+        tweet_id = tweet.get('id', '')
+        tweet_time = tweet.get('created_at', '')
+        text = tweet.get('text', '')
+
+        content_lines.append(f"{idx}. ID: {tweet_id}")
+        if tweet_time:
+            content_lines.append(f"   时间: {tweet_time}")
+        if text:
+            content_lines.append(f"   内容: {text}")
+        content_lines.append("")
+
+    content = "\n".join(content_lines)
+    return notifier.send_message(content)
 
 
 def send_with_cooldown(content: str) -> bool:

@@ -16,8 +16,9 @@ from app.crawlers import (
     FinnhubIndexCrawler,
     NewsItem
 )
+from app.crawlers.x_twitter import fetch_tweets
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify, doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify, notify_index_alert, init_index_feishu_notifier
+from app.utils.feishu_notifier import dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify, doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify, notify_index_alert, init_index_feishu_notifier, x_feishu_notify
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.openrouter_analyzer import init_openrouter_analyzer, get_openrouter_analyzer
 from app.utils.deepseek_analyzer import init_deepseek_analyzer, get_deepseek_analyzer
@@ -268,7 +269,20 @@ async def full_crawl():
         log_crawl("📭 BBC没有新新闻")
 
     log_crawl("=" * 50)
-    log_crawl("📊 开始指数监控...")
+    log_crawl("� 第5个新闻源: X平台")
+    log_crawl("=" * 50)
+    if settings.X_USER_ID and settings.X_CONSUMER_KEY:
+        x_tweets = await asyncio.to_thread(fetch_tweets, settings.X_USER_ID)
+        if x_tweets:
+            log_crawl(f"[X] 获取到 {len(x_tweets)} 条推文，推送到飞书")
+            x_feishu_notify(x_tweets)
+        else:
+            log_crawl("📭 X平台没有新推文")
+    else:
+        log_crawl("⚠️ X平台未配置，跳过")
+
+    log_crawl("=" * 50)
+    log_crawl("�📊 开始指数监控...")
     log_crawl("=" * 50)
     await crawl_indices()
     log_crawl("✅ Finnhub 指数监控完成")
@@ -283,9 +297,9 @@ def start_scheduler():
     if not scheduler.running:
         scheduler.add_job(
             full_crawl,
-            trigger=CronTrigger(hour='0,3,6,9,12,15,18,21', minute=0),
-            id='crawl_job_3h_intervals',
-            name='Crawl at hours divisible by 3',
+            trigger=CronTrigger(hour='9,12,18,22', minute=0),
+            id='crawl_job_daily_4_times',
+            name='Crawl at 9,12,18,22 hours',
             replace_existing=True
         )
         scheduler.add_job(
@@ -296,7 +310,7 @@ def start_scheduler():
             replace_existing=True
         )
         scheduler.start()
-        logger.info("Scheduler started. Crawl at 0,3,6,9,12,15,18,21 hours. Index crawl every hour.")
+        logger.info("Scheduler started. Crawl at 9,12,18,22 hours. Index crawl every hour.")
 
 
 def stop_scheduler():
