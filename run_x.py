@@ -261,9 +261,9 @@ def fetch_timeline():
 
     # 发起请求
     print_separator("调用 X API")
-    logger.info("🌐 正在调用 get_reverse_chronological_timeline...")
+    logger.info("🌐 正在调用 get_home_timeline...")
     try:
-        res = client.get_reverse_chronological_timeline(**params)
+        res = client.get_home_timeline(**params)
         logger.info(f"🌐 API 响应状态: data={'有' if res.data else '无'}, meta={res.meta}")
         new_tweets = res.data or []
     except Exception as e:
