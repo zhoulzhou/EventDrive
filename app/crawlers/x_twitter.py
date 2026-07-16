@@ -154,13 +154,10 @@ def _save_day_count(count: int) -> None:
 #  Main fetch function
 # ============================================================
 
-def fetch_tweets(user_id: str) -> List[Dict[str, Any]]:
+def fetch_tweets() -> List[Dict[str, Any]]:
     """
-    Fetch tweets for a given X user ID using incremental fetching
+    Fetch tweets from home timeline using incremental fetching
     with monthly and daily rate limits.
-
-    Args:
-        user_id: The X (Twitter) user ID to fetch tweets for.
 
     Returns:
         List of tweet dicts, each with keys: id, text, created_at.
@@ -197,21 +194,20 @@ def fetch_tweets(user_id: str) -> List[Dict[str, Any]]:
     since_id = last_tweet_id if last_tweet_id > 0 else None
 
     logger.info(
-        f"[X] 开始抓取推文, user_id={user_id}, since_id={since_id}, "
+        f"[X] 开始抓取推文, since_id={since_id}, "
         f"月度 {month_count}/{month_limit}, 每日 {day_count}/{day_limit}"
     )
 
     try:
         # ---- Fetch tweets from X API ----
         kwargs: Dict[str, Any] = {
-            "id": user_id,
             "max_results": settings.X_MAX_RESULTS,
             "tweet_fields": ["created_at", "text"],
         }
         if since_id is not None:
             kwargs["since_id"] = since_id
 
-        response = client.get_users_tweets(**kwargs)
+        response = client.get_home_timeline(**kwargs)
 
         if response.data is None or len(response.data) == 0:
             logger.info("[X] 没有获取到新推文")

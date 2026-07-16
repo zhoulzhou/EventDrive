@@ -271,8 +271,8 @@ async def full_crawl():
     log_crawl("=" * 50)
     log_crawl("� 第5个新闻源: X平台")
     log_crawl("=" * 50)
-    if settings.X_USER_ID and settings.X_CONSUMER_KEY:
-        x_tweets = await asyncio.to_thread(fetch_tweets, settings.X_USER_ID)
+    if settings.X_CONSUMER_KEY:
+        x_tweets = await asyncio.to_thread(fetch_tweets)
         if x_tweets:
             log_crawl(f"[X] 获取到 {len(x_tweets)} 条推文，推送到飞书")
             x_feishu_notify(x_tweets)
