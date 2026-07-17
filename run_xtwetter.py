@@ -1,6 +1,7 @@
 """
-X 平台推文抓取测试脚本（手动 OAuth1 签名版）
-- 使用 oauthlib.oauth1.Client 手动签名，完全自主控制参数
+X 平台推文抓取测试脚本（手动 OAuth1 签名 + URL 拼接版）
+- 使用 oauthlib.oauth1.Client 手动签名
+- 查询参数手动拼接到 URL，sign() 不传 params，避免自动注入多余参数
 - 接口: /2/users/me/timelines/reverse_chronological
 - 增量抓取（since_id 机制），避免重复扣费
 - 月度/每日额度控制
@@ -13,6 +14,7 @@ import os
 import sys
 import logging
 from datetime import datetime
+from urllib.parse import urlencode
 from dotenv import load_dotenv
 import requests
 from oauthlib.oauth1 import Client
@@ -202,9 +204,9 @@ def send_to_feishu(tweet_list):
         return False
 
 
-# 核心抓取函数（手动OAuth1签名，不会自动追加id=me）
+# 核心抓取函数（手动OAuth1签名 + URL拼接，sign不传params）
 def fetch_follow_timeline():
-    print_separator("X 平台推文抓取测试（手动OAuth1签名）")
+    print_separator("X 平台推文抓取测试（手动OAuth1签名 + URL拼接）")
 
     # 检查配置
     logger.info("[配置] 检查 API 凭证...")
@@ -233,7 +235,7 @@ def fetch_follow_timeline():
         return []
     logger.info(f"✅ 当日额度充足: {day_cnt}/{DAY_MAX_LIMIT}")
 
-    # 底层原生签名，无自动注入多余参数bug
+    # 初始化 OAuth1 Client
     print_separator("初始化 OAuth1 Client（手动签名）")
     try:
         oauth_client = Client(
@@ -247,7 +249,7 @@ def fetch_follow_timeline():
         logger.error(f"❌ OAuth1 Client 初始化失败: {e}", exc_info=True)
         return []
 
-    api_url = "https://api.x.com/2/users/me/timelines/reverse_chronological"
+    base_url = "https://api.x.com/2/users/me/timelines/reverse_chronological"
 
     last_id = load_last_tweet_id()
     # 仅保留官方白名单合法参数
@@ -264,14 +266,18 @@ def fetch_follow_timeline():
     logger.info(f"📝 max_results = {MAX_RESULTS}")
     logger.info("📝 post.fields = 'created_at,text'")
     logger.info(f"📝 params 完整参数键: {list(params.keys())}")
-    logger.info(f"📝 API URL: {api_url}")
 
-    # 生成签好名的请求地址，完全自主控制参数
-    print_separator("生成 OAuth1 签名并发送请求")
+    # 关键修复：手动把查询参数拼到URL，sign不再传params参数
+    print_separator("拼接 URL + 生成 OAuth1 签名")
+    query_str = urlencode(params)
+    full_url = f"{base_url}?{query_str}"
+    logger.info(f"🌐 完整请求 URL: {full_url}")
+
+    # 正确调用sign，只传url、请求方法，无params
     try:
-        signed_url, headers, _ = oauth_client.sign(api_url, http_method="GET", params=params)
-        logger.info(f"🌐 签名后的 URL: {signed_url}")
-        logger.info(f"🌐 Authorization header 前50字符: {str(headers.get('Authorization', ''))[:50]}...")
+        signed_url, headers, _ = oauth_client.sign(full_url, http_method="GET")
+        logger.info(f"🌐 签名后 URL: {signed_url}")
+        logger.info(f"🌐 Authorization header 前80字符: {str(headers.get('Authorization', ''))[:80]}...")
 
         logger.info("🌐 正在发送 GET 请求...")
         resp = requests.get(signed_url, headers=headers, timeout=30)
