@@ -211,7 +211,9 @@ def fetch_list_timeline():
         logger.error("❌ [配置] 缺少 API 凭证，请在 .env 中配置 X_CONSUMER_KEY / X_CONSUMER_SECRET / X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET")
         return []
     if not LIST_ID:
-        logger.error("❌ [配置] 缺少 X_LIST_ID（列表ID），请先运行 show_my_all_lists() 获取")
+        logger.warning("⚠️ [配置] 未配置 X_LIST_ID，自动显示所有自建列表供选择")
+        show_my_all_lists()
+        logger.info("💡 请选择一个列表ID，填入 .env 的 X_LIST_ID 后重新运行")
         return []
 
     logger.info(f"[配置] CONSUMER_KEY: {CK[:8]}... (已隐藏)")
