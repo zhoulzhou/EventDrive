@@ -1,9 +1,7 @@
 """
-X 平台推文抓取测试脚本（纯手写 OAuth1 HMAC-SHA1 签名 + 数字UID版）
-- 完全手动构造 OAuth1 Authorization Header，不依赖任何 oauth 库
-- 100% 控制所有参数，不会自动注入多余字段
-- 使用数字 UID 路径：/2/users/{USER_ID}/timelines/reverse_chronological
-- 参数：tweet.fields
+X 平台推文抓取测试脚本（tweepy 简洁版）
+- 使用 tweepy.Client + get_home_timeline
+- 自动获取自身数字ID，避开 /me 路径问题
 - 增量抓取（since_id 机制），避免重复扣费
 - 月度/每日额度控制
 - 飞书推送
@@ -13,15 +11,12 @@ X 平台推文抓取测试脚本（纯手写 OAuth1 HMAC-SHA1 签名 + 数字UID
 import json
 import os
 import sys
-import hmac
-import base64
-import hashlib
 import logging
 import time
-from urllib.parse import urlencode, quote_plus
 from datetime import datetime
 from dotenv import load_dotenv
-import requests
+import tweepy
+import httpx
 
 load_dotenv(override=True)
 
@@ -32,14 +27,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_xtwetter")
 
-# ===================== 密钥配置（四项必须弹窗完整复制Secret） =====================
+# ===================== 配置区 =====================
 CONSUMER_KEY = os.getenv("X_CONSUMER_KEY", "")
 CONSUMER_SECRET = os.getenv("X_CONSUMER_SECRET", "")
 ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
 ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
-SELF_USER_ID = os.getenv("X_USER_ID", "")
 
-# 抓取配置（接口强制max_results最小5）
 MAX_RESULTS = int(os.getenv("X_MAX_RESULTS", "5"))
 DAY_MAX_LIMIT = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
 MONTH_MAX_LIMIT = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
@@ -55,7 +48,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 LAST_ID_FILE = os.path.join(DATA_DIR, "last_tweet_id.json")
 DAY_COUNT_FILE = os.path.join(DATA_DIR, "day_tweet_count.json")
 MONTH_COUNT_FILE = os.path.join(DATA_DIR, "month_tweet_count.json")
-# ===================================================================================
+# ==================================================
 
 
 def print_separator(title=""):
@@ -68,7 +61,16 @@ def print_separator(title=""):
         logger.info(f"\n{line}")
 
 
-# 读取上次最新推文ID
+# 初始化客户端，自动处理OAuth1鉴权
+client = tweepy.Client(
+    consumer_key=CONSUMER_KEY,
+    consumer_secret=CONSUMER_SECRET,
+    access_token=ACCESS_TOKEN,
+    access_token_secret=ACCESS_TOKEN_SECRET
+)
+
+
+# 读取上次最大推文ID
 def load_last_tweet_id():
     logger.debug(f"[状态] 读取 last_tweet_id: {LAST_ID_FILE}")
     if not os.path.exists(LAST_ID_FILE):
@@ -166,8 +168,6 @@ def send_to_feishu(tweet_list):
         return False
 
     try:
-        import httpx
-
         header = f"【{FEISHU_KEYWORD}】🐦 X平台推文"
         content_lines = [
             header,
@@ -175,11 +175,11 @@ def send_to_feishu(tweet_list):
             "",
         ]
 
-        for idx, item in enumerate(tweet_list, 1):
+        for idx, tw in enumerate(tweet_list, 1):
             content_lines.append(f"【推文 {idx}】")
-            content_lines.append(f"  ID: {item['id']}")
-            content_lines.append(f"  时间: {item['created_at']}")
-            content_lines.append(f"  内容: {item['text']}")
+            content_lines.append(f"  ID: {tw.id}")
+            content_lines.append(f"  时间: {tw.created_at}")
+            content_lines.append(f"  内容: {tw.text}")
             content_lines.append("")
 
         content = "\n".join(content_lines)
@@ -194,8 +194,8 @@ def send_to_feishu(tweet_list):
 
         logger.debug(f"[飞书] Webhook URL: {FEISHU_WEBHOOK_URL}")
 
-        with httpx.Client(timeout=15) as client:
-            response = client.post(FEISHU_WEBHOOK_URL, json=payload)
+        with httpx.Client(timeout=15) as http_client:
+            response = http_client.post(FEISHU_WEBHOOK_URL, json=payload)
             result = response.json()
             logger.info(f"[飞书] 响应: code={result.get('code')}, msg={result.get('msg')}")
 
@@ -211,65 +211,17 @@ def send_to_feishu(tweet_list):
         return False
 
 
-# 手动构造标准OAuth1 Authorization Header
-def make_oauth_header(method, base_url, query_params):
-    nonce = base64.b64encode(os.urandom(32)).decode().replace("+", "").replace("/", "").replace("=", "")
-    ts = str(int(time.time()))
-
-    logger.debug(f"[OAuth] nonce: {nonce[:20]}...")
-    logger.debug(f"[OAuth] timestamp: {ts}")
-
-    oauth_base = {
-        "oauth_consumer_key": CONSUMER_KEY,
-        "oauth_nonce": nonce,
-        "oauth_signature_method": "HMAC-SHA1",
-        "oauth_timestamp": ts,
-        "oauth_token": ACCESS_TOKEN,
-        "oauth_version": "1.0"
-    }
-    all_sign_params = {**oauth_base, **query_params}
-    sorted_items = sorted(all_sign_params.items())
-    param_str = "&".join([f"{quote_plus(k)}={quote_plus(str(v))}" for k, v in sorted_items])
-    base_string = f"{method.upper()}&{quote_plus(base_url)}&{quote_plus(param_str)}"
-
-    logger.debug(f"[OAuth] signature base string (前150字): {base_string[:150]}...")
-
-    sign_key = f"{quote_plus(CONSUMER_SECRET)}&{quote_plus(ACCESS_TOKEN_SECRET)}"
-    raw_sig = hmac.new(sign_key.encode("utf-8"), base_string.encode("utf-8"), hashlib.sha1).digest()
-    sig = base64.b64encode(raw_sig).decode("utf-8")
-
-    logger.debug(f"[OAuth] signature: {sig}")
-
-    header_parts = [
-        f'oauth_consumer_key="{quote_plus(CONSUMER_KEY)}"',
-        f'oauth_nonce="{quote_plus(nonce)}"',
-        f'oauth_signature="{quote_plus(sig)}"',
-        'oauth_signature_method="HMAC-SHA1"',
-        f'oauth_timestamp="{ts}"',
-        f'oauth_token="{quote_plus(ACCESS_TOKEN)}"',
-        'oauth_version="1.0"'
-    ]
-    auth_header = f"OAuth {', '.join(header_parts)}"
-    logger.debug(f"[OAuth] Authorization header (前100字): {auth_header[:100]}...")
-    return auth_header
-
-
-# 核心抓取函数
 def fetch_follow_timeline():
-    print_separator("X 平台推文抓取测试（纯手写OAuth1 + 数字UID）")
+    print_separator("X 平台推文抓取测试（tweepy 简洁版）")
 
     # 检查配置
     logger.info("[配置] 检查 API 凭证...")
     if not all([CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET]):
         logger.error("❌ [配置] 缺少 API 凭证，请在 .env 中配置 X_CONSUMER_KEY / X_CONSUMER_SECRET / X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET")
         return []
-    if not SELF_USER_ID:
-        logger.error("❌ [配置] 缺少 X_USER_ID（数字UID），请先运行 get_x_id.py 获取")
-        return []
 
     logger.info(f"[配置] CONSUMER_KEY: {CONSUMER_KEY[:8]}... (已隐藏)")
-    logger.info(f"[配置] SELF_USER_ID: {SELF_USER_ID}")
-    logger.info(f"[配置] MAX_RESULTS: {MAX_RESULTS} (官方硬性下限5条)")
+    logger.info(f"[配置] MAX_RESULTS: {MAX_RESULTS}")
     logger.info(f"[配置] MONTH_MAX_LIMIT: {MONTH_MAX_LIMIT}")
     logger.info(f"[配置] DAY_MAX_LIMIT: {DAY_MAX_LIMIT}")
 
@@ -289,63 +241,40 @@ def fetch_follow_timeline():
         return []
     logger.info(f"✅ 当日额度充足: {day_cnt}/{DAY_MAX_LIMIT}")
 
-    # 合规路径：数字ID，无me
-    base_api = f"https://api.x.com/2/users/{SELF_USER_ID}/timelines/reverse_chronological"
+    # 自动获取自身数字ID，完全避开 /me 路径报错
+    print_separator("获取用户数字 UID")
+    try:
+        me = client.get_me()
+        my_uid = me.data.id
+        logger.info(f"✅ 用户数字 UID: {my_uid}")
+        logger.info(f"✅ 用户名: @{me.data.username}")
+    except Exception as e:
+        logger.error(f"❌ 获取用户信息失败: {e}")
+        return []
+
     last_id = load_last_tweet_id()
 
-    # 仅官方允许的3个合法query参数，无任何非法字段
-    query_params = {
-        "max_results": MAX_RESULTS,
-        "tweet.fields": "created_at,text",
-    }
+    print_separator("调用 get_home_timeline 抓取推文")
+    logger.info(f"📝 max_results = {MAX_RESULTS}")
+    logger.info(f"📝 tweet.fields = ['created_at', 'text']")
     if last_id > 0:
-        query_params["since_id"] = last_id
         logger.info(f"📝 since_id = {last_id}（增量抓取）")
     else:
         logger.info("📝 since_id 为空（首次运行，抓取最新推文）")
 
-    logger.info(f"📝 max_results = {MAX_RESULTS}")
-    logger.info("📝 tweet.fields = 'created_at,text'")
-    logger.info(f"📝 query_params 完整键: {list(query_params.keys())}")
-    logger.info(f"📝 API 路径: /2/users/{SELF_USER_ID}/timelines/reverse_chronological")
-
-    # 手动拼接查询串
-    print_separator("构造 OAuth1 Authorization Header")
-    query_str = urlencode(query_params)
-    full_url = f"{base_api}?{query_str}"
-    logger.info(f"🌐 完整请求 URL: {full_url}")
-
-    auth_hdr = make_oauth_header("GET", base_api, query_params)
-    headers = {"Authorization": auth_hdr}
-    logger.info("🌐 Authorization header 构造完成")
-
-    print_separator("发送 API 请求")
-    logger.info("🌐 正在发送 GET 请求...")
+    # 官方封装首页关注时序接口，内部自动拼接正确数字ID路径
     try:
-        resp = requests.get(full_url, headers=headers, timeout=30)
-        logger.info(f"🌐 响应状态码: {resp.status_code}")
+        resp = client.get_home_timeline(
+            id=my_uid,
+            max_results=MAX_RESULTS,
+            since_id=last_id if last_id > 0 else None,
+            tweet_fields=["created_at", "text"]
+        )
     except Exception as e:
         logger.error(f"❌ API 请求异常: {e}", exc_info=True)
         return []
 
-    try:
-        resp_data = resp.json()
-    except Exception as e:
-        logger.error(f"❌ 响应 JSON 解析失败: {e}")
-        logger.error(f"❌ 响应内容: {resp.text[:500]}")
-        return []
-
-    if resp.status_code == 401:
-        logger.error(f"❌ [401鉴权失败] 密钥/Secret错误：{resp_data}")
-        return []
-    if resp.status_code == 402:
-        logger.error(f"❌ [402 月度配额耗尽，停止抓取]")
-        return []
-    if resp.status_code != 200:
-        logger.error(f"❌ [API异常] 状态码:{resp.status_code} 返回:{resp_data}")
-        return []
-
-    tweets = resp_data.get("data", [])
+    tweets = resp.data if resp.data else []
 
     if not tweets:
         print_separator("抓取结果")
@@ -361,9 +290,10 @@ def fetch_follow_timeline():
         tweets = tweets[:allow]
         add_num = allow
 
-    new_max_tweet_id = max(int(t["id"]) for t in tweets)
-    save_last_tweet_id(new_max_tweet_id)
+    new_max_id = max(int(tw.id) for tw in tweets)
+    save_last_tweet_id(new_max_id)
 
+    # 更新计数文件
     new_day_total = day_cnt + add_num
     new_month_total = month_cnt + add_num
     save_daily_stat(new_day_total, cur_day)
@@ -375,9 +305,9 @@ def fetch_follow_timeline():
     for i, tw in enumerate(tweets, 1):
         logger.info(f"\n{'─' * 50}")
         logger.info(f"  推文 #{i}")
-        logger.info(f"  🆔 ID:        {tw['id']}")
-        logger.info(f"  🕐 发布时间:  {tw['created_at']}")
-        logger.info(f"  📝 正文内容:  {tw['text']}")
+        logger.info(f"  🆔 ID:        {tw.id}")
+        logger.info(f"  🕐 发布时间:  {tw.created_at}")
+        logger.info(f"  📝 正文内容:  {tw.text}")
         logger.info(f"{'─' * 50}")
 
     # 飞书推送
