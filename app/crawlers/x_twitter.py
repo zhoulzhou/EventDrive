@@ -1,11 +1,16 @@
 import json
+import os
+import hmac
+import base64
+import hashlib
+import time
 import logging
+from urllib.parse import urlencode, quote_plus
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 
 import requests
-from requests_oauthlib import OAuth1Session
 
 from app.config import settings
 
@@ -134,12 +139,60 @@ def _save_day_count(count: int) -> None:
 
 
 # ============================================================
+#  OAuth1 HMAC-SHA1 Signature (pure Python, no library injection)
+# ============================================================
+
+def _make_oauth_header(method: str, base_url: str, query_params: dict) -> str:
+    """
+    Manually construct a standard OAuth1 Authorization header (RFC5849).
+    Fully controls all parameters - no automatic injection of extra fields.
+    """
+    nonce = base64.b64encode(os.urandom(32)).decode().replace("+", "").replace("/", "").replace("=", "")
+    ts = str(int(time.time()))
+
+    oauth_base = {
+        "oauth_consumer_key": settings.X_CONSUMER_KEY,
+        "oauth_nonce": nonce,
+        "oauth_signature_method": "HMAC-SHA1",
+        "oauth_timestamp": ts,
+        "oauth_token": settings.X_ACCESS_TOKEN,
+        "oauth_version": "1.0",
+    }
+    all_sign_params = {**oauth_base, **query_params}
+    sorted_items = sorted(all_sign_params.items())
+    param_str = "&".join(
+        f"{quote_plus(k)}={quote_plus(str(v))}" for k, v in sorted_items
+    )
+    base_string = f"{method.upper()}&{quote_plus(base_url)}&{quote_plus(param_str)}"
+
+    sign_key = f"{quote_plus(settings.X_CONSUMER_SECRET)}&{quote_plus(settings.X_ACCESS_TOKEN_SECRET)}"
+    raw_sig = hmac.new(
+        sign_key.encode("utf-8"),
+        base_string.encode("utf-8"),
+        hashlib.sha1,
+    ).digest()
+    sig = base64.b64encode(raw_sig).decode("utf-8")
+
+    header_parts = [
+        f'oauth_consumer_key="{quote_plus(settings.X_CONSUMER_KEY)}"',
+        f'oauth_nonce="{quote_plus(nonce)}"',
+        f'oauth_signature="{quote_plus(sig)}"',
+        'oauth_signature_method="HMAC-SHA1"',
+        f'oauth_timestamp="{ts}"',
+        f'oauth_token="{quote_plus(settings.X_ACCESS_TOKEN)}"',
+        'oauth_version="1.0"',
+    ]
+    return f"OAuth {', '.join(header_parts)}"
+
+
+# ============================================================
 #  Main fetch function
 # ============================================================
 
 def fetch_tweets() -> List[Dict[str, Any]]:
     """
-    Fetch tweets from reverse_chronological timeline using OAuth1 + X API v2.
+    Fetch tweets from reverse_chronological timeline using pure OAuth1 HMAC-SHA1 + X API v2.
+    Uses numeric user ID path: /2/users/{USER_ID}/timelines/reverse_chronological
     Incremental fetching with monthly and daily rate limits.
 
     Returns:
@@ -172,25 +225,27 @@ def fetch_tweets() -> List[Dict[str, Any]]:
     )
 
     try:
-        # ---- Init OAuth1 session ----
-        oauth_session = OAuth1Session(
-            settings.X_CONSUMER_KEY,
-            settings.X_CONSUMER_SECRET,
-            settings.X_ACCESS_TOKEN,
-            settings.X_ACCESS_TOKEN_SECRET,
-        )
+        # ---- Build API URL with numeric user ID ----
+        user_id = settings.X_USER_ID
+        base_api = f"https://api.x.com/2/users/{user_id}/timelines/reverse_chronological"
 
-        api_url = "https://api.x.com/2/users/me/timelines/reverse_chronological"
-
-        params = {
+        query_params = {
             "max_results": settings.X_MAX_RESULTS,
-            "post.fields": "created_at,text",
+            "tweet.fields": "created_at,text",
         }
         if last_tweet_id > 0:
-            params["since_id"] = last_tweet_id
+            query_params["since_id"] = last_tweet_id
+
+        # ---- Build full URL with query string ----
+        query_str = urlencode(query_params)
+        full_url = f"{base_api}?{query_str}"
+
+        # ---- Build OAuth1 Authorization header ----
+        auth_header = _make_oauth_header("GET", base_api, query_params)
+        headers = {"Authorization": auth_header}
 
         # ---- Fetch tweets from X API ----
-        resp = oauth_session.get(api_url, params=params, timeout=30)
+        resp = requests.get(full_url, headers=headers, timeout=30)
 
         try:
             resp_json = resp.json()

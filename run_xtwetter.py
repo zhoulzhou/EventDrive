@@ -1,8 +1,9 @@
 """
-X 平台推文抓取测试脚本（纯手写 OAuth1 HMAC-SHA1 签名版）
+X 平台推文抓取测试脚本（纯手写 OAuth1 HMAC-SHA1 签名 + 数字UID版）
 - 完全手动构造 OAuth1 Authorization Header，不依赖任何 oauth 库
 - 100% 控制所有参数，不会自动注入多余字段
-- 接口: /2/users/me/timelines/reverse_chronological
+- 使用数字 UID 路径：/2/users/{USER_ID}/timelines/reverse_chronological
+- 参数：tweet.fields
 - 增量抓取（since_id 机制），避免重复扣费
 - 月度/每日额度控制
 - 飞书推送
@@ -36,6 +37,7 @@ CONSUMER_KEY = os.getenv("X_CONSUMER_KEY", "")
 CONSUMER_SECRET = os.getenv("X_CONSUMER_SECRET", "")
 ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
 ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
+SELF_USER_ID = os.getenv("X_USER_ID", "")
 
 # 抓取配置（接口强制max_results最小5）
 MAX_RESULTS = int(os.getenv("X_MAX_RESULTS", "5"))
@@ -212,42 +214,38 @@ def send_to_feishu(tweet_list):
 # 手动构造标准OAuth1 Authorization Header
 def make_oauth_header(method, base_url, query_params):
     nonce = base64.b64encode(os.urandom(32)).decode().replace("+", "").replace("/", "").replace("=", "")
-    timestamp = str(int(time.time()))
+    ts = str(int(time.time()))
 
     logger.debug(f"[OAuth] nonce: {nonce[:20]}...")
-    logger.debug(f"[OAuth] timestamp: {timestamp}")
+    logger.debug(f"[OAuth] timestamp: {ts}")
 
     oauth_base = {
         "oauth_consumer_key": CONSUMER_KEY,
         "oauth_nonce": nonce,
         "oauth_signature_method": "HMAC-SHA1",
-        "oauth_timestamp": timestamp,
+        "oauth_timestamp": ts,
         "oauth_token": ACCESS_TOKEN,
         "oauth_version": "1.0"
     }
-    sign_all = {}
-    sign_all.update(oauth_base)
-    sign_all.update(query_params)
-
-    # RFC5849 标准排序编码
-    sorted_items = sorted(sign_all.items())
+    all_sign_params = {**oauth_base, **query_params}
+    sorted_items = sorted(all_sign_params.items())
     param_str = "&".join([f"{quote_plus(k)}={quote_plus(str(v))}" for k, v in sorted_items])
-    base_str = f"{method.upper()}&{quote_plus(base_url)}&{quote_plus(param_str)}"
+    base_string = f"{method.upper()}&{quote_plus(base_url)}&{quote_plus(param_str)}"
 
-    logger.debug(f"[OAuth] signature base string (前150字): {base_str[:150]}...")
+    logger.debug(f"[OAuth] signature base string (前150字): {base_string[:150]}...")
 
     sign_key = f"{quote_plus(CONSUMER_SECRET)}&{quote_plus(ACCESS_TOKEN_SECRET)}"
-    raw_sig = hmac.new(sign_key.encode("utf-8"), base_str.encode("utf-8"), hashlib.sha1).digest()
-    oauth_sig = base64.b64encode(raw_sig).decode("utf-8")
+    raw_sig = hmac.new(sign_key.encode("utf-8"), base_string.encode("utf-8"), hashlib.sha1).digest()
+    sig = base64.b64encode(raw_sig).decode("utf-8")
 
-    logger.debug(f"[OAuth] signature: {oauth_sig}")
+    logger.debug(f"[OAuth] signature: {sig}")
 
     header_parts = [
         f'oauth_consumer_key="{quote_plus(CONSUMER_KEY)}"',
         f'oauth_nonce="{quote_plus(nonce)}"',
-        f'oauth_signature="{quote_plus(oauth_sig)}"',
-        f'oauth_signature_method="HMAC-SHA1"',
-        f'oauth_timestamp="{timestamp}"',
+        f'oauth_signature="{quote_plus(sig)}"',
+        'oauth_signature_method="HMAC-SHA1"',
+        f'oauth_timestamp="{ts}"',
         f'oauth_token="{quote_plus(ACCESS_TOKEN)}"',
         'oauth_version="1.0"'
     ]
@@ -258,15 +256,19 @@ def make_oauth_header(method, base_url, query_params):
 
 # 核心抓取函数
 def fetch_follow_timeline():
-    print_separator("X 平台推文抓取测试（纯手写OAuth1 HMAC-SHA1签名）")
+    print_separator("X 平台推文抓取测试（纯手写OAuth1 + 数字UID）")
 
     # 检查配置
     logger.info("[配置] 检查 API 凭证...")
     if not all([CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET]):
         logger.error("❌ [配置] 缺少 API 凭证，请在 .env 中配置 X_CONSUMER_KEY / X_CONSUMER_SECRET / X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET")
         return []
+    if not SELF_USER_ID:
+        logger.error("❌ [配置] 缺少 X_USER_ID（数字UID），请先运行 get_x_id.py 获取")
+        return []
 
     logger.info(f"[配置] CONSUMER_KEY: {CONSUMER_KEY[:8]}... (已隐藏)")
+    logger.info(f"[配置] SELF_USER_ID: {SELF_USER_ID}")
     logger.info(f"[配置] MAX_RESULTS: {MAX_RESULTS} (官方硬性下限5条)")
     logger.info(f"[配置] MONTH_MAX_LIMIT: {MONTH_MAX_LIMIT}")
     logger.info(f"[配置] DAY_MAX_LIMIT: {DAY_MAX_LIMIT}")
@@ -287,13 +289,14 @@ def fetch_follow_timeline():
         return []
     logger.info(f"✅ 当日额度充足: {day_cnt}/{DAY_MAX_LIMIT}")
 
-    api_base = "https://api.x.com/2/users/me/timelines/reverse_chronological"
+    # 合规路径：数字ID，无me
+    base_api = f"https://api.x.com/2/users/{SELF_USER_ID}/timelines/reverse_chronological"
     last_id = load_last_tweet_id()
 
     # 仅官方允许的3个合法query参数，无任何非法字段
     query_params = {
         "max_results": MAX_RESULTS,
-        "post.fields": "created_at,text",
+        "tweet.fields": "created_at,text",
     }
     if last_id > 0:
         query_params["since_id"] = last_id
@@ -302,18 +305,19 @@ def fetch_follow_timeline():
         logger.info("📝 since_id 为空（首次运行，抓取最新推文）")
 
     logger.info(f"📝 max_results = {MAX_RESULTS}")
-    logger.info("📝 post.fields = 'created_at,text'")
+    logger.info("📝 tweet.fields = 'created_at,text'")
     logger.info(f"📝 query_params 完整键: {list(query_params.keys())}")
+    logger.info(f"📝 API 路径: /2/users/{SELF_USER_ID}/timelines/reverse_chronological")
 
-    # 手动拼接查询串，不会自动注入id=me
+    # 手动拼接查询串
     print_separator("构造 OAuth1 Authorization Header")
-    query_encode = urlencode(query_params)
-    full_url = f"{api_base}?{query_encode}"
+    query_str = urlencode(query_params)
+    full_url = f"{base_api}?{query_str}"
     logger.info(f"🌐 完整请求 URL: {full_url}")
 
-    auth_header = make_oauth_header("GET", api_base, query_params)
-    headers = {"Authorization": auth_header}
-    logger.info(f"🌐 Authorization 构造完成")
+    auth_hdr = make_oauth_header("GET", base_api, query_params)
+    headers = {"Authorization": auth_hdr}
+    logger.info("🌐 Authorization header 构造完成")
 
     print_separator("发送 API 请求")
     logger.info("🌐 正在发送 GET 请求...")
@@ -325,63 +329,63 @@ def fetch_follow_timeline():
         return []
 
     try:
-        resp_json = resp.json()
+        resp_data = resp.json()
     except Exception as e:
         logger.error(f"❌ 响应 JSON 解析失败: {e}")
         logger.error(f"❌ 响应内容: {resp.text[:500]}")
         return []
 
     if resp.status_code == 401:
-        logger.error(f"❌ [401鉴权失败] 密钥/Secret错误：{resp_json}")
+        logger.error(f"❌ [401鉴权失败] 密钥/Secret错误：{resp_data}")
         return []
     if resp.status_code == 402:
         logger.error(f"❌ [402 月度配额耗尽，停止抓取]")
         return []
     if resp.status_code != 200:
-        logger.error(f"❌ [API异常] 状态码:{resp.status_code} 返回:{resp_json}")
+        logger.error(f"❌ [API异常] 状态码:{resp.status_code} 返回:{resp_data}")
         return []
 
-    tweet_list = resp_json.get("data", [])
+    tweets = resp_data.get("data", [])
 
-    if not tweet_list:
+    if not tweets:
         print_separator("抓取结果")
-        logger.info(f"📭 本次无新关注推文 | 日:{day_cnt}/{DAY_MAX_LIMIT} 月:{month_cnt}/{MONTH_MAX_LIMIT} | ** 0 扣费 **")
+        logger.info(f"📭 无新推文 | 日:{day_cnt}/{DAY_MAX_LIMIT} 月:{month_cnt}/{MONTH_MAX_LIMIT} | ** 0 扣费 **")
         return []
 
-    add_total = len(tweet_list)
-    logger.info(f"📨 获取到 {add_total} 条推文")
+    add_num = len(tweets)
+    logger.info(f"📨 获取到 {add_num} 条推文")
 
-    if day_cnt + add_total > DAY_MAX_LIMIT:
+    if day_cnt + add_num > DAY_MAX_LIMIT:
         allow = DAY_MAX_LIMIT - day_cnt
         logger.warning(f"⚠️ 当日剩余额度仅{allow}条，截断数据")
-        tweet_list = tweet_list[:allow]
-        add_total = allow
+        tweets = tweets[:allow]
+        add_num = allow
 
-    new_max_id = max(int(i["id"]) for i in tweet_list)
-    save_last_tweet_id(new_max_id)
+    new_max_tweet_id = max(int(t["id"]) for t in tweets)
+    save_last_tweet_id(new_max_tweet_id)
 
-    new_day_total = day_cnt + add_total
-    new_month_total = month_cnt + add_total
+    new_day_total = day_cnt + add_num
+    new_month_total = month_cnt + add_num
     save_daily_stat(new_day_total, cur_day)
     save_month_stat(new_month_total, cur_month)
 
     # 打印推文详情
     print_separator("推文详情")
-    logger.info(f"📊 本次新增{add_total}条关注推文 | 当日累计{new_day_total}/{DAY_MAX_LIMIT} | 当月累计{new_month_total}/{MONTH_MAX_LIMIT}")
-    for i, item in enumerate(tweet_list, 1):
+    logger.info(f"📊 本次新增{add_num}条关注推文 | 当日累计{new_day_total}/{DAY_MAX_LIMIT} | 当月累计{new_month_total}/{MONTH_MAX_LIMIT}")
+    for i, tw in enumerate(tweets, 1):
         logger.info(f"\n{'─' * 50}")
         logger.info(f"  推文 #{i}")
-        logger.info(f"  🆔 ID:        {item['id']}")
-        logger.info(f"  🕐 发布时间:  {item['created_at']}")
-        logger.info(f"  📝 正文内容:  {item['text']}")
+        logger.info(f"  🆔 ID:        {tw['id']}")
+        logger.info(f"  🕐 发布时间:  {tw['created_at']}")
+        logger.info(f"  📝 正文内容:  {tw['text']}")
         logger.info(f"{'─' * 50}")
 
     # 飞书推送
     print_separator("飞书推送")
-    send_to_feishu(tweet_list)
+    send_to_feishu(tweets)
 
     print_separator("抓取完成")
-    return tweet_list
+    return tweets
 
 
 if __name__ == "__main__":
