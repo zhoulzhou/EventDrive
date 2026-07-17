@@ -1,7 +1,7 @@
 """
-X 平台推文抓取测试脚本（手动 OAuth1 签名 + URL 拼接版）
-- 使用 oauthlib.oauth1.Client 手动签名
-- 查询参数手动拼接到 URL，sign() 不传 params，避免自动注入多余参数
+X 平台推文抓取测试脚本（纯手写 OAuth1 HMAC-SHA1 签名版）
+- 完全手动构造 OAuth1 Authorization Header，不依赖任何 oauth 库
+- 100% 控制所有参数，不会自动注入多余字段
 - 接口: /2/users/me/timelines/reverse_chronological
 - 增量抓取（since_id 机制），避免重复扣费
 - 月度/每日额度控制
@@ -12,12 +12,15 @@ X 平台推文抓取测试脚本（手动 OAuth1 签名 + URL 拼接版）
 import json
 import os
 import sys
+import hmac
+import base64
+import hashlib
 import logging
+import time
+from urllib.parse import urlencode, quote_plus
 from datetime import datetime
-from urllib.parse import urlencode
 from dotenv import load_dotenv
 import requests
-from oauthlib.oauth1 import Client
 
 load_dotenv(override=True)
 
@@ -28,13 +31,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_xtwetter")
 
-# ===================== 密钥配置区（四项必须全部填完整，缺一不可） =====================
+# ===================== 密钥配置（四项必须弹窗完整复制Secret） =====================
 CONSUMER_KEY = os.getenv("X_CONSUMER_KEY", "")
 CONSUMER_SECRET = os.getenv("X_CONSUMER_SECRET", "")
 ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
 ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
 
-# 抓取额度配置（官方强制 max_results 最小为 5）
+# 抓取配置（接口强制max_results最小5）
 MAX_RESULTS = int(os.getenv("X_MAX_RESULTS", "5"))
 DAY_MAX_LIMIT = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
 MONTH_MAX_LIMIT = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
@@ -43,7 +46,7 @@ MONTH_MAX_LIMIT = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
 FEISHU_WEBHOOK_URL = os.getenv("X_FEISHU_WEBHOOK_URL", "")
 FEISHU_KEYWORD = os.getenv("X_FEISHU_KEYWORD", "X推文")
 
-# 本地持久化文件
+# 持久化文件
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -63,7 +66,7 @@ def print_separator(title=""):
         logger.info(f"\n{line}")
 
 
-# 读取上次抓取到的最新推文ID
+# 读取上次最新推文ID
 def load_last_tweet_id():
     logger.debug(f"[状态] 读取 last_tweet_id: {LAST_ID_FILE}")
     if not os.path.exists(LAST_ID_FILE):
@@ -71,8 +74,7 @@ def load_last_tweet_id():
         return 0
     try:
         with open(LAST_ID_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        last_id = int(data.get("last_id", 0))
+            last_id = int(json.load(f).get("last_id", 0))
         logger.info(f"[状态] 上次抓取最大推文 ID: {last_id}")
         return last_id
     except Exception as e:
@@ -80,7 +82,6 @@ def load_last_tweet_id():
         return 0
 
 
-# 保存最新推文ID
 def save_last_tweet_id(new_id):
     logger.debug(f"[状态] 保存 last_tweet_id: {new_id}")
     with open(LAST_ID_FILE, "w", encoding="utf-8") as f:
@@ -88,7 +89,7 @@ def save_last_tweet_id(new_id):
     logger.info(f"[状态] last_tweet_id 已更新为: {new_id}")
 
 
-# 读取当日抓取计数，每日0点自动重置
+# 每日计数
 def get_daily_stat():
     today_key = f"{datetime.now().year}-{datetime.now().month}-{datetime.now().day}"
     logger.debug(f"[当日计数] 今日日期: {today_key}")
@@ -100,12 +101,14 @@ def get_daily_stat():
             data = json.load(f)
     except Exception as e:
         logger.warning(f"[当日计数] 读取失败: {e}，重置为 0")
-        save_daily_stat(0, today_key)
+        with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
+            json.dump({"day": today_key, "count": 0}, f, indent=2)
         return 0, today_key
 
     if data.get("day") != today_key:
         logger.info(f"[当日计数] 新的一天 ({data.get('day')} → {today_key})，自动清零")
-        save_daily_stat(0, today_key)
+        with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
+            json.dump({"day": today_key, "count": 0}, f, indent=2)
         return 0, today_key
 
     count = int(data.get("count", 0))
@@ -120,7 +123,7 @@ def save_daily_stat(count, day_key):
     logger.info(f"[当日计数] 已更新: {count}/{DAY_MAX_LIMIT}")
 
 
-# 读取月度抓取计数，每月1号自动重置
+# 月度计数
 def get_month_stat():
     cur_month = f"{datetime.now().year}-{datetime.now().month}"
     logger.debug(f"[月度计数] 当前月份: {cur_month}")
@@ -132,12 +135,14 @@ def get_month_stat():
             data = json.load(f)
     except Exception as e:
         logger.warning(f"[月度计数] 读取失败: {e}，重置为 0")
-        save_month_stat(0, cur_month)
+        with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
+            json.dump({"month": cur_month, "count": 0}, f, indent=2)
         return 0, cur_month
 
     if data.get("month") != cur_month:
         logger.info(f"[月度计数] 新月份到来 ({data.get('month')} → {cur_month})，自动清零")
-        save_month_stat(0, cur_month)
+        with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
+            json.dump({"month": cur_month, "count": 0}, f, indent=2)
         return 0, cur_month
 
     count = int(data.get("count", 0))
@@ -204,9 +209,56 @@ def send_to_feishu(tweet_list):
         return False
 
 
-# 核心抓取函数（手动OAuth1签名 + URL拼接，sign不传params）
+# 手动构造标准OAuth1 Authorization Header
+def make_oauth_header(method, base_url, query_params):
+    nonce = base64.b64encode(os.urandom(32)).decode().replace("+", "").replace("/", "").replace("=", "")
+    timestamp = str(int(time.time()))
+
+    logger.debug(f"[OAuth] nonce: {nonce[:20]}...")
+    logger.debug(f"[OAuth] timestamp: {timestamp}")
+
+    oauth_base = {
+        "oauth_consumer_key": CONSUMER_KEY,
+        "oauth_nonce": nonce,
+        "oauth_signature_method": "HMAC-SHA1",
+        "oauth_timestamp": timestamp,
+        "oauth_token": ACCESS_TOKEN,
+        "oauth_version": "1.0"
+    }
+    sign_all = {}
+    sign_all.update(oauth_base)
+    sign_all.update(query_params)
+
+    # RFC5849 标准排序编码
+    sorted_items = sorted(sign_all.items())
+    param_str = "&".join([f"{quote_plus(k)}={quote_plus(str(v))}" for k, v in sorted_items])
+    base_str = f"{method.upper()}&{quote_plus(base_url)}&{quote_plus(param_str)}"
+
+    logger.debug(f"[OAuth] signature base string (前150字): {base_str[:150]}...")
+
+    sign_key = f"{quote_plus(CONSUMER_SECRET)}&{quote_plus(ACCESS_TOKEN_SECRET)}"
+    raw_sig = hmac.new(sign_key.encode("utf-8"), base_str.encode("utf-8"), hashlib.sha1).digest()
+    oauth_sig = base64.b64encode(raw_sig).decode("utf-8")
+
+    logger.debug(f"[OAuth] signature: {oauth_sig}")
+
+    header_parts = [
+        f'oauth_consumer_key="{quote_plus(CONSUMER_KEY)}"',
+        f'oauth_nonce="{quote_plus(nonce)}"',
+        f'oauth_signature="{quote_plus(oauth_sig)}"',
+        f'oauth_signature_method="HMAC-SHA1"',
+        f'oauth_timestamp="{timestamp}"',
+        f'oauth_token="{quote_plus(ACCESS_TOKEN)}"',
+        'oauth_version="1.0"'
+    ]
+    auth_header = f"OAuth {', '.join(header_parts)}"
+    logger.debug(f"[OAuth] Authorization header (前100字): {auth_header[:100]}...")
+    return auth_header
+
+
+# 核心抓取函数
 def fetch_follow_timeline():
-    print_separator("X 平台推文抓取测试（手动OAuth1签名 + URL拼接）")
+    print_separator("X 平台推文抓取测试（纯手写OAuth1 HMAC-SHA1签名）")
 
     # 检查配置
     logger.info("[配置] 检查 API 凭证...")
@@ -235,52 +287,38 @@ def fetch_follow_timeline():
         return []
     logger.info(f"✅ 当日额度充足: {day_cnt}/{DAY_MAX_LIMIT}")
 
-    # 初始化 OAuth1 Client
-    print_separator("初始化 OAuth1 Client（手动签名）")
-    try:
-        oauth_client = Client(
-            client_key=CONSUMER_KEY,
-            client_secret=CONSUMER_SECRET,
-            resource_owner_key=ACCESS_TOKEN,
-            resource_owner_secret=ACCESS_TOKEN_SECRET
-        )
-        logger.info("✅ oauthlib.oauth1.Client 初始化成功")
-    except Exception as e:
-        logger.error(f"❌ OAuth1 Client 初始化失败: {e}", exc_info=True)
-        return []
-
-    base_url = "https://api.x.com/2/users/me/timelines/reverse_chronological"
-
+    api_base = "https://api.x.com/2/users/me/timelines/reverse_chronological"
     last_id = load_last_tweet_id()
-    # 仅保留官方白名单合法参数
-    params = {
+
+    # 仅官方允许的3个合法query参数，无任何非法字段
+    query_params = {
         "max_results": MAX_RESULTS,
         "post.fields": "created_at,text",
     }
     if last_id > 0:
-        params["since_id"] = last_id
+        query_params["since_id"] = last_id
         logger.info(f"📝 since_id = {last_id}（增量抓取）")
     else:
         logger.info("📝 since_id 为空（首次运行，抓取最新推文）")
 
     logger.info(f"📝 max_results = {MAX_RESULTS}")
     logger.info("📝 post.fields = 'created_at,text'")
-    logger.info(f"📝 params 完整参数键: {list(params.keys())}")
+    logger.info(f"📝 query_params 完整键: {list(query_params.keys())}")
 
-    # 关键修复：手动把查询参数拼到URL，sign不再传params参数
-    print_separator("拼接 URL + 生成 OAuth1 签名")
-    query_str = urlencode(params)
-    full_url = f"{base_url}?{query_str}"
+    # 手动拼接查询串，不会自动注入id=me
+    print_separator("构造 OAuth1 Authorization Header")
+    query_encode = urlencode(query_params)
+    full_url = f"{api_base}?{query_encode}"
     logger.info(f"🌐 完整请求 URL: {full_url}")
 
-    # 正确调用sign，只传url、请求方法，无params
-    try:
-        signed_url, headers, _ = oauth_client.sign(full_url, http_method="GET")
-        logger.info(f"🌐 签名后 URL: {signed_url}")
-        logger.info(f"🌐 Authorization header 前80字符: {str(headers.get('Authorization', ''))[:80]}...")
+    auth_header = make_oauth_header("GET", api_base, query_params)
+    headers = {"Authorization": auth_header}
+    logger.info(f"🌐 Authorization 构造完成")
 
-        logger.info("🌐 正在发送 GET 请求...")
-        resp = requests.get(signed_url, headers=headers, timeout=30)
+    print_separator("发送 API 请求")
+    logger.info("🌐 正在发送 GET 请求...")
+    try:
+        resp = requests.get(full_url, headers=headers, timeout=30)
         logger.info(f"🌐 响应状态码: {resp.status_code}")
     except Exception as e:
         logger.error(f"❌ API 请求异常: {e}", exc_info=True)
@@ -293,39 +331,35 @@ def fetch_follow_timeline():
         logger.error(f"❌ 响应内容: {resp.text[:500]}")
         return []
 
-    # 捕获各类API错误
     if resp.status_code == 401:
-        logger.error(f"❌ [401鉴权失败] 密钥错误/Token失效：{resp_json}")
+        logger.error(f"❌ [401鉴权失败] 密钥/Secret错误：{resp_json}")
         return []
     if resp.status_code == 402:
-        logger.error(f"❌ [402扣费上限] 达到月度1美元消费限额，本月停止抓取")
+        logger.error(f"❌ [402 月度配额耗尽，停止抓取]")
         return []
     if resp.status_code != 200:
-        logger.error(f"❌ [API异常] 状态码:{resp.status_code} 完整返回:{resp_json}")
+        logger.error(f"❌ [API异常] 状态码:{resp.status_code} 返回:{resp_json}")
         return []
 
     tweet_list = resp_json.get("data", [])
 
     if not tweet_list:
         print_separator("抓取结果")
-        logger.info(f"📭 本次无新增关注推文 | 当日累计:{day_cnt}/{DAY_MAX_LIMIT} | 当月累计:{month_cnt}/{MONTH_MAX_LIMIT} | ** 0 扣费 **")
+        logger.info(f"📭 本次无新关注推文 | 日:{day_cnt}/{DAY_MAX_LIMIT} 月:{month_cnt}/{MONTH_MAX_LIMIT} | ** 0 扣费 **")
         return []
 
     add_total = len(tweet_list)
     logger.info(f"📨 获取到 {add_total} 条推文")
 
-    # 截断超出当日剩余额度的推文，避免单日超额扣费
     if day_cnt + add_total > DAY_MAX_LIMIT:
-        allow_num = DAY_MAX_LIMIT - day_cnt
-        logger.warning(f"⚠️ 当日剩余额度仅{allow_num}条，截断本次数据，仅保留最新{allow_num}条")
-        tweet_list = tweet_list[:allow_num]
-        add_total = allow_num
+        allow = DAY_MAX_LIMIT - day_cnt
+        logger.warning(f"⚠️ 当日剩余额度仅{allow}条，截断数据")
+        tweet_list = tweet_list[:allow]
+        add_total = allow
 
-    # 更新全局最新推文ID
-    new_max_id = max(int(item["id"]) for item in tweet_list)
+    new_max_id = max(int(i["id"]) for i in tweet_list)
     save_last_tweet_id(new_max_id)
 
-    # 更新日、月抓取计数
     new_day_total = day_cnt + add_total
     new_month_total = month_cnt + add_total
     save_daily_stat(new_day_total, cur_day)
