@@ -74,6 +74,7 @@ class Settings:
     X_MONTH_MAX_LIMIT: int = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
     X_DAY_MAX_LIMIT: int = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
     X_USER_ID: str = os.getenv("X_USER_ID", "")
+    X_LIST_ID: str = os.getenv("X_LIST_ID", "")
 
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)

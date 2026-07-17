@@ -253,9 +253,9 @@ def fetch_list_tweets():
     logger.info(f"📝 tweet_fields = ['created_at', 'text']")
     logger.info(f"📝 list_id = {LIST_ID}")
 
-    # 硬编码列表ID调用列表推文接口，不会触发Bearer空值401
+    # 修复：官方入参关键字是 id，不是 list_id
     try:
-        resp = client.get_list_tweets(list_id=LIST_ID, **params)
+        resp = client.get_list_tweets(id=LIST_ID, **params)
     except Exception as e:
         logger.error(f"❌ API 请求异常: {e}", exc_info=True)
         return []

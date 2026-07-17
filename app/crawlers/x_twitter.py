@@ -1,16 +1,10 @@
 import json
-import os
-import hmac
-import base64
-import hashlib
-import time
 import logging
-from urllib.parse import urlencode, quote_plus
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 
-import requests
+import tweepy
 
 from app.config import settings
 
@@ -27,11 +21,11 @@ def _state_path(filename: str) -> Path:
     return settings.DATA_DIR / filename
 
 
-# ---- last_tweet_id.json ----
+# ---- last_list_tweet_id.json ----
 
 def _load_last_tweet_id() -> int:
     """Load last fetched tweet ID. Auto-creates file with 0 if missing."""
-    path = _state_path("last_tweet_id.json")
+    path = _state_path("last_list_tweet_id.json")
     if not path.exists():
         _save_last_tweet_id(0)
         return 0
@@ -40,14 +34,14 @@ def _load_last_tweet_id() -> int:
             data = json.load(f)
         return int(data.get("last_id", 0))
     except (json.JSONDecodeError, KeyError, ValueError):
-        logger.warning("[X] last_tweet_id.json 损坏，重置为 0")
+        logger.warning("[X] last_list_tweet_id.json 损坏，重置为 0")
         _save_last_tweet_id(0)
         return 0
 
 
 def _save_last_tweet_id(tweet_id: int) -> None:
     """Persist last fetched tweet ID."""
-    path = _state_path("last_tweet_id.json")
+    path = _state_path("last_list_tweet_id.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"last_id": str(tweet_id)}, f, ensure_ascii=False, indent=2)
 
@@ -139,50 +133,23 @@ def _save_day_count(count: int) -> None:
 
 
 # ============================================================
-#  OAuth1 HMAC-SHA1 Signature (pure Python, no library injection)
+#  tweepy client
 # ============================================================
 
-def _make_oauth_header(method: str, base_url: str, query_params: dict) -> str:
-    """
-    Manually construct a standard OAuth1 Authorization header (RFC5849).
-    Fully controls all parameters - no automatic injection of extra fields.
-    """
-    nonce = base64.b64encode(os.urandom(32)).decode().replace("+", "").replace("/", "").replace("=", "")
-    ts = str(int(time.time()))
+_client: tweepy.Client | None = None
 
-    oauth_base = {
-        "oauth_consumer_key": settings.X_CONSUMER_KEY,
-        "oauth_nonce": nonce,
-        "oauth_signature_method": "HMAC-SHA1",
-        "oauth_timestamp": ts,
-        "oauth_token": settings.X_ACCESS_TOKEN,
-        "oauth_version": "1.0",
-    }
-    all_sign_params = {**oauth_base, **query_params}
-    sorted_items = sorted(all_sign_params.items())
-    param_str = "&".join(
-        f"{quote_plus(k)}={quote_plus(str(v))}" for k, v in sorted_items
-    )
-    base_string = f"{method.upper()}&{quote_plus(base_url)}&{quote_plus(param_str)}"
 
-    sign_key = f"{quote_plus(settings.X_CONSUMER_SECRET)}&{quote_plus(settings.X_ACCESS_TOKEN_SECRET)}"
-    raw_sig = hmac.new(
-        sign_key.encode("utf-8"),
-        base_string.encode("utf-8"),
-        hashlib.sha1,
-    ).digest()
-    sig = base64.b64encode(raw_sig).decode("utf-8")
-
-    header_parts = [
-        f'oauth_consumer_key="{quote_plus(settings.X_CONSUMER_KEY)}"',
-        f'oauth_nonce="{quote_plus(nonce)}"',
-        f'oauth_signature="{quote_plus(sig)}"',
-        'oauth_signature_method="HMAC-SHA1"',
-        f'oauth_timestamp="{ts}"',
-        f'oauth_token="{quote_plus(settings.X_ACCESS_TOKEN)}"',
-        'oauth_version="1.0"',
-    ]
-    return f"OAuth {', '.join(header_parts)}"
+def _get_client() -> tweepy.Client:
+    """Lazy-init tweepy Client with OAuth1."""
+    global _client
+    if _client is None:
+        _client = tweepy.Client(
+            consumer_key=settings.X_CONSUMER_KEY,
+            consumer_secret=settings.X_CONSUMER_SECRET,
+            access_token=settings.X_ACCESS_TOKEN,
+            access_token_secret=settings.X_ACCESS_TOKEN_SECRET,
+        )
+    return _client
 
 
 # ============================================================
@@ -191,8 +158,7 @@ def _make_oauth_header(method: str, base_url: str, query_params: dict) -> str:
 
 def fetch_tweets() -> List[Dict[str, Any]]:
     """
-    Fetch tweets from reverse_chronological timeline using pure OAuth1 HMAC-SHA1 + X API v2.
-    Uses numeric user ID path: /2/users/{USER_ID}/timelines/reverse_chronological
+    Fetch tweets from a specified list using tweepy get_list_tweets.
     Incremental fetching with monthly and daily rate limits.
 
     Returns:
@@ -217,76 +183,54 @@ def fetch_tweets() -> List[Dict[str, Any]]:
         )
         return []
 
+    list_id = settings.X_LIST_ID
+    if not list_id:
+        logger.warning("[X] 未配置 X_LIST_ID，跳过抓取")
+        return []
+
     last_tweet_id = _load_last_tweet_id()
 
     logger.info(
-        f"[X] 开始抓取推文, since_id={last_tweet_id}, "
+        f"[X] 开始抓取列表推文, list_id={list_id}, since_id={last_tweet_id}, "
         f"月度 {month_count}/{month_limit}, 每日 {day_count}/{day_limit}"
     )
 
     try:
-        # ---- Build API URL with numeric user ID ----
-        user_id = settings.X_USER_ID
-        base_api = f"https://api.x.com/2/users/{user_id}/timelines/reverse_chronological"
+        client = _get_client()
 
-        query_params = {
+        params = {
             "max_results": settings.X_MAX_RESULTS,
-            "tweet.fields": "created_at,text",
+            "tweet_fields": ["created_at", "text"],
         }
         if last_tweet_id > 0:
-            query_params["since_id"] = last_tweet_id
+            params["since_id"] = last_tweet_id
 
-        # ---- Build full URL with query string ----
-        query_str = urlencode(query_params)
-        full_url = f"{base_api}?{query_str}"
+        # 官方入参关键字是 id，不是 list_id
+        resp = client.get_list_tweets(id=list_id, **params)
+        tweet_objects = resp.data or []
 
-        # ---- Build OAuth1 Authorization header ----
-        auth_header = _make_oauth_header("GET", base_api, query_params)
-        headers = {"Authorization": auth_header}
-
-        # ---- Fetch tweets from X API ----
-        resp = requests.get(full_url, headers=headers, timeout=30)
-
-        try:
-            resp_json = resp.json()
-        except (ValueError, json.JSONDecodeError):
-            logger.error(f"[X] API 返回非 JSON: status={resp.status_code}, text={resp.text[:300]}")
-            return []
-
-        if resp.status_code == 401:
-            logger.error(f"[X] 401鉴权失败: 密钥缺失/Secret错误/Token失效, {resp_json}")
-            return []
-        if resp.status_code == 402:
-            logger.error(f"[X] 402扣费上限: 已达到月度消费限额, {resp_json}")
-            return []
-        if resp.status_code != 200:
-            logger.error(f"[X] API异常: status={resp.status_code}, {resp_json}")
-            return []
-
-        tweet_list = resp_json.get("data", [])
-
-        if not tweet_list:
+        if not tweet_objects:
             logger.info("[X] 没有获取到新推文")
             return []
 
         # ---- Truncate to remaining daily capacity ----
         remaining = day_limit - day_count
-        if len(tweet_list) > remaining:
+        if len(tweet_objects) > remaining:
             logger.info(
-                f"[X] 推文数量 ({len(tweet_list)}) 超过每日剩余配额 ({remaining})，截断处理"
+                f"[X] 推文数量 ({len(tweet_objects)}) 超过每日剩余配额 ({remaining})，截断处理"
             )
-            tweet_list = tweet_list[:remaining]
+            tweet_objects = tweet_objects[:remaining]
 
         # ---- Build result list ----
         result: List[Dict[str, Any]] = []
         max_id = last_tweet_id
 
-        for item in tweet_list:
-            tweet_id = int(item["id"])
+        for tw in tweet_objects:
+            tweet_id = int(tw.id)
             result.append({
                 "id": tweet_id,
-                "text": item.get("text", ""),
-                "created_at": item.get("created_at"),
+                "text": tw.text,
+                "created_at": str(tw.created_at) if tw.created_at else None,
             })
             if tweet_id > max_id:
                 max_id = tweet_id
