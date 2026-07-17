@@ -12,7 +12,6 @@ import json
 import os
 import sys
 import logging
-import time
 from datetime import datetime
 from dotenv import load_dotenv
 import requests
@@ -31,10 +30,10 @@ logger = logging.getLogger("run_x")
 CONSUMER_KEY = os.getenv("X_CONSUMER_KEY", "")
 CONSUMER_SECRET = os.getenv("X_CONSUMER_SECRET", "")
 ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
-TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
+ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
 
-# 抓取额度配置
-MAX_RESULTS = int(os.getenv("X_MAX_RESULTS", "3"))
+# 抓取额度配置（官方强制 max_results 最小为 5）
+MAX_RESULTS = int(os.getenv("X_MAX_RESULTS", "5"))
 DAY_MAX_LIMIT = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
 MONTH_MAX_LIMIT = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
 
@@ -209,12 +208,12 @@ def fetch_follow_timeline():
 
     # 检查配置
     logger.info("[配置] 检查 API 凭证...")
-    if not all([CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN, TOKEN_SECRET]):
+    if not all([CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET]):
         logger.error("❌ [配置] 缺少 API 凭证，请在 .env 中配置 X_CONSUMER_KEY / X_CONSUMER_SECRET / X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET")
         return []
 
     logger.info(f"[配置] CONSUMER_KEY: {CONSUMER_KEY[:8]}... (已隐藏)")
-    logger.info(f"[配置] MAX_RESULTS: {MAX_RESULTS}")
+    logger.info(f"[配置] MAX_RESULTS: {MAX_RESULTS} (官方硬性下限5条)")
     logger.info(f"[配置] MONTH_MAX_LIMIT: {MONTH_MAX_LIMIT}")
     logger.info(f"[配置] DAY_MAX_LIMIT: {DAY_MAX_LIMIT}")
 
@@ -241,7 +240,7 @@ def fetch_follow_timeline():
             CONSUMER_KEY,
             CONSUMER_SECRET,
             ACCESS_TOKEN,
-            TOKEN_SECRET
+            ACCESS_TOKEN_SECRET
         )
         logger.info("✅ OAuth1Session 初始化成功")
     except Exception as e:
@@ -251,20 +250,20 @@ def fetch_follow_timeline():
     api_url = "https://api.x.com/2/users/me/timelines/reverse_chronological"
 
     last_id = load_last_tweet_id()
-    # 请求参数：仅拉取发布时间、正文，减少计费字段
+    # 关键修复：使用官方允许的 post.fields，无 tweet_fields
     params = {
         "max_results": MAX_RESULTS,
-        "tweet_fields": "created_at,text"
+        "post.fields": "created_at,text",
     }
-    # 增量抓取：只获取上次抓取之后新发布的推文
     if last_id > 0:
         params["since_id"] = last_id
         logger.info(f"📝 since_id = {last_id}（增量抓取）")
     else:
         logger.info("📝 since_id 为空（首次运行，抓取最新推文）")
 
-    logger.info(f"📝 max_results = {MAX_RESULTS}（官方硬性下限5条）")
-    logger.info("📝 post.fields = 'created_at,text'（无 expansions，节省费用）")
+    logger.info(f"📝 max_results = {MAX_RESULTS}")
+    logger.info("📝 post.fields = 'created_at,text'")
+    logger.info(f"📝 params 完整参数: {list(params.keys())}")
 
     # 发送API请求
     print_separator("调用 X API v2")
