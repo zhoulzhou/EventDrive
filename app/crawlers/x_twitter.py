@@ -2,9 +2,10 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
-import tweepy
+import requests
+from requests_oauthlib import OAuth1Session
 
 from app.config import settings
 
@@ -32,8 +33,8 @@ def _load_last_tweet_id() -> int:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data.get("last_tweet_id", 0)
-    except (json.JSONDecodeError, KeyError):
+        return int(data.get("last_id", 0))
+    except (json.JSONDecodeError, KeyError, ValueError):
         logger.warning("[X] last_tweet_id.json 损坏，重置为 0")
         _save_last_tweet_id(0)
         return 0
@@ -43,7 +44,7 @@ def _save_last_tweet_id(tweet_id: int) -> None:
     """Persist last fetched tweet ID."""
     path = _state_path("last_tweet_id.json")
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"last_tweet_id": tweet_id}, f, indent=2)
+        json.dump({"last_id": str(tweet_id)}, f, ensure_ascii=False, indent=2)
 
 
 # ---- x_month_count.json ----
@@ -74,28 +75,19 @@ def _load_month_count() -> int:
         _save_month_count(0)
         return 0
 
-    if current_key not in data:
-        # New month – reset
+    if data.get("month") != current_key:
         _save_month_count(0)
         return 0
 
-    return data.get(current_key, 0)
+    return int(data.get("count", 0))
 
 
 def _save_month_count(count: int) -> None:
     """Persist the monthly tweet count for the current month."""
     path = _state_path("x_month_count.json")
     current_key = _get_month_key()
-    data = {}
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError,):
-            data = {}
-    data[current_key] = count
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump({"month": current_key, "count": count}, f, indent=2)
 
 
 # ---- x_day_count.json ----
@@ -126,28 +118,19 @@ def _load_day_count() -> int:
         _save_day_count(0)
         return 0
 
-    if current_key not in data:
-        # New day – reset
+    if data.get("day") != current_key:
         _save_day_count(0)
         return 0
 
-    return data.get(current_key, 0)
+    return int(data.get("count", 0))
 
 
 def _save_day_count(count: int) -> None:
     """Persist the daily tweet count for the current day."""
     path = _state_path("x_day_count.json")
     current_key = _get_day_key()
-    data = {}
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError,):
-            data = {}
-    data[current_key] = count
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump({"day": current_key, "count": count}, f, indent=2)
 
 
 # ============================================================
@@ -156,8 +139,8 @@ def _save_day_count(count: int) -> None:
 
 def fetch_tweets() -> List[Dict[str, Any]]:
     """
-    Fetch tweets from home timeline using incremental fetching
-    with monthly and daily rate limits.
+    Fetch tweets from reverse_chronological timeline using OAuth1 + X API v2.
+    Incremental fetching with monthly and daily rate limits.
 
     Returns:
         List of tweet dicts, each with keys: id, text, created_at.
@@ -181,58 +164,74 @@ def fetch_tweets() -> List[Dict[str, Any]]:
         )
         return []
 
-    # ---- Build tweepy client ----
-    client = tweepy.Client(
-        consumer_key=settings.X_CONSUMER_KEY,
-        consumer_secret=settings.X_CONSUMER_SECRET,
-        access_token=settings.X_ACCESS_TOKEN,
-        access_token_secret=settings.X_ACCESS_TOKEN_SECRET,
-    )
-
-    # ---- Determine since_id ----
     last_tweet_id = _load_last_tweet_id()
-    since_id = last_tweet_id if last_tweet_id > 0 else None
 
     logger.info(
-        f"[X] 开始抓取推文, since_id={since_id}, "
+        f"[X] 开始抓取推文, since_id={last_tweet_id}, "
         f"月度 {month_count}/{month_limit}, 每日 {day_count}/{day_limit}"
     )
 
     try:
-        # ---- Fetch tweets from X API ----
-        kwargs: Dict[str, Any] = {
+        # ---- Init OAuth1 session ----
+        oauth_session = OAuth1Session(
+            settings.X_CONSUMER_KEY,
+            settings.X_CONSUMER_SECRET,
+            settings.X_ACCESS_TOKEN,
+            settings.X_ACCESS_TOKEN_SECRET,
+        )
+
+        api_url = "https://api.x.com/2/users/me/timelines/reverse_chronological"
+
+        params = {
             "max_results": settings.X_MAX_RESULTS,
-            "tweet_fields": ["created_at", "text"],
+            "post.fields": "created_at,text",
         }
-        if since_id is not None:
-            kwargs["since_id"] = since_id
+        if last_tweet_id > 0:
+            params["since_id"] = last_tweet_id
 
-        response = client.get_home_timeline(**kwargs)
+        # ---- Fetch tweets from X API ----
+        resp = oauth_session.get(api_url, params=params, timeout=30)
 
-        if response.data is None or len(response.data) == 0:
+        try:
+            resp_json = resp.json()
+        except (ValueError, json.JSONDecodeError):
+            logger.error(f"[X] API 返回非 JSON: status={resp.status_code}, text={resp.text[:300]}")
+            return []
+
+        if resp.status_code == 401:
+            logger.error(f"[X] 401鉴权失败: 密钥缺失/Secret错误/Token失效, {resp_json}")
+            return []
+        if resp.status_code == 402:
+            logger.error(f"[X] 402扣费上限: 已达到月度消费限额, {resp_json}")
+            return []
+        if resp.status_code != 200:
+            logger.error(f"[X] API异常: status={resp.status_code}, {resp_json}")
+            return []
+
+        tweet_list = resp_json.get("data", [])
+
+        if not tweet_list:
             logger.info("[X] 没有获取到新推文")
             return []
 
-        tweets_data = response.data
-
         # ---- Truncate to remaining daily capacity ----
         remaining = day_limit - day_count
-        if len(tweets_data) > remaining:
+        if len(tweet_list) > remaining:
             logger.info(
-                f"[X] 推文数量 ({len(tweets_data)}) 超过每日剩余配额 ({remaining})，截断处理"
+                f"[X] 推文数量 ({len(tweet_list)}) 超过每日剩余配额 ({remaining})，截断处理"
             )
-            tweets_data = tweets_data[:remaining]
+            tweet_list = tweet_list[:remaining]
 
         # ---- Build result list ----
         result: List[Dict[str, Any]] = []
         max_id = last_tweet_id
 
-        for tweet in tweets_data:
-            tweet_id = int(tweet.id)
+        for item in tweet_list:
+            tweet_id = int(item["id"])
             result.append({
                 "id": tweet_id,
-                "text": tweet.text,
-                "created_at": tweet.created_at.isoformat() if tweet.created_at else None,
+                "text": item.get("text", ""),
+                "created_at": item.get("created_at"),
             })
             if tweet_id > max_id:
                 max_id = tweet_id

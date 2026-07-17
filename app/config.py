@@ -70,7 +70,7 @@ class Settings:
     X_ACCESS_TOKEN_SECRET: str = os.getenv("X_ACCESS_TOKEN_SECRET", "")
     X_FEISHU_WEBHOOK_URL: str = os.getenv("X_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/76b00cec-a6f2-4f7f-b0be-e5b98a05a0de")
     X_FEISHU_KEYWORD: str = os.getenv("X_FEISHU_KEYWORD", "X推文")
-    X_MAX_RESULTS: int = int(os.getenv("X_MAX_RESULTS", "3"))
+    X_MAX_RESULTS: int = int(os.getenv("X_MAX_RESULTS", "5"))
     X_MONTH_MAX_LIMIT: int = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
     X_DAY_MAX_LIMIT: int = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
     X_USER_ID: str = os.getenv("X_USER_ID", "")

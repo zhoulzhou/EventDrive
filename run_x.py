@@ -263,8 +263,8 @@ def fetch_follow_timeline():
     else:
         logger.info("📝 since_id 为空（首次运行，抓取最新推文）")
 
-    logger.info(f"📝 max_results = {MAX_RESULTS}")
-    logger.info("📝 tweet_fields = 'created_at,text'（无 expansions，节省费用）")
+    logger.info(f"📝 max_results = {MAX_RESULTS}（官方硬性下限5条）")
+    logger.info("📝 post.fields = 'created_at,text'（无 expansions，节省费用）")
 
     # 发送API请求
     print_separator("调用 X API v2")
