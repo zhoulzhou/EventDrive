@@ -4,6 +4,9 @@ import time
 from datetime import datetime
 import tweepy
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ===================== 配置区 =====================
 # OAuth2.0 Bearer Token（公开列表专用，无401权限坑）
