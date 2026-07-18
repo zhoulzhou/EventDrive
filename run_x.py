@@ -1,316 +1,213 @@
-"""
-X 平台列表推文抓取脚本（OAuth2.0 Bearer Token 版）
-- 使用 tweepy.Client + bearer_token（OAuth2.0 App-only）
-- 抓取指定列表推文（get_list_tweets）
-- 增量抓取（since_id 机制），避免重复扣费
-- 月度/每日额度控制
-- 飞书推送
-- 详细日志输出
-"""
-
 import json
 import os
-import sys
-import logging
+import time
 from datetime import datetime
-from dotenv import load_dotenv
 import tweepy
 import httpx
-
-load_dotenv(override=True)
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("run_x")
 
 # ===================== 配置区 =====================
 BEARER_TOKEN = os.getenv("X_B_T", "")
 LIST_ID = os.getenv("X_LIST_ID", "")
 
+# 抓取控制参数
 MAX_RESULTS = int(os.getenv("X_MAX_RESULTS", "5"))
 DAY_MAX_LIMIT = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
 MONTH_MAX_LIMIT = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
+MAX_HISTORY_CACHE_SIZE = 100
 
 # 飞书推送配置
 FEISHU_WEBHOOK_URL = os.getenv("X_FEISHU_WEBHOOK_URL", "")
 FEISHU_KEYWORD = os.getenv("X_FEISHU_KEYWORD", "X推文")
 
-# 本地存储文件
+# 持久化文件
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-LAST_TWEET_FILE = os.path.join(DATA_DIR, "last_list_tweet_id.json")
+LAST_TWEET_FILE = os.path.join(DATA_DIR, "last_list_tweet.json")
+HISTORY_CACHE_FILE = os.path.join(DATA_DIR, "history_tweet_cache.json")
 DAY_COUNT_FILE = os.path.join(DATA_DIR, "list_day_count.json")
 MONTH_COUNT_FILE = os.path.join(DATA_DIR, "list_month_count.json")
 # ==================================================
 
 
-def print_separator(title=""):
-    line = "=" * 60
-    if title:
-        logger.info(f"\n{line}")
-        logger.info(f"  {title}")
-        logger.info(line)
-    else:
-        logger.info(f"\n{line}")
-
-
-# OAuth2.0 App-only 客户端，无OAuth1鉴权bug
-client = tweepy.Client(bearer_token=BEARER_TOKEN) if BEARER_TOKEN else None
-
-
-# 读取上次最大推文ID（增量抓取）
-def load_last_id():
-    logger.debug(f"[状态] 读取 last_list_tweet_id: {LAST_TWEET_FILE}")
-    if not os.path.exists(LAST_TWEET_FILE):
-        logger.info("[状态] last_list_tweet_id.json 不存在，初始化为 0（首次运行）")
-        return 0
-    try:
-        with open(LAST_TWEET_FILE, "r", encoding="utf-8") as f:
-            last_id = int(json.load(f)["last_id"])
-        logger.info(f"[状态] 上次抓取最大推文 ID: {last_id}")
-        return last_id
-    except Exception as e:
-        logger.warning(f"[状态] 读取 last_id 失败: {e}，重置为 0")
-        return 0
-
-
-def save_last_id(new_id):
-    logger.debug(f"[状态] 保存 last_list_tweet_id: {new_id}")
-    with open(LAST_TWEET_FILE, "w", encoding="utf-8") as f:
-        json.dump({"last_id": str(new_id)}, f, indent=2)
-    logger.info(f"[状态] last_list_tweet_id 已更新为: {new_id}")
-
-
-# 日计数
-def get_daily():
-    today = f"{datetime.now().year}-{datetime.now().month}-{datetime.now().day}"
-    logger.debug(f"[当日计数] 今日日期: {today}")
-    if not os.path.exists(DAY_COUNT_FILE):
-        logger.info("[当日计数] list_day_count.json 不存在，初始化为 0")
-        with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
-            json.dump({"day": today, "count": 0}, f, indent=2)
-        return 0, today
-    try:
-        d = json.load(open(DAY_COUNT_FILE, "r", encoding="utf-8"))
-    except Exception as e:
-        logger.warning(f"[当日计数] 读取失败: {e}，重置为 0")
-        with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
-            json.dump({"day": today, "count": 0}, f, indent=2)
-        return 0, today
-
-    if d.get("day") != today:
-        logger.info(f"[当日计数] 新的一天 ({d.get('day')} → {today})，自动清零")
-        with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
-            json.dump({"day": today, "count": 0}, f, indent=2)
-        return 0, today
-
-    count = int(d.get("count", 0))
-    logger.info(f"[当日计数] 今日已抓取: {count}/{DAY_MAX_LIMIT} 条")
-    return count, today
-
-
-# 月计数
-def get_monthly():
-    month = f"{datetime.now().year}-{datetime.now().month}"
-    logger.debug(f"[月度计数] 当前月份: {month}")
-    if not os.path.exists(MONTH_COUNT_FILE):
-        logger.info("[月度计数] list_month_count.json 不存在，初始化为 0")
-        with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
-            json.dump({"month": month, "count": 0}, f, indent=2)
-        return 0, month
-    try:
-        d = json.load(open(MONTH_COUNT_FILE, "r", encoding="utf-8"))
-    except Exception as e:
-        logger.warning(f"[月度计数] 读取失败: {e}，重置为 0")
-        with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
-            json.dump({"month": month, "count": 0}, f, indent=2)
-        return 0, month
-
-    if d.get("month") != month:
-        logger.info(f"[月度计数] 新月份到来 ({d.get('month')} → {month})，自动清零")
-        with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
-            json.dump({"month": month, "count": 0}, f, indent=2)
-        return 0, month
-
-    count = int(d.get("count", 0))
-    logger.info(f"[月度计数] 本月已抓取: {count}/{MONTH_MAX_LIMIT} 条")
-    return count, month
-
-
-def send_to_feishu(tweet_list):
-    """将推文推送到飞书"""
+def send_to_feishu(text):
+    """推送文本到飞书"""
     if not FEISHU_WEBHOOK_URL:
-        logger.warning("[飞书] 未配置 FEISHU_WEBHOOK_URL，跳过推送")
         return False
-
     try:
-        header = f"【{FEISHU_KEYWORD}】🐦 X平台列表推文"
-        content_lines = [
-            header,
-            f"共获取 {len(tweet_list)} 条新推文",
-            "",
-        ]
-
-        for idx, t in enumerate(tweet_list, 1):
-            content_lines.append(f"【推文 {idx}】")
-            content_lines.append(f"  ID: {t.id}")
-            content_lines.append(f"  时间: {t.created_at}")
-            content_lines.append(f"  内容: {t.text}")
-            content_lines.append("")
-
-        content = "\n".join(content_lines)
-        logger.info(f"[飞书] 准备推送，内容长度: {len(content)} 字符")
-
         payload = {
             "msg_type": "text",
             "content": {
-                "text": content
+                "text": f"【{FEISHU_KEYWORD}】{text}"
             }
         }
-
-        logger.debug(f"[飞书] Webhook URL: {FEISHU_WEBHOOK_URL}")
-
-        with httpx.Client(timeout=15) as http_client:
-            response = http_client.post(FEISHU_WEBHOOK_URL, json=payload)
-            result = response.json()
-            logger.info(f"[飞书] 响应: code={result.get('code')}, msg={result.get('msg')}")
-
-            if result.get("code") == 0:
-                logger.info("✅ [飞书] 推送成功")
-                return True
-            else:
-                logger.error(f"❌ [飞书] 推送失败: {result}")
-                return False
-
-    except Exception as e:
-        logger.error(f"❌ [飞书] 推送异常: {e}", exc_info=True)
+        with httpx.Client(timeout=15) as client:
+            resp = client.post(FEISHU_WEBHOOK_URL, json=payload)
+            return resp.json().get("code") == 0
+    except Exception:
         return False
 
 
-# 核心抓取函数
+# OAuth2.0 App-only 客户端
+client = tweepy.Client(bearer_token=BEARER_TOKEN) if BEARER_TOKEN else None
+
+
+# 永久全局增量游标（不受100条缓存限制）
+def load_last_tweet_id():
+    if not os.path.exists(LAST_TWEET_FILE):
+        return 0
+    with open(LAST_TWEET_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        return int(data.get("last_id", 0))
+
+
+def save_last_tweet_id(new_tweet_id):
+    with open(LAST_TWEET_FILE, "w", encoding="utf-8") as f:
+        json.dump({"last_id": str(new_tweet_id)}, f, ensure_ascii=False, indent=2)
+
+
+# 带100条容量限制的历史ID缓存
+def load_history_cache():
+    if not os.path.exists(HISTORY_CACHE_FILE):
+        return []
+    with open(HISTORY_CACHE_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        return data.get("ids", [])
+
+
+def save_history_cache(id_list):
+    if len(id_list) >= MAX_HISTORY_CACHE_SIZE:
+        print(f"[缓存容量预警] 历史ID已达{MAX_HISTORY_CACHE_SIZE}条上限，清空历史缓存池")
+        cache_data = {"ids": []}
+    else:
+        cache_data = {"ids": id_list}
+    with open(HISTORY_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache_data, f, indent=2)
+
+
+# 当日抓取计数
+def get_daily_stat():
+    today_key = f"{datetime.now().year}-{datetime.now().month}-{datetime.now().day}"
+    if not os.path.exists(DAY_COUNT_FILE):
+        json.dump({"day": today_key, "count": 0}, open(DAY_COUNT_FILE, "w"), indent=2)
+        return 0, today_key
+    with open(DAY_COUNT_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if data["day"] != today_key:
+        json.dump({"day": today_key, "count": 0}, open(DAY_COUNT_FILE, "w"), indent=2)
+        return 0, today_key
+    return int(data["count"]), today_key
+
+
+def save_daily_count(count, day_key):
+    with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
+        json.dump({"day": day_key, "count": count}, indent=2)
+
+
+# 月度抓取计数（成本锁死）
+def get_month_stat():
+    cur_month = f"{datetime.now().year}-{datetime.now().month}"
+    if not os.path.exists(MONTH_COUNT_FILE):
+        json.dump({"month": cur_month, "count": 0}, open(MONTH_COUNT_FILE, "w"), indent=2)
+        return 0, cur_month
+    with open(MONTH_COUNT_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if data["month"] != cur_month:
+        json.dump({"month": cur_month, "count": 0}, open(MONTH_COUNT_FILE, "w"), indent=2)
+        return 0, cur_month
+    return int(data["count"]), cur_month
+
+
+def save_month_count(count, month_key):
+    with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
+        json.dump({"month": month_key, "count": count}, indent=2)
+
+
+# 核心抓取函数（无任何用户UID相关逻辑）
 def fetch_list_tweets():
-    print_separator("X 平台列表推文抓取（OAuth2.0 Bearer Token）")
-
-    # 检查配置
-    logger.info("[配置] 检查 Bearer Token...")
-    if not BEARER_TOKEN:
-        logger.error("❌ [配置] 缺少 X_B_T，请在 .env 中配置")
-        return []
-    if not LIST_ID:
-        logger.error("❌ [配置] 缺少 X_LIST_ID，请在 .env 中配置")
+    # 月度上限拦截
+    month_total, cur_month = get_month_stat()
+    if month_total >= MONTH_MAX_LIMIT:
+        msg = f"[月度成本锁定] 本月已抓取 {month_total} 条，达到上限 {MONTH_MAX_LIMIT}，停止本次请求"
+        print(msg)
+        send_to_feishu(msg)
         return []
 
-    logger.info(f"[配置] LIST_ID: {LIST_ID}")
-    logger.info(f"[配置] MAX_RESULTS: {MAX_RESULTS}")
-    logger.info(f"[配置] DAY_MAX_LIMIT: {DAY_MAX_LIMIT}")
-    logger.info(f"[配置] MONTH_MAX_LIMIT: {MONTH_MAX_LIMIT}")
-
-    # 月度额度检查
-    print_separator("检查月度额度")
-    month_cnt, cur_month = get_monthly()
-    if month_cnt >= MONTH_MAX_LIMIT:
-        logger.error(f"🛑 [暂停] 本月抓取达到配额上限 ({month_cnt}/{MONTH_MAX_LIMIT})")
+    # 单日上限拦截
+    day_total, cur_day = get_daily_stat()
+    if day_total >= DAY_MAX_LIMIT:
+        msg = f"[单日限额拦截] 今日已抓取 {day_total} 条，达到当日上限 {DAY_MAX_LIMIT}"
+        print(msg)
+        send_to_feishu(msg)
         return []
-    logger.info(f"✅ 月度额度充足: {month_cnt}/{MONTH_MAX_LIMIT}")
 
-    # 当日额度检查
-    print_separator("检查当日额度")
-    day_cnt, cur_day = get_daily()
-    if day_cnt >= DAY_MAX_LIMIT:
-        logger.warning(f"⏭️ [跳过] 今日抓取达到配额上限 ({day_cnt}/{DAY_MAX_LIMIT})")
-        return []
-    logger.info(f"✅ 当日额度充足: {day_cnt}/{DAY_MAX_LIMIT}")
-
-    last_id = load_last_id()
-
-    print_separator("调用 get_list_tweets 抓取列表推文")
-    params = {
+    last_id = load_last_tweet_id()
+    req_params = {
         "max_results": MAX_RESULTS,
         "tweet_fields": ["created_at", "text"]
     }
     if last_id > 0:
-        params["since_id"] = last_id
-        logger.info(f"📝 since_id = {last_id}（增量抓取）")
+        req_params["since_id"] = last_id
+        print(f"[增量过滤] 仅抓取 ID > {last_id} 的新增推文")
     else:
-        logger.info("📝 since_id 为空（首次运行，抓取最新推文）")
+        print("[首次运行] 无历史全局游标，抓取最新5条推文")
 
-    logger.info(f"📝 max_results = {MAX_RESULTS}")
-    logger.info(f"📝 tweet_fields = ['created_at', 'text']")
-    logger.info(f"📝 list_id = {LIST_ID}")
+    resp = client.get_list_tweets(id=LIST_ID, **req_params)
+    tweet_list = resp.data if resp.data else []
 
-    # 公开列表 OAuth2.0 Bearer鉴权，不会401
-    try:
-        resp = client.get_list_tweets(id=LIST_ID, **params)
-    except Exception as e:
-        logger.error(f"❌ API 请求异常: {e}", exc_info=True)
+    # 无新增推文，0扣费
+    if not tweet_list:
+        msg = f"本次无新增推文，无API扣费 | 当日累计:{day_total}/{DAY_MAX_LIMIT} | 当月累计:{month_total}/{MONTH_MAX_LIMIT}"
+        print(msg)
         return []
 
-    tweets = resp.data if resp.data else []
+    add_num = len(tweet_list)
+    # 截断超出当日限额数据
+    if day_total + add_num > DAY_MAX_LIMIT:
+        allow_count = DAY_MAX_LIMIT - day_total
+        tweet_list = tweet_list[:allow_count]
+        add_num = allow_count
+        print(f"⚠️ 超出当日限额，仅保留最新{allow_count}条")
 
-    if not tweets:
-        print_separator("抓取结果")
-        logger.info(f"📭 无新推文 | 今日:{day_cnt}/{DAY_MAX_LIMIT} 本月:{month_cnt}/{MONTH_MAX_LIMIT} | ** 0 扣费 **")
-        return []
+    # 更新永久全局增量ID
+    max_new_tid = max(int(tweet.id) for tweet in tweet_list)
+    save_last_tweet_id(max_new_tid)
 
-    add = len(tweets)
-    logger.info(f"📨 获取到 {add} 条推文")
+    # 更新带100条容量限制的历史缓存
+    history_ids = load_history_cache()
+    new_ids = [str(t.id) for t in tweet_list]
+    merged_ids = history_ids + new_ids
+    save_history_cache(merged_ids)
 
-    if day_cnt + add > DAY_MAX_LIMIT:
-        allow = DAY_MAX_LIMIT - day_cnt
-        logger.warning(f"⚠️ 当日剩余额度仅{allow}条，截断数据")
-        tweets = tweets[:allow]
-        add = allow
+    # 更新日/月抓取计数
+    new_day_count = day_total + add_num
+    new_month_count = month_total + add_num
+    save_daily_count(new_day_count, cur_day)
+    save_month_count(new_month_count, cur_month)
 
-    max_tid = max(int(t.id) for t in tweets)
-    save_last_id(max_tid)
+    result_msg = (f"✅ 本次新增{add_num}条列表推文 | "
+                  f"当日累计{new_day_count}/{DAY_MAX_LIMIT} | "
+                  f"当月累计{new_month_count}/{MONTH_MAX_LIMIT}\n"
+                  f"📦 历史ID缓存当前总量：{len(merged_ids)} / {MAX_HISTORY_CACHE_SIZE}")
+    print(result_msg)
 
-    # 更新计数
-    new_day, _ = get_daily()
-    new_month, _ = get_monthly()
-    with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
-        json.dump({"day": cur_day, "count": new_day + add}, f, indent=2)
-    with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
-        json.dump({"month": cur_month, "count": new_month + add}, f, indent=2)
+    # 推送飞书（带推文详情）
+    feishu_lines = [result_msg, ""]
+    for tweet in tweet_list:
+        feishu_lines.append(f"推文ID：{tweet.id}")
+        feishu_lines.append(f"发布时间：{tweet.created_at}")
+        feishu_lines.append(f"正文：{tweet.text}")
+        feishu_lines.append("-" * 40)
+    send_to_feishu("\n".join(feishu_lines))
 
-    logger.info(f"[当日计数] 更新为: {new_day + add}/{DAY_MAX_LIMIT}")
-    logger.info(f"[月度计数] 更新为: {new_month + add}/{MONTH_MAX_LIMIT}")
-
-    # 打印推文详情
-    print_separator("推文详情")
-    logger.info(f"📊 本次新增{add}条列表推文 | 当日累计{new_day + add}/{DAY_MAX_LIMIT} | 当月累计{new_month + add}/{MONTH_MAX_LIMIT}")
-    for i, t in enumerate(tweets, 1):
-        logger.info(f"\n{'─' * 50}")
-        logger.info(f"  推文 #{i}")
-        logger.info(f"  🆔 推文ID:   {t.id}")
-        logger.info(f"  🕐 发布时间: {t.created_at}")
-        logger.info(f"  📝 正文:     {t.text}")
-        logger.info(f"{'─' * 50}")
-
-    # 飞书推送
-    print_separator("飞书推送")
-    send_to_feishu(tweets)
-
-    print_separator("抓取完成")
-    return tweets
+    for tweet in tweet_list:
+        print(f"\n推文ID：{tweet.id}\n发布时间：{tweet.created_at}\n正文：{tweet.text}\n{'-'*60}")
+    return tweet_list
 
 
+# 定时主循环
 if __name__ == "__main__":
-    start_time = datetime.now()
-    logger.info(f"🚀 脚本启动时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-    try:
-        result = fetch_list_tweets()
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        logger.info(f"🏁 脚本结束，总耗时: {duration:.2f} 秒，获取推文: {len(result)} 条")
-        sys.exit(0)
-    except KeyboardInterrupt:
-        logger.info("⏹️ 用户中断")
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"💥 脚本异常退出: {e}", exc_info=True)
-        sys.exit(1)
+    print("=== 公开列表增量抓取启动（Bearer OAuth2.0，无用户UID依赖）===")
+    print(f"目标列表ID：{LIST_ID} | 单次max_results={MAX_RESULTS} | 月度上限{MONTH_MAX_LIMIT}条")
+    print(f"历史推文ID缓存最大容量：{MAX_HISTORY_CACHE_SIZE}条，满容量自动清空")
+    fetch_list_tweets()

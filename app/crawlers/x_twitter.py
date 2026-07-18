@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 import tweepy
+import httpx
 
 from app.config import settings
 
@@ -21,11 +22,11 @@ def _state_path(filename: str) -> Path:
     return settings.DATA_DIR / filename
 
 
-# ---- last_list_tweet_id.json ----
+# ---- last_list_tweet.json (永久全局增量游标) ----
 
 def _load_last_tweet_id() -> int:
     """Load last fetched tweet ID. Auto-creates file with 0 if missing."""
-    path = _state_path("last_list_tweet_id.json")
+    path = _state_path("last_list_tweet.json")
     if not path.exists():
         _save_last_tweet_id(0)
         return 0
@@ -34,16 +35,47 @@ def _load_last_tweet_id() -> int:
             data = json.load(f)
         return int(data.get("last_id", 0))
     except (json.JSONDecodeError, KeyError, ValueError):
-        logger.warning("[X] last_list_tweet_id.json 损坏，重置为 0")
+        logger.warning("[X] last_list_tweet.json 损坏，重置为 0")
         _save_last_tweet_id(0)
         return 0
 
 
 def _save_last_tweet_id(tweet_id: int) -> None:
     """Persist last fetched tweet ID."""
-    path = _state_path("last_list_tweet_id.json")
+    path = _state_path("last_list_tweet.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"last_id": str(tweet_id)}, f, ensure_ascii=False, indent=2)
+
+
+# ---- history_tweet_cache.json (带容量限制的历史ID缓存) ----
+
+MAX_HISTORY_CACHE_SIZE = 100
+
+
+def _load_history_cache() -> List[str]:
+    """Load historical tweet ID cache."""
+    path = _state_path("history_tweet_cache.json")
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("ids", [])
+    except (json.JSONDecodeError, KeyError):
+        logger.warning("[X] history_tweet_cache.json 损坏，重置为空")
+        return []
+
+
+def _save_history_cache(id_list: List[str]) -> None:
+    """Persist historical tweet ID cache. Clear if exceeds max size."""
+    path = _state_path("history_tweet_cache.json")
+    if len(id_list) >= MAX_HISTORY_CACHE_SIZE:
+        logger.info(f"[X] 历史ID缓存已达{MAX_HISTORY_CACHE_SIZE}条上限，清空缓存池")
+        cache_data = {"ids": []}
+    else:
+        cache_data = {"ids": id_list}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cache_data, f, indent=2)
 
 
 # ---- x_month_count.json ----
@@ -59,7 +91,7 @@ def _load_month_count() -> int:
     Load the monthly tweet count for the current month.
     Auto-creates file if missing; auto-resets on a new month.
     """
-    path = _state_path("x_month_count.json")
+    path = _state_path("list_month_count.json")
     current_key = _get_month_key()
 
     if not path.exists():
@@ -70,7 +102,7 @@ def _load_month_count() -> int:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, KeyError):
-        logger.warning("[X] x_month_count.json 损坏，重置为 0")
+        logger.warning("[X] list_month_count.json 损坏，重置为 0")
         _save_month_count(0)
         return 0
 
@@ -83,13 +115,13 @@ def _load_month_count() -> int:
 
 def _save_month_count(count: int) -> None:
     """Persist the monthly tweet count for the current month."""
-    path = _state_path("x_month_count.json")
+    path = _state_path("list_month_count.json")
     current_key = _get_month_key()
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"month": current_key, "count": count}, f, indent=2)
 
 
-# ---- x_day_count.json ----
+# ---- list_day_count.json ----
 
 def _get_day_key() -> str:
     """Return the current day key, e.g. '2026-7-14'."""
@@ -102,7 +134,7 @@ def _load_day_count() -> int:
     Load the daily tweet count for the current day.
     Auto-creates file if missing; auto-resets on a new day.
     """
-    path = _state_path("x_day_count.json")
+    path = _state_path("list_day_count.json")
     current_key = _get_day_key()
 
     if not path.exists():
@@ -113,7 +145,7 @@ def _load_day_count() -> int:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, KeyError):
-        logger.warning("[X] x_day_count.json 损坏，重置为 0")
+        logger.warning("[X] list_day_count.json 损坏，重置为 0")
         _save_day_count(0)
         return 0
 
@@ -126,10 +158,33 @@ def _load_day_count() -> int:
 
 def _save_day_count(count: int) -> None:
     """Persist the daily tweet count for the current day."""
-    path = _state_path("x_day_count.json")
+    path = _state_path("list_day_count.json")
     current_key = _get_day_key()
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"day": current_key, "count": count}, f, indent=2)
+
+
+# ============================================================
+#  Feishu notifier
+# ============================================================
+
+def _send_feishu(text: str) -> bool:
+    """Send text notification to Feishu webhook."""
+    if not settings.X_FEISHU_WEBHOOK_URL:
+        return False
+    try:
+        payload = {
+            "msg_type": "text",
+            "content": {
+                "text": f"【{settings.X_FEISHU_KEYWORD}】{text}"
+            }
+        }
+        with httpx.Client(timeout=15) as client:
+            resp = client.post(settings.X_FEISHU_WEBHOOK_URL, json=payload)
+            return resp.json().get("code") == 0
+    except Exception as e:
+        logger.warning(f"[X] 飞书推送失败: {e}")
+        return False
 
 
 # ============================================================
@@ -155,6 +210,7 @@ def fetch_tweets() -> List[Dict[str, Any]]:
     """
     Fetch tweets from a specified list using tweepy get_list_tweets.
     Incremental fetching with monthly and daily rate limits.
+    Includes 100-entry history ID cache pool.
 
     Returns:
         List of tweet dicts, each with keys: id, text, created_at.
@@ -164,18 +220,18 @@ def fetch_tweets() -> List[Dict[str, Any]]:
     month_count = _load_month_count()
     month_limit = settings.X_MONTH_MAX_LIMIT
     if month_count >= month_limit:
-        logger.info(
-            f"[X] 月度抓取已达上限 ({month_count}/{month_limit})，跳过"
-        )
+        msg = f"[月度成本锁定] 本月已抓取 {month_count} 条，达到上限 {month_limit}，停止本次请求"
+        logger.info(msg)
+        _send_feishu(msg)
         return []
 
     # ---- Check daily limit ----
     day_count = _load_day_count()
     day_limit = settings.X_DAY_MAX_LIMIT
     if day_count >= day_limit:
-        logger.info(
-            f"[X] 每日抓取已达上限 ({day_count}/{day_limit})，跳过"
-        )
+        msg = f"[单日限额拦截] 今日已抓取 {day_count} 条，达到当日上限 {day_limit}"
+        logger.info(msg)
+        _send_feishu(msg)
         return []
 
     list_id = settings.X_LIST_ID
@@ -237,6 +293,12 @@ def fetch_tweets() -> List[Dict[str, Any]]:
         # ---- Persist state ----
         _save_last_tweet_id(max_id)
 
+        # 更新带容量限制的历史ID缓存
+        history_ids = _load_history_cache()
+        new_ids = [str(tw["id"]) for tw in result]
+        merged_ids = history_ids + new_ids
+        _save_history_cache(merged_ids)
+
         new_month_count = month_count + len(result)
         _save_month_count(new_month_count)
 
@@ -245,7 +307,8 @@ def fetch_tweets() -> List[Dict[str, Any]]:
 
         logger.info(
             f"[X] 抓取完成，获取 {len(result)} 条推文，"
-            f"月度累计 {new_month_count}/{month_limit}，每日累计 {new_day_count}/{day_limit}"
+            f"月度累计 {new_month_count}/{month_limit}，每日累计 {new_day_count}/{day_limit}，"
+            f"历史缓存 {len(merged_ids)}/{MAX_HISTORY_CACHE_SIZE}"
         )
 
         return result
