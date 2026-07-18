@@ -17,40 +17,15 @@ logger = logging.getLogger(__name__)
 #  State file helpers
 # ============================================================
 
+MAX_HISTORY_CACHE_SIZE = 100
+
+
 def _state_path(filename: str) -> Path:
     """Return the full path for a state file inside DATA_DIR."""
     return settings.DATA_DIR / filename
 
 
-# ---- last_list_tweet.json (永久全局增量游标) ----
-
-def _load_last_tweet_id() -> int:
-    """Load last fetched tweet ID. Auto-creates file with 0 if missing."""
-    path = _state_path("last_list_tweet.json")
-    if not path.exists():
-        _save_last_tweet_id(0)
-        return 0
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return int(data.get("last_id", 0))
-    except (json.JSONDecodeError, KeyError, ValueError):
-        logger.warning("[X] last_list_tweet.json 损坏，重置为 0")
-        _save_last_tweet_id(0)
-        return 0
-
-
-def _save_last_tweet_id(tweet_id: int) -> None:
-    """Persist last fetched tweet ID."""
-    path = _state_path("last_list_tweet.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"last_id": str(tweet_id)}, f, ensure_ascii=False, indent=2)
-
-
-# ---- history_tweet_cache.json (带容量限制的历史ID缓存) ----
-
-MAX_HISTORY_CACHE_SIZE = 100
-
+# ---- history_tweet_cache.json (带容量限制，同时作为增量游标) ----
 
 def _load_history_cache() -> List[str]:
     """Load historical tweet ID cache."""
@@ -78,7 +53,15 @@ def _save_history_cache(id_list: List[str]) -> None:
         json.dump(cache_data, f, indent=2)
 
 
-# ---- x_month_count.json ----
+def _get_last_tweet_id() -> int:
+    """Get max ID from history cache as incremental cursor (since_id)."""
+    ids = _load_history_cache()
+    if not ids:
+        return 0
+    return max(int(i) for i in ids)
+
+
+# ---- list_month_count.json ----
 
 def _get_month_key() -> str:
     """Return the current month key, e.g. '2026-7'."""
@@ -210,7 +193,7 @@ def fetch_tweets() -> List[Dict[str, Any]]:
     """
     Fetch tweets from a specified list using tweepy get_list_tweets.
     Incremental fetching with monthly and daily rate limits.
-    Includes 100-entry history ID cache pool.
+    History ID cache (100-entry cap) doubles as the since_id cursor.
 
     Returns:
         List of tweet dicts, each with keys: id, text, created_at.
@@ -243,7 +226,7 @@ def fetch_tweets() -> List[Dict[str, Any]]:
         logger.warning("[X] 未配置 X_B_T，跳过抓取")
         return []
 
-    last_tweet_id = _load_last_tweet_id()
+    last_tweet_id = _get_last_tweet_id()
 
     logger.info(
         f"[X] 开始抓取列表推文, list_id={list_id}, since_id={last_tweet_id}, "
@@ -278,7 +261,6 @@ def fetch_tweets() -> List[Dict[str, Any]]:
 
         # ---- Build result list ----
         result: List[Dict[str, Any]] = []
-        max_id = last_tweet_id
 
         for tw in tweet_objects:
             tweet_id = int(tw.id)
@@ -287,13 +269,8 @@ def fetch_tweets() -> List[Dict[str, Any]]:
                 "text": tw.text,
                 "created_at": str(tw.created_at) if tw.created_at else None,
             })
-            if tweet_id > max_id:
-                max_id = tweet_id
 
-        # ---- Persist state ----
-        _save_last_tweet_id(max_id)
-
-        # 更新带容量限制的历史ID缓存
+        # ---- Persist state: update history cache (also the since_id cursor) ----
         history_ids = _load_history_cache()
         new_ids = [str(tw["id"]) for tw in result]
         merged_ids = history_ids + new_ids
@@ -305,10 +282,12 @@ def fetch_tweets() -> List[Dict[str, Any]]:
         new_day_count = day_count + len(result)
         _save_day_count(new_day_count)
 
+        current_cache_size = len(merged_ids) if len(merged_ids) < MAX_HISTORY_CACHE_SIZE else 0
+
         logger.info(
             f"[X] 抓取完成，获取 {len(result)} 条推文，"
             f"月度累计 {new_month_count}/{month_limit}，每日累计 {new_day_count}/{day_limit}，"
-            f"历史缓存 {len(merged_ids)}/{MAX_HISTORY_CACHE_SIZE}"
+            f"历史缓存 {current_cache_size}/{MAX_HISTORY_CACHE_SIZE}"
         )
 
         return result

@@ -23,7 +23,6 @@ FEISHU_KEYWORD = os.getenv("X_FEISHU_KEYWORD", "X推文")
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-LAST_TWEET_FILE = os.path.join(DATA_DIR, "last_list_tweet.json")
 HISTORY_CACHE_FILE = os.path.join(DATA_DIR, "history_tweet_cache.json")
 DAY_COUNT_FILE = os.path.join(DATA_DIR, "list_day_count.json")
 MONTH_COUNT_FILE = os.path.join(DATA_DIR, "list_month_count.json")
@@ -52,21 +51,7 @@ def send_to_feishu(text):
 client = tweepy.Client(bearer_token=BEARER_TOKEN) if BEARER_TOKEN else None
 
 
-# 永久全局增量游标（不受100条缓存限制）
-def load_last_tweet_id():
-    if not os.path.exists(LAST_TWEET_FILE):
-        return 0
-    with open(LAST_TWEET_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        return int(data.get("last_id", 0))
-
-
-def save_last_tweet_id(new_tweet_id):
-    with open(LAST_TWEET_FILE, "w", encoding="utf-8") as f:
-        json.dump({"last_id": str(new_tweet_id)}, f, ensure_ascii=False, indent=2)
-
-
-# 带100条容量限制的历史ID缓存
+# 带容量限制的历史ID缓存（同时作为增量游标来源，取最大值为 since_id）
 def load_history_cache():
     if not os.path.exists(HISTORY_CACHE_FILE):
         return []
@@ -83,6 +68,14 @@ def save_history_cache(id_list):
         cache_data = {"ids": id_list}
     with open(HISTORY_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache_data, f, indent=2)
+
+
+def get_last_tweet_id():
+    """从历史缓存池中取最大ID作为增量游标"""
+    ids = load_history_cache()
+    if not ids:
+        return 0
+    return max(int(i) for i in ids)
 
 
 # 当日抓取计数
@@ -123,7 +116,7 @@ def save_month_count(count, month_key):
         json.dump({"month": month_key, "count": count}, indent=2)
 
 
-# 核心抓取函数（无任何用户UID相关逻辑）
+# 核心抓取函数
 def fetch_list_tweets():
     # 月度上限拦截
     month_total, cur_month = get_month_stat()
@@ -141,7 +134,7 @@ def fetch_list_tweets():
         send_to_feishu(msg)
         return []
 
-    last_id = load_last_tweet_id()
+    last_id = get_last_tweet_id()
     req_params = {
         "max_results": MAX_RESULTS,
         "tweet_fields": ["created_at", "text"]
@@ -150,7 +143,7 @@ def fetch_list_tweets():
         req_params["since_id"] = last_id
         print(f"[增量过滤] 仅抓取 ID > {last_id} 的新增推文")
     else:
-        print("[首次运行] 无历史全局游标，抓取最新5条推文")
+        print("[首次运行/缓存已清空] 无历史游标，抓取最新推文")
 
     resp = client.get_list_tweets(id=LIST_ID, **req_params)
     tweet_list = resp.data if resp.data else []
@@ -169,11 +162,7 @@ def fetch_list_tweets():
         add_num = allow_count
         print(f"⚠️ 超出当日限额，仅保留最新{allow_count}条")
 
-    # 更新永久全局增量ID
-    max_new_tid = max(int(tweet.id) for tweet in tweet_list)
-    save_last_tweet_id(max_new_tid)
-
-    # 更新带100条容量限制的历史缓存
+    # 更新带容量限制的历史缓存（同时承担增量游标功能）
     history_ids = load_history_cache()
     new_ids = [str(t.id) for t in tweet_list]
     merged_ids = history_ids + new_ids
@@ -185,10 +174,12 @@ def fetch_list_tweets():
     save_daily_count(new_day_count, cur_day)
     save_month_count(new_month_count, cur_month)
 
+    current_cache_size = len(merged_ids) if len(merged_ids) < MAX_HISTORY_CACHE_SIZE else 0
+
     result_msg = (f"✅ 本次新增{add_num}条列表推文 | "
                   f"当日累计{new_day_count}/{DAY_MAX_LIMIT} | "
                   f"当月累计{new_month_count}/{MONTH_MAX_LIMIT}\n"
-                  f"📦 历史ID缓存当前总量：{len(merged_ids)} / {MAX_HISTORY_CACHE_SIZE}")
+                  f"📦 历史ID缓存当前总量：{current_cache_size} / {MAX_HISTORY_CACHE_SIZE}")
     print(result_msg)
 
     # 推送飞书（带推文详情）
