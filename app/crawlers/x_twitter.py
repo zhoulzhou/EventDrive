@@ -140,15 +140,10 @@ _client: tweepy.Client | None = None
 
 
 def _get_client() -> tweepy.Client:
-    """Lazy-init tweepy Client with OAuth1."""
+    """Lazy-init tweepy Client with OAuth2.0 Bearer Token."""
     global _client
     if _client is None:
-        _client = tweepy.Client(
-            consumer_key=settings.X_CONSUMER_KEY,
-            consumer_secret=settings.X_CONSUMER_SECRET,
-            access_token=settings.X_ACCESS_TOKEN,
-            access_token_secret=settings.X_ACCESS_TOKEN_SECRET,
-        )
+        _client = tweepy.Client(bearer_token=settings.X_BEARER_TOKEN)
     return _client
 
 
@@ -186,6 +181,10 @@ def fetch_tweets() -> List[Dict[str, Any]]:
     list_id = settings.X_LIST_ID
     if not list_id:
         logger.warning("[X] 未配置 X_LIST_ID，跳过抓取")
+        return []
+
+    if not settings.X_BEARER_TOKEN:
+        logger.warning("[X] 未配置 X_BEARER_TOKEN，跳过抓取")
         return []
 
     last_tweet_id = _load_last_tweet_id()

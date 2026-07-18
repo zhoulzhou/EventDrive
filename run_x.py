@@ -1,6 +1,7 @@
 """
-X 平台列表推文抓取脚本（tweepy + get_list_tweets）
-- 直接调用 get_list_tweets 抓取指定列表推文
+X 平台列表推文抓取脚本（OAuth2.0 Bearer Token 版）
+- 使用 tweepy.Client + bearer_token（OAuth2.0 App-only）
+- 抓取指定列表推文（get_list_tweets）
 - 增量抓取（since_id 机制），避免重复扣费
 - 月度/每日额度控制
 - 飞书推送
@@ -11,7 +12,6 @@ import json
 import os
 import sys
 import logging
-import time
 from datetime import datetime
 from dotenv import load_dotenv
 import tweepy
@@ -27,15 +27,9 @@ logging.basicConfig(
 logger = logging.getLogger("run_x")
 
 # ===================== 配置区 =====================
-CONSUMER_KEY = os.getenv("X_CONSUMER_KEY", "")
-CONSUMER_SECRET = os.getenv("X_CONSUMER_SECRET", "")
-ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
-ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
-
-# 硬编码你的列表ID
+BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "")
 LIST_ID = os.getenv("X_LIST_ID", "")
 
-# 抓取参数
 MAX_RESULTS = int(os.getenv("X_MAX_RESULTS", "5"))
 DAY_MAX_LIMIT = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
 MONTH_MAX_LIMIT = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
@@ -64,13 +58,8 @@ def print_separator(title=""):
         logger.info(f"\n{line}")
 
 
-# 初始化OAuth1客户端（鉴权正常，已验证get_me可用）
-client = tweepy.Client(
-    consumer_key=CONSUMER_KEY,
-    consumer_secret=CONSUMER_SECRET,
-    access_token=ACCESS_TOKEN,
-    access_token_secret=ACCESS_TOKEN_SECRET
-)
+# OAuth2.0 App-only 客户端，无OAuth1鉴权bug
+client = tweepy.Client(bearer_token=BEARER_TOKEN) if BEARER_TOKEN else None
 
 
 # 读取上次最大推文ID（增量抓取）
@@ -202,14 +191,14 @@ def send_to_feishu(tweet_list):
         return False
 
 
-# 核心抓取函数，接口硬编码LIST_ID，无bug
+# 核心抓取函数
 def fetch_list_tweets():
-    print_separator("X 平台列表推文抓取（tweepy + get_list_tweets）")
+    print_separator("X 平台列表推文抓取（OAuth2.0 Bearer Token）")
 
     # 检查配置
-    logger.info("[配置] 检查 API 凭证...")
-    if not all([CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET]):
-        logger.error("❌ [配置] 缺少 API 凭证，请在 .env 中配置 X_CONSUMER_KEY / X_CONSUMER_SECRET / X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET")
+    logger.info("[配置] 检查 Bearer Token...")
+    if not BEARER_TOKEN:
+        logger.error("❌ [配置] 缺少 X_BEARER_TOKEN，请在 .env 中配置")
         return []
     if not LIST_ID:
         logger.error("❌ [配置] 缺少 X_LIST_ID，请在 .env 中配置")
@@ -224,7 +213,7 @@ def fetch_list_tweets():
     print_separator("检查月度额度")
     month_cnt, cur_month = get_monthly()
     if month_cnt >= MONTH_MAX_LIMIT:
-        logger.error(f"🛑 [暂停] 本月已抓取{month_cnt}条，到达月度上限")
+        logger.error(f"🛑 [暂停] 本月抓取达到配额上限 ({month_cnt}/{MONTH_MAX_LIMIT})")
         return []
     logger.info(f"✅ 月度额度充足: {month_cnt}/{MONTH_MAX_LIMIT}")
 
@@ -232,7 +221,7 @@ def fetch_list_tweets():
     print_separator("检查当日额度")
     day_cnt, cur_day = get_daily()
     if day_cnt >= DAY_MAX_LIMIT:
-        logger.warning(f"⏭️ [跳过] 今日已抓取{day_cnt}条，到达当日上限")
+        logger.warning(f"⏭️ [跳过] 今日抓取达到配额上限 ({day_cnt}/{DAY_MAX_LIMIT})")
         return []
     logger.info(f"✅ 当日额度充足: {day_cnt}/{DAY_MAX_LIMIT}")
 
@@ -253,7 +242,7 @@ def fetch_list_tweets():
     logger.info(f"📝 tweet_fields = ['created_at', 'text']")
     logger.info(f"📝 list_id = {LIST_ID}")
 
-    # 修复：官方入参关键字是 id，不是 list_id
+    # 公开列表 OAuth2.0 Bearer鉴权，不会401
     try:
         resp = client.get_list_tweets(id=LIST_ID, **params)
     except Exception as e:
@@ -276,8 +265,8 @@ def fetch_list_tweets():
         tweets = tweets[:allow]
         add = allow
 
-    max_tweet_id = max(int(t.id) for t in tweets)
-    save_last_id(max_tweet_id)
+    max_tid = max(int(t.id) for t in tweets)
+    save_last_id(max_tid)
 
     # 更新计数
     new_day, _ = get_daily()
