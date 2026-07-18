@@ -47,8 +47,16 @@ def send_to_feishu(text):
         return False
 
 
-# OAuth2.0 App-only 客户端，无需用户账号信息
-client = tweepy.Client(bearer_token=BEARER_TOKEN) if BEARER_TOKEN else None
+# 初始化OAuth2.0 Bearer客户端 + 有效性校验
+client = None
+if BEARER_TOKEN and LIST_ID:
+    try:
+        client = tweepy.Client(bearer_token=BEARER_TOKEN)
+        test_resp = client.get_list_tweets(id=LIST_ID, max_results=1)
+        print("✅ Bearer Token初始化成功，鉴权正常")
+    except Exception as e:
+        print(f"❌ Bearer Token无效/初始化失败: {e}")
+        exit(1)
 
 
 # 永久全局增量游标（不受100条缓存限制）
@@ -151,7 +159,6 @@ def fetch_list_tweets():
     else:
         print("[首次运行] 无历史全局游标，抓取最新5条推文")
 
-    # 仅需固定列表ID，不需要用户UID
     resp = client.get_list_tweets(id=LIST_ID, **req_params)
     tweet_list = resp.data if resp.data else []
 
@@ -210,4 +217,5 @@ if __name__ == "__main__":
     print("=== 公开列表增量抓取启动（Bearer OAuth2.0，无用户UID依赖）===")
     print(f"目标列表ID：{LIST_ID} | 单次max_results={MAX_RESULTS} | 月度上限{MONTH_MAX_LIMIT}条")
     print(f"历史推文ID缓存最大容量：{MAX_HISTORY_CACHE_SIZE}条，满容量自动清空")
-    fetch_list_tweets()
+    if client is not None:
+        fetch_list_tweets()
