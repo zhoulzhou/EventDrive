@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger("run_x")
 
 # ===================== 配置区 =====================
-BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "")
+BEARER_TOKEN = os.getenv("X_B_T", "")
 LIST_ID = os.getenv("X_LIST_ID", "")
 
 MAX_RESULTS = int(os.getenv("X_MAX_RESULTS", "5"))
@@ -198,7 +198,7 @@ def fetch_list_tweets():
     # 检查配置
     logger.info("[配置] 检查 Bearer Token...")
     if not BEARER_TOKEN:
-        logger.error("❌ [配置] 缺少 X_BEARER_TOKEN，请在 .env 中配置")
+        logger.error("❌ [配置] 缺少 X_B_T，请在 .env 中配置")
         return []
     if not LIST_ID:
         logger.error("❌ [配置] 缺少 X_LIST_ID，请在 .env 中配置")

@@ -68,7 +68,7 @@ class Settings:
     X_CONSUMER_SECRET: str = os.getenv("X_CONSUMER_SECRET", "")
     X_ACCESS_TOKEN: str = os.getenv("X_ACCESS_TOKEN", "")
     X_ACCESS_TOKEN_SECRET: str = os.getenv("X_ACCESS_TOKEN_SECRET", "")
-    X_BEARER_TOKEN: str = os.getenv("X_BEARER_TOKEN", "")
+    X_B_T: str = os.getenv("X_B_T", "")
     X_FEISHU_WEBHOOK_URL: str = os.getenv("X_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/76b00cec-a6f2-4f7f-b0be-e5b98a05a0de")
     X_FEISHU_KEYWORD: str = os.getenv("X_FEISHU_KEYWORD", "X推文")
     X_MAX_RESULTS: int = int(os.getenv("X_MAX_RESULTS", "5"))
