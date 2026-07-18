@@ -84,7 +84,7 @@ def get_daily_stat():
 
 def save_daily_count(count, day_key):
     with open(DAY_COUNT_FILE, "w", encoding="utf-8") as f:
-        json.dump({"day": day_key, "count": count}, indent=2)
+        json.dump({"day": day_key, "count": count}, f, indent=2)
 
 
 # 当月抓取计数（月度成本锁死核心）
@@ -103,7 +103,7 @@ def get_month_stat():
 
 def save_month_count(count, month_key):
     with open(MONTH_COUNT_FILE, "w", encoding="utf-8") as f:
-        json.dump({"month": month_key, "count": count}, indent=2)
+        json.dump({"month": month_key, "count": count}, f, indent=2)
 
 
 # 核心抓取函数
