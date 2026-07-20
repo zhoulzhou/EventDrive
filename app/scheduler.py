@@ -18,7 +18,7 @@ from app.crawlers import (
 )
 from app.crawlers.x_twitter import fetch_tweets
 from app.utils.image_downloader import download_image
-from app.utils.feishu_notifier import dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify, doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify, notify_index_alert, init_index_feishu_notifier, x_feishu_notify
+from app.utils.feishu_notifier import dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify, doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify, notify_index_alert, init_index_feishu_notifier, x_feishu_status_notify
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.openrouter_analyzer import init_openrouter_analyzer, get_openrouter_analyzer
 from app.utils.deepseek_analyzer import init_deepseek_analyzer, get_deepseek_analyzer
@@ -269,15 +269,16 @@ async def full_crawl():
         log_crawl("📭 BBC没有新新闻")
 
     log_crawl("=" * 50)
-    log_crawl("� 第5个新闻源: X平台")
+    log_crawl("🐦 第5个新闻源: X平台")
     log_crawl("=" * 50)
-    if settings.X_CONSUMER_KEY:
-        x_tweets = await asyncio.to_thread(fetch_tweets)
-        if x_tweets:
-            log_crawl(f"[X] 获取到 {len(x_tweets)} 条推文，推送到飞书")
-            x_feishu_notify(x_tweets)
-        else:
-            log_crawl("📭 X平台没有新推文")
+    if settings.X_B_T and settings.X_LIST_ID:
+        x_result = await asyncio.to_thread(fetch_tweets)
+        x_msg = x_result.get("message", "")
+        x_status = x_result.get("status", "error")
+        x_push = x_result.get("push_message")
+        log_crawl(f"[X] {x_msg} (状态: {x_status})")
+        if x_push:
+            x_feishu_status_notify(x_push)
     else:
         log_crawl("⚠️ X平台未配置，跳过")
 

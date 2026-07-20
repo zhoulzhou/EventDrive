@@ -394,6 +394,15 @@ def x_feishu_notify(tweets: List[dict]) -> bool:
     return notifier.send_message(content)
 
 
+def x_feishu_status_notify(status_text: str) -> bool:
+    notifier = get_x_feishu_notifier()
+    if not notifier:
+        logger.warning("X推文飞书 notifier 未初始化，跳过状态推送")
+        return False
+    content = f"【{notifier.keyword}】🐦 X 推文状态\n\n{status_text}"
+    return notifier.send_message(content)
+
+
 def send_with_cooldown(content: str) -> bool:
     """
     统一推送入口，带30秒冷却限制

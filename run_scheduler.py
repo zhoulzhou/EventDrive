@@ -41,6 +41,8 @@ def main():
         openrouter_keyword=settings.OPENROUTER_KEYWORD,
         deepseek_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL or "",
         deepseek_keyword=settings.DEEPSEEK_KEYWORD,
+        x_url=settings.X_FEISHU_WEBHOOK_URL or "",
+        x_keyword=settings.X_FEISHU_KEYWORD,
     )
     print("✅ 飞书推送已初始化")
 
