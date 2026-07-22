@@ -28,15 +28,6 @@ def _get_client() -> tweepy.Client:
     return _client
 
 
-def _get_since_id() -> Optional[str]:
-    if not history_ids:
-        return None
-    try:
-        return str(max(int(x) for x in history_ids))
-    except (ValueError, TypeError):
-        return None
-
-
 def _check_day_reset() -> None:
     global day_count, day_key
     today = datetime.now().strftime("%Y-%m-%d")
@@ -108,11 +99,9 @@ def fetch_tweets() -> Dict[str, Any]:
         logger.info(f"[X] {result['message']}")
         return result
 
-    since_id = _get_since_id()
     logger.info(
         f"[X] 开始抓取列表推文, list_id={list_id}, "
         f"历史缓存={len(history_ids)}/{MAX_HISTORY_IDS}, "
-        f"since_id={since_id or '无'}, "
         f"当日={day_count}/{settings.X_DAY_MAX_LIMIT}, "
         f"当月={month_count}/{settings.X_MONTH_MAX_LIMIT}"
     )
@@ -124,7 +113,6 @@ def fetch_tweets() -> Dict[str, Any]:
             id=list_id,
             max_results=settings.X_MAX_RESULTS,
             tweet_fields=["created_at", "text"],
-            since_id=since_id,
         )
         tweet_objects = resp.data or []
 
@@ -164,7 +152,7 @@ def fetch_tweets() -> Dict[str, Any]:
 
         if len(combined) > MAX_HISTORY_IDS:
             logger.info(
-                f"[X] 历史缓存已满 ({len(combined)}/{MAX_HISTORY_IDS})，清空缓存并重置增量游标"
+                f"[X] 历史缓存已满 ({len(combined)}/{MAX_HISTORY_IDS})，清空缓存只保留最新一批"
             )
             history_ids = new_ids[-MAX_HISTORY_IDS:]
         else:
