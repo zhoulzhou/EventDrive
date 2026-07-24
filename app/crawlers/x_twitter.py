@@ -1,4 +1,6 @@
 import logging
+import json
+import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -13,12 +15,52 @@ logger = logging.getLogger(__name__)
 MAX_HISTORY_IDS = 50
 history_ids: List[str] = []
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+QUOTA_FILE = os.path.join(DATA_DIR, "x_twitter_quota.json")
+
 day_count: int = 0
 day_key: str = ""
 month_count: int = 0
 month_key: str = ""
 
 _client: tweepy.Client | None = None
+
+
+def _load_quota() -> None:
+    global day_count, day_key, month_count, month_key
+    try:
+        if os.path.exists(QUOTA_FILE):
+            with open(QUOTA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            today = datetime.now().strftime("%Y-%m-%d")
+            cur_month = datetime.now().strftime("%Y-%m")
+            saved_day_key = data.get("day_key", "")
+            saved_month_key = data.get("month_key", "")
+            day_count = data.get("day_count", 0) if saved_day_key == today else 0
+            day_key = today
+            month_count = data.get("month_count", 0) if saved_month_key == cur_month else 0
+            month_key = cur_month
+    except Exception as e:
+        logger.warning(f"[X] 读取额度缓存失败: {e}，从零开始计数")
+        day_count = 0
+        month_count = 0
+        day_key = datetime.now().strftime("%Y-%m-%d")
+        month_key = datetime.now().strftime("%Y-%m")
+
+
+def _save_quota() -> None:
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        data = {
+            "day_key": day_key,
+            "day_count": day_count,
+            "month_key": month_key,
+            "month_count": month_count,
+        }
+        with open(QUOTA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"[X] 保存额度缓存失败: {e}")
 
 
 def _get_client() -> tweepy.Client:
@@ -34,6 +76,7 @@ def _check_day_reset() -> None:
     if day_key != today:
         day_key = today
         day_count = 0
+        _save_quota()
 
 
 def _check_month_reset() -> None:
@@ -42,6 +85,7 @@ def _check_month_reset() -> None:
     if month_key != cur_month:
         month_key = cur_month
         month_count = 0
+        _save_quota()
 
 
 def fetch_tweets() -> Dict[str, Any]:
@@ -71,6 +115,7 @@ def fetch_tweets() -> Dict[str, Any]:
         logger.warning(f"[X] {result['message']}")
         return result
 
+    _load_quota()
     _check_day_reset()
     _check_month_reset()
     result["day_count"] = day_count
@@ -141,11 +186,6 @@ def fetch_tweets() -> Dict[str, Any]:
             return result
 
         add_num = len(new_tweets)
-        if day_count + add_num > settings.X_DAY_MAX_LIMIT:
-            allow_num = settings.X_DAY_MAX_LIMIT - day_count
-            logger.info(f"[X] 当日剩余额度仅 {allow_num} 条，截断本次数据，只取最新 {allow_num} 条")
-            new_tweets = new_tweets[:allow_num]
-            add_num = allow_num
 
         new_ids = [str(t.id) for t in new_tweets]
         combined = history_ids + new_ids
@@ -160,6 +200,7 @@ def fetch_tweets() -> Dict[str, Any]:
 
         day_count += add_num
         month_count += add_num
+        _save_quota()
 
         tweet_list: List[Dict[str, Any]] = []
         push_lines = [f"🐦 X 推文推送", f"共获取 {len(new_tweets)} 条推文", ""]

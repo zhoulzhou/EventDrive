@@ -3,6 +3,7 @@ import asyncio
 import sys
 import signal
 from pathlib import Path
+from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -50,7 +51,9 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     start_scheduler()
+    now = datetime.now()
     print("✅ 定时任务调度器已启动")
+    print(f"🕐 服务器当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')} (24小时制)")
     print("📰 服务运行中，每日 8:00 / 12:00 / 16:00 / 20:00 自动抓取并推送（服务器本地时间）...")
     print("按 Ctrl+C 停止")
 
