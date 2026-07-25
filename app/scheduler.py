@@ -298,20 +298,20 @@ def start_scheduler():
     if not scheduler.running:
         scheduler.add_job(
             full_crawl,
-            trigger=CronTrigger(hour='8,12,16,20', minute=0),
+            trigger=CronTrigger(hour='0,4,8,12', minute=0),
             id='crawl_job_daily_4_times',
-            name='Crawl at 8,12,16,20 hours',
+            name='Crawl at 0,4,8,12 UTC (Beijing 8,12,16,20)',
             replace_existing=True
         )
         scheduler.add_job(
             crawl_indices,
-            trigger=CronTrigger(hour='8,12,16,20', minute=0),
+            trigger=CronTrigger(hour='0,4,8,12', minute=0),
             id='index_crawl_job_daily_4_times',
-            name='Crawl indices at 8,12,16,20 hours',
+            name='Crawl indices at 0,4,8,12 UTC (Beijing 8,12,16,20)',
             replace_existing=True
         )
         scheduler.start()
-        logger.info("Scheduler started. Crawl at 8,12,16,20 hours (server local time).")
+        logger.info("Scheduler started. Crawl at 0,4,8,12 UTC (Beijing 8,12,16,20).")
 
 
 def stop_scheduler():
