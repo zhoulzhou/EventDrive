@@ -4,7 +4,7 @@ import sys
 import signal
 from pathlib import Path
 from datetime import datetime
-import pytz
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -52,7 +52,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     start_scheduler()
-    tokyo_tz = pytz.timezone("Asia/Tokyo")
+    tokyo_tz = ZoneInfo("Asia/Tokyo")
     now_tokyo = datetime.now(tokyo_tz)
     now_local = datetime.now()
     print("✅ 定时任务调度器已启动")

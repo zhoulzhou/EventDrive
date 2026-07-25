@@ -2,9 +2,9 @@ import logging
 import asyncio
 from typing import List, Callable, Optional, Dict
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-import pytz
 
 from app.config import settings
 from app.database import SessionLocal
@@ -27,7 +27,7 @@ from app.utils.deepseek_analyzer import init_deepseek_analyzer, get_deepseek_ana
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-TOKYO_TZ = pytz.timezone("Asia/Tokyo")
+TOKYO_TZ = ZoneInfo("Asia/Tokyo")
 
 scheduler = AsyncIOScheduler(timezone=TOKYO_TZ)
 
