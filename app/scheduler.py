@@ -4,6 +4,7 @@ from typing import List, Callable, Optional, Dict
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import pytz
 
 from app.config import settings
 from app.database import SessionLocal
@@ -26,7 +27,9 @@ from app.utils.deepseek_analyzer import init_deepseek_analyzer, get_deepseek_ana
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler()
+TOKYO_TZ = pytz.timezone("Asia/Tokyo")
+
+scheduler = AsyncIOScheduler(timezone=TOKYO_TZ)
 
 crawl_progress_callback: Optional[Callable] = None
 
@@ -298,20 +301,20 @@ def start_scheduler():
     if not scheduler.running:
         scheduler.add_job(
             full_crawl,
-            trigger=CronTrigger(hour='8,12,16,20', minute=0),
+            trigger=CronTrigger(hour='8,12,16,20', minute=0, timezone=TOKYO_TZ),
             id='crawl_job_daily_4_times',
-            name='Crawl at 8,12,16,20 server local time',
+            name='Crawl at 8,12,16,20 JST',
             replace_existing=True
         )
         scheduler.add_job(
             crawl_indices,
-            trigger=CronTrigger(hour='8,12,16,20', minute=0),
+            trigger=CronTrigger(hour='8,12,16,20', minute=0, timezone=TOKYO_TZ),
             id='index_crawl_job_daily_4_times',
-            name='Crawl indices at 8,12,16,20 server local time',
+            name='Crawl indices at 8,12,16,20 JST',
             replace_existing=True
         )
         scheduler.start()
-        logger.info("Scheduler started. Crawl at 8,12,16,20 server local time.")
+        logger.info("Scheduler started. Crawl at 8,12,16,20 JST (Asia/Tokyo).")
 
 
 def stop_scheduler():
