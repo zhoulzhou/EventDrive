@@ -53,8 +53,8 @@ def main():
     start_scheduler()
     now = datetime.now()
     print("✅ 定时任务调度器已启动")
-    print(f"🕐 服务器当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
-    print("📰 服务运行中，每日 0:00 / 4:00 / 8:00 / 12:00 UTC 自动抓取（对应北京时间 8:00 / 12:00 / 16:00 / 20:00）...")
+    print(f"🕐 服务器当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')} (服务器本地时间)")
+    print("📰 服务运行中，每日 8:00 / 12:00 / 16:00 / 20:00（服务器本地时间）自动抓取...")
     print("按 Ctrl+C 停止")
 
     try:
