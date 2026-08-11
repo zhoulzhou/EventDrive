@@ -58,9 +58,13 @@ async def lifespan(app: FastAPI):
     await start_notifier()
     if settings.START_SCHEDULER:
         start_scheduler()
+        jobs = sched_instance.get_jobs()
         print("✅ 定时任务调度器已启动（内嵌模式）")
+        for job in jobs:
+            print(f"   - {job.name} (next: {job.next_run_time})")
     else:
-        print("ℹ️  定时任务调度器未启动（独立模式，请通过 run_scheduler.py 启动）")
+        print("ℹ️  Web 进程仅提供 API 服务，定时任务由独立进程 run_scheduler.py 运行")
+        print("   启动方式: python run_scheduler.py  或  ./start.sh")
     yield
     if settings.START_SCHEDULER:
         stop_scheduler()
