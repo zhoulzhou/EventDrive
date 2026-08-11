@@ -18,7 +18,6 @@ from app.crawlers import (
     NewsItem
 )
 from app.crawlers.x_twitter import fetch_tweets
-from app.utils.image_downloader import download_image
 from app.utils.feishu_notifier import (
     dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
     doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify,
@@ -58,13 +57,6 @@ async def _db_execute(func, *args, **kwargs):
 
 
 async def process_news_item(news_item: NewsItem):
-    image_path = None
-    if news_item.image_url:
-        try:
-            image_path = await download_image(news_item.image_url)
-        except Exception as e:
-            logger.warning(f"Failed to download image for {news_item.url}: {e}")
-
     return schemas.NewsCreate(
         title=news_item.title,
         content=news_item.content,
@@ -73,7 +65,7 @@ async def process_news_item(news_item: NewsItem):
         url=news_item.url,
         author=news_item.author,
         summary=news_item.summary,
-        image_path=image_path
+        image_path=None
     )
 
 

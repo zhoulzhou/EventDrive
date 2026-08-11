@@ -34,7 +34,6 @@ class Settings:
     MIN_DELAY: int = _get_int("MIN_DELAY", 2)
     MAX_DELAY: int = _get_int("MAX_DELAY", 5)
 
-    IMAGES_DIR: Path = BASE_DIR / os.getenv("IMAGES_DIR", "./data/images")
     DATA_DIR: Path = BASE_DIR / "data"
     LOGS_DIR: Path = BASE_DIR / "logs"
 
@@ -86,7 +85,6 @@ class Settings:
 
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
-        self.IMAGES_DIR.mkdir(exist_ok=True, parents=True)
         self.LOGS_DIR.mkdir(exist_ok=True)
 
 

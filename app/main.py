@@ -82,10 +82,6 @@ static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-data_images_dir = BASE_DIR / "data" / "images"
-data_images_dir.mkdir(exist_ok=True, parents=True)
-app.mount("/data/images", StaticFiles(directory=str(data_images_dir)), name="data_images")
-
 app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(crawl.router, prefix="/api", tags=["crawl"])
 app.include_router(filter.router, prefix="/api", tags=["filter"])
