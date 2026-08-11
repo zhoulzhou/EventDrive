@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from playwright.sync_api import sync_playwright
 from app.crawlers.base import BaseCrawler, NewsItem
-from app.utils.anti_crawl import random_delay
+from app.utils.anti_crawl import async_random_delay
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ class CLSDepthCrawler(BaseCrawler):
 
                 if news_item:
                     self.news_list.append(news_item)
-                    random_delay(min_delay=1, max_delay=2)
+                    await async_random_delay(min_delay=1, max_delay=2)
 
                     if len(self.news_list) >= 5:
                         break

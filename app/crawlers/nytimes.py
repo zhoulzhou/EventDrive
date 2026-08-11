@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 import httpx
 from app.crawlers.base import BaseCrawler, NewsItem
-from app.utils.anti_crawl import random_delay
+from app.utils.anti_crawl import async_random_delay
 from app.config import settings
 
 
@@ -179,7 +179,7 @@ class NYTCrawler(BaseCrawler):
 
                 if news_item:
                     self.news_list.append(news_item)
-                    random_delay(min_delay=1, max_delay=3)
+                    await async_random_delay(min_delay=1, max_delay=3)
 
                     if len(self.news_list) >= 6:
                         break
@@ -420,7 +420,7 @@ class NYTDepthCrawler(BaseCrawler):
 
                 if news_item:
                     self.news_list.append(news_item)
-                    random_delay(min_delay=1, max_delay=3)
+                    await async_random_delay(min_delay=1, max_delay=3)
 
                     if len(self.news_list) >= 12:
                         break

@@ -1,5 +1,5 @@
 import random
-import time
+import asyncio
 from typing import Dict
 from app.config import settings
 
@@ -40,4 +40,12 @@ def random_delay(min_delay: int = None, max_delay: int = None) -> None:
     min_d = min_delay or settings.MIN_DELAY
     max_d = max_delay or settings.MAX_DELAY
     delay = random.uniform(min_d, max_d)
+    import time
     time.sleep(delay)
+
+
+async def async_random_delay(min_delay: int = None, max_delay: int = None) -> None:
+    min_d = min_delay or settings.MIN_DELAY
+    max_d = max_delay or settings.MAX_DELAY
+    delay = random.uniform(min_d, max_d)
+    await asyncio.sleep(delay)

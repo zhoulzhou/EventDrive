@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from app.config import settings
-from app.utils.anti_crawl import random_delay, get_random_headers
+from app.utils.anti_crawl import async_random_delay, get_random_headers
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class BaseCrawler(ABC):
             
             for idx, raw_news in enumerate(raw_news_list):
                 logger.info(f"[{self.source_name}] 处理第 {idx+1}/{len(raw_news_list)} 条新闻")
-                random_delay()
+                await async_random_delay()
                 news_item = self.parse_news_item(raw_news)
                 
                 if news_item:
