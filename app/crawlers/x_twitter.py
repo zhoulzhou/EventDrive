@@ -109,13 +109,13 @@ def fetch_tweets() -> Dict[str, Any]:
     list_id = settings.X_LIST_ID
     if not list_id:
         result["message"] = "未配置 X_LIST_ID，跳过抓取"
-        result["push_message"] = f"⚠️ 配置错误\n{result['message']}"
+        result["push_message"] = f"[配置错误] {result['message']}"
         logger.warning(f"[X] {result['message']}")
         return result
 
     if not settings.X_B_T:
         result["message"] = "未配置 X_B_T，跳过抓取"
-        result["push_message"] = f"⚠️ 配置错误\n{result['message']}"
+        result["push_message"] = f"[配置错误] {result['message']}"
         logger.warning(f"[X] {result['message']}")
         return result
 
@@ -129,7 +129,7 @@ def fetch_tweets() -> Dict[str, Any]:
         result["status"] = "monthly_limit"
         result["message"] = f"月度已抓取 {month_count} 条，达到总额度上限 {settings.X_MONTH_MAX_LIMIT}，本月不再抓取"
         result["push_message"] = (
-            f"🛑 月度总额度已用完\n"
+            f"[月度额度] 已用完\n"
             f"当月: {month_count}/{settings.X_MONTH_MAX_LIMIT} 条\n"
             f"本月不再抓取"
         )
@@ -140,7 +140,7 @@ def fetch_tweets() -> Dict[str, Any]:
         result["status"] = "daily_limit"
         result["message"] = f"今日已抓取 {day_count} 条，达到当日限额 {settings.X_DAY_MAX_LIMIT}，等待明天"
         result["push_message"] = (
-            f"⏸️ 当日额度已用完\n"
+            f"[当日额度] 已用完\n"
             f"当日: {day_count}/{settings.X_DAY_MAX_LIMIT} 条\n"
             f"当月: {month_count}/{settings.X_MONTH_MAX_LIMIT} 条\n"
             f"等待明天继续"
@@ -169,7 +169,7 @@ def fetch_tweets() -> Dict[str, Any]:
             result["status"] = "no_new"
             result["message"] = "没有获取到新推文"
             result["push_message"] = (
-                f"📭 无新增推文\n"
+                f"[X推文] 无新增推文\n"
                 f"当日: {day_count}/{settings.X_DAY_MAX_LIMIT} 条\n"
                 f"当月: {month_count}/{settings.X_MONTH_MAX_LIMIT} 条"
             )
@@ -182,7 +182,7 @@ def fetch_tweets() -> Dict[str, Any]:
             result["status"] = "no_new"
             result["message"] = "无新增推文"
             result["push_message"] = (
-                f"📭 无新增推文\n"
+                f"[X推文] 无新增推文\n"
                 f"当日: {day_count}/{settings.X_DAY_MAX_LIMIT} 条\n"
                 f"当月: {month_count}/{settings.X_MONTH_MAX_LIMIT} 条"
             )
@@ -199,7 +199,7 @@ def fetch_tweets() -> Dict[str, Any]:
         _save_state()
 
         tweet_list: List[Dict[str, Any]] = []
-        push_lines = [f"🐦 X 推文推送", f"共获取 {len(new_tweets)} 条推文", ""]
+        push_lines = [f"[X推文] 推送", f"共获取 {len(new_tweets)} 条推文", ""]
         for idx, tw in enumerate(new_tweets, 1):
             tweet_list.append({
                 "id": int(tw.id),
@@ -231,9 +231,55 @@ def fetch_tweets() -> Dict[str, Any]:
 
         return result
 
+    except tweepy.errors.Forbidden as e:
+        err_msg = str(e)
+        if "spend cap" in err_msg.lower():
+            result["status"] = "api_billing_limit"
+            result["message"] = f"X API 月度账单额度已用尽: {err_msg}"
+            result["push_message"] = (
+                f"[X API] 账单额度已用尽\n"
+                f"API 返回: {err_msg}\n"
+                f"请登录 X Developer Dashboard 提高月度支出上限\n"
+                f"本地计数: 当日 {day_count}/{settings.X_DAY_MAX_LIMIT}, "
+                f"当月 {month_count}/{settings.X_MONTH_MAX_LIMIT}"
+            )
+            logger.warning(f"[X] {result['message']}")
+        else:
+            result["status"] = "forbidden"
+            result["message"] = f"X API 访问被拒绝(403): {err_msg}"
+            result["push_message"] = f"[X API] 访问被拒绝(403)\n{err_msg}"
+            logger.error(f"[X] {result['message']}")
+        return result
+
+    except tweepy.errors.TooManyRequests as e:
+        result["status"] = "rate_limited"
+        result["message"] = f"X API 请求频率超限(429)"
+        result["push_message"] = (
+            f"[X API] 请求频率超限(429)\n"
+            f"请稍后重试\n"
+            f"本地计数: 当日 {day_count}/{settings.X_DAY_MAX_LIMIT}, "
+            f"当月 {month_count}/{settings.X_MONTH_MAX_LIMIT}"
+        )
+        logger.warning(f"[X] {result['message']}")
+        return result
+
+    except tweepy.errors.Unauthorized as e:
+        result["status"] = "unauthorized"
+        result["message"] = f"X API 认证失败(401): Bearer Token 无效"
+        result["push_message"] = f"[X API] 认证失败(401)\nBearer Token 无效，请检查 X_B_T 配置"
+        logger.error(f"[X] {result['message']}")
+        return result
+
+    except tweepy.errors.TwitterServerError as e:
+        result["status"] = "server_error"
+        result["message"] = f"X 服务器错误(5xx): {e}"
+        result["push_message"] = f"[X API] 服务器错误\n{e}\n将在下次定时任务重试"
+        logger.error(f"[X] {result['message']}")
+        return result
+
     except Exception as e:
         result["status"] = "error"
         result["message"] = f"抓取推文失败: {e}"
-        result["push_message"] = f"⚠️ 抓取异常\n{e}"
+        result["push_message"] = f"[X抓取异常] {e}"
         logger.error(f"[X] {result['message']}", exc_info=True)
         return result
