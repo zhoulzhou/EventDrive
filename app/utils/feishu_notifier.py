@@ -8,6 +8,7 @@ import asyncio
 from typing import List, Optional, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
+queue_logger = logging.getLogger("feishu.queue")
 
 PUSH_COOLDOWN = 2
 _queue: Optional[asyncio.Queue] = None
@@ -15,6 +16,9 @@ _worker_task: Optional[asyncio.Task] = None
 _lock = asyncio.Lock()
 _last_send_time: float = 0.0
 _http_client: Optional[httpx.AsyncClient] = None
+_sent_count = 0
+_queue_dropped = 0
+_started_at = 0.0
 
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -25,53 +29,98 @@ def _get_http_client() -> httpx.AsyncClient:
 
 
 async def _queue_worker():
-    global _last_send_time
+    global _last_send_time, _sent_count, _queue_dropped
+    queue_logger.info(f"[feishu-queue] worker started, cooldown={PUSH_COOLDOWN}s")
     while True:
         try:
+            queue_logger.debug(f"[feishu-queue] waiting for item (qsize={_queue.qsize()}, sent={_sent_count}, dropped={_queue_dropped})")
             item = await _queue.get()
+
             if item is None:
+                queue_logger.info(f"[feishu-queue] received shutdown signal, exiting (sent={_sent_count})")
                 _queue.task_done()
                 break
 
             webhook_url, secret, keyword, content = item
+            content_preview = content.replace('\n', ' ')[:80]
+            queue_logger.debug(
+                f"[feishu-queue] dequeued item: keyword='{keyword}', "
+                f"qsize_after_get={_queue.qsize()}, preview='{content_preview}'"
+            )
 
             now = time.time()
             wait = _last_send_time + PUSH_COOLDOWN - now
             if wait > 0:
+                queue_logger.debug(f"[feishu-queue] cooldown active, sleeping {wait:.2f}s (last_send={_last_send_time:.3f})")
                 await asyncio.sleep(wait)
+            else:
+                queue_logger.debug(f"[feishu-queue] no cooldown needed, sending immediately (last_send_ago={now - _last_send_time:.2f}s)")
 
-            await _do_send(webhook_url, secret, keyword, content)
-            _last_send_time = time.time()
+            loop = asyncio.get_event_loop()
+            pending_before = len(asyncio.all_tasks(loop))
+            send_start = loop.time()
+            ok = await _do_send(webhook_url, secret, keyword, content)
+            send_elapsed = loop.time() - send_start
+            pending_after = len(asyncio.all_tasks(loop))
+
+            async with _lock:
+                _last_send_time = time.time()
+            if ok:
+                _sent_count += 1
+                queue_logger.info(
+                    f"[feishu-queue] ✅ sent ok | took={send_elapsed:.2f}s | "
+                    f"total_sent={_sent_count} | qsize={_queue.qsize()} | "
+                    f"pending_tasks={pending_after}"
+                )
+            else:
+                _queue_dropped += 1
+                queue_logger.warning(
+                    f"[feishu-queue] ❌ send FAILED | took={send_elapsed:.2f}s | "
+                    f"total_dropped={_queue_dropped}"
+                )
             _queue.task_done()
+
         except asyncio.CancelledError:
+            queue_logger.info(f"[feishu-queue] worker cancelled (sent={_sent_count})")
             break
         except Exception as e:
-            logger.error(f"飞书队列消费异常: {e}", exc_info=True)
+            queue_logger.error(f"[feishu-queue] worker exception: {e}", exc_info=True)
+            _queue_dropped += 1
             try:
                 _queue.task_done()
             except Exception:
                 pass
+            await asyncio.sleep(0.5)
 
 
 def _ensure_worker():
-    global _queue, _worker_task
+    global _queue, _worker_task, _started_at
     if _queue is None:
         _queue = asyncio.Queue()
+        queue_logger.debug(f"[feishu-queue] queue created")
     if _worker_task is None or _worker_task.done():
+        _started_at = time.time()
         _worker_task = asyncio.create_task(_queue_worker())
+        queue_logger.info(f"[feishu-queue] worker task created")
 
 
 async def shutdown_notifier():
     global _queue, _worker_task, _http_client
+    queue_logger.info(f"[feishu-queue] shutdown requested, draining queue (qsize={_queue.qsize() if _queue else 0})")
     if _queue is not None:
         await _queue.put(None)
     if _worker_task is not None:
         try:
             await asyncio.wait_for(_worker_task, timeout=5)
-        except Exception:
+            queue_logger.info("[feishu-queue] worker shutdown gracefully")
+        except asyncio.TimeoutError:
+            queue_logger.warning("[feishu-queue] worker shutdown timeout, cancelling")
             _worker_task.cancel()
+        except Exception as e:
+            queue_logger.error(f"[feishu-queue] worker shutdown error: {e}")
     if _http_client is not None and not _http_client.is_closed:
         await _http_client.aclose()
+        queue_logger.debug("[feishu-queue] http client closed")
 
 
 class FeishuNotifier:
@@ -79,6 +128,7 @@ class FeishuNotifier:
         self.webhook_url = webhook_url
         self.secret = secret
         self.keyword = keyword
+        queue_logger.debug(f"[feishu] notifier created, keyword='{keyword}', url={webhook_url[:50]}...")
 
     def _generate_sign(self) -> Tuple[str, str]:
         timestamp = str(int(time.time()))
@@ -110,36 +160,59 @@ class FeishuNotifier:
         try:
             payload, params = self._build_payload(content)
         except ValueError as e:
-            logger.info(str(e))
+            queue_logger.debug(f"[feishu] keyword check failed for '{self.keyword}': {e}")
             return False
 
-        async with _lock:
+        content_preview = content.replace('\n', ' ')[:60]
+        loop = asyncio.get_event_loop()
+        locked = False
+        try:
+            lock_start = loop.time()
+            await _lock.acquire()
+            locked = True
+            lock_wait = loop.time() - lock_start
+            if lock_wait > 0.05:
+                queue_logger.debug(f"[feishu] lock acquired after {lock_wait:.3f}s wait")
+
             global _last_send_time
             now = time.time()
             if _last_send_time > 0 and now - _last_send_time < PUSH_COOLDOWN:
                 await _queue.put((self.webhook_url, self.secret, self.keyword, content))
-                logger.info(f"飞书推送冷却中，任务已入队列(队列深度: {_queue.qsize()})")
+                queue_logger.info(
+                    f"[feishu] 📥 enqueued (cooldown), keyword='{self.keyword}', "
+                    f"qsize={_queue.qsize()}, preview='{content_preview}'"
+                )
                 return True
+        finally:
+            if locked:
+                _lock.release()
 
         try:
             client = _get_http_client()
+            queue_logger.debug(f"[feishu] 📤 direct send, keyword='{self.keyword}', preview='{content_preview}'")
+            send_start = loop.time()
             response = await client.post(self.webhook_url, json=payload, params=params)
+            send_elapsed = loop.time() - send_start
             result = response.json()
             if result.get("code") == 0:
                 async with _lock:
                     _last_send_time = time.time()
-                logger.debug("飞书推送成功")
+                queue_logger.info(
+                    f"[feishu] ✅ direct send ok | took={send_elapsed:.2f}s | keyword='{self.keyword}'"
+                )
                 return True
             else:
-                logger.warning(f"飞书推送失败: code={result.get('code')}, msg={result.get('msg')}")
+                queue_logger.warning(
+                    f"[feishu] ❌ direct send FAIL: code={result.get('code')}, msg={result.get('msg')}"
+                )
                 return False
         except Exception as e:
-            logger.error(f"飞书推送异常: {e}")
+            queue_logger.error(f"[feishu] direct send exception: {e}", exc_info=True)
             return False
 
     async def send_news_notification(self, news_list: List[dict], source: str, prefix: str = None) -> bool:
         if not news_list:
-            logger.info(f"飞书通知: {source} 没有新闻，跳过")
+            queue_logger.debug(f"[feishu] send_news: no news for {source}, skip")
             return False
 
         header = f"【{self.keyword}】📰 {source}" if not prefix else f"{prefix}📰 {source}"
@@ -186,11 +259,14 @@ class FeishuNotifier:
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
+                queue_logger.debug(f"[feishu] sync send via run_coroutine_threadsafe (loop running)")
                 future = asyncio.run_coroutine_threadsafe(self.send_message(content), loop)
                 return future.result(timeout=30)
             else:
+                queue_logger.debug(f"[feishu] sync send via run_until_complete (loop not running)")
                 return loop.run_until_complete(self.send_message(content))
         except RuntimeError:
+            queue_logger.debug(f"[feishu] sync send via asyncio.run (no loop)")
             return asyncio.run(self.send_message(content))
 
     def send_news_notification_sync(self, news_list: List[dict], source: str, prefix: str = None) -> bool:
@@ -209,7 +285,7 @@ class FeishuNotifier:
 
 async def _do_send(webhook_url: str, secret: str, keyword: str, content: str) -> bool:
     if keyword and keyword not in content:
-        logger.info(f"消息中不包含关键词 '{keyword}'，跳过")
+        queue_logger.debug(f"[feishu-queue] keyword '{keyword}' not in content, skip")
         return False
 
     payload = {
@@ -233,13 +309,21 @@ async def _do_send(webhook_url: str, secret: str, keyword: str, content: str) ->
         response = await client.post(webhook_url, json=payload, params=params)
         result = response.json()
         if result.get("code") == 0:
-            logger.debug("飞书队列推送成功")
             return True
         else:
-            logger.warning(f"飞书队列推送失败: code={result.get('code')}, msg={result.get('msg')}")
+            queue_logger.warning(
+                f"[feishu-queue] API error: code={result.get('code')}, msg={result.get('msg')}, "
+                f"http_status={response.status_code}"
+            )
             return False
+    except httpx.TimeoutException:
+        queue_logger.error("[feishu-queue] HTTP timeout during send")
+        return False
+    except httpx.HTTPError as e:
+        queue_logger.error(f"[feishu-queue] HTTP error: {e}")
+        return False
     except Exception as e:
-        logger.error(f"飞书队列推送异常: {e}")
+        queue_logger.error(f"[feishu-queue] send exception: {e}", exc_info=True)
         return False
 
 

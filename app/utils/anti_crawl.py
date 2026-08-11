@@ -1,8 +1,11 @@
 import random
 import asyncio
-from typing import Dict
+import logging
+import time
+from typing import Dict, Optional
 from app.config import settings
 
+_delay_logger = logging.getLogger("anti_crawl.delay")
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -36,16 +39,26 @@ def get_random_headers(referer: str = None) -> Dict[str, str]:
     return headers
 
 
-def random_delay(min_delay: int = None, max_delay: int = None) -> None:
+def random_delay(min_delay: int = None, max_delay: int = None, source: str = "") -> None:
     min_d = min_delay or settings.MIN_DELAY
     max_d = max_delay or settings.MAX_DELAY
     delay = random.uniform(min_d, max_d)
-    import time
+    tag = f"[{source}] " if source else ""
+    _delay_logger.debug(f"{tag}sync_delay start: {delay:.2f}s")
     time.sleep(delay)
+    _delay_logger.debug(f"{tag}sync_delay done: {delay:.2f}s")
 
 
-async def async_random_delay(min_delay: int = None, max_delay: int = None) -> None:
+async def async_random_delay(min_delay: int = None, max_delay: int = None, source: str = "") -> None:
     min_d = min_delay or settings.MIN_DELAY
     max_d = max_delay or settings.MAX_DELAY
     delay = random.uniform(min_d, max_d)
+    tag = f"[{source}] " if source else ""
+    loop = asyncio.get_event_loop()
+    start = loop.time()
+    pending = len(asyncio.all_tasks(loop))
+    _delay_logger.debug(f"{tag}async_delay start: {delay:.2f}s (pending_tasks={pending})")
     await asyncio.sleep(delay)
+    elapsed = loop.time() - start
+    pending_after = len(asyncio.all_tasks(loop))
+    _delay_logger.debug(f"{tag}async_delay done: planned={delay:.2f}s actual={elapsed:.2f}s (pending_tasks={pending_after})")
