@@ -10,7 +10,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base
 from app.api import news, crawl, filter, logs, feishu, login
-from app.utils.feishu_notifier import init_all_notifiers
+from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
 
@@ -57,6 +57,7 @@ if settings.KB_FEISHU_WEBHOOK_URL:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await start_notifier()
     if settings.START_SCHEDULER:
         start_scheduler()
         print("✅ 定时任务调度器已启动（内嵌模式）")
@@ -66,6 +67,7 @@ async def lifespan(app: FastAPI):
     if settings.START_SCHEDULER:
         stop_scheduler()
         print("🛑 定时任务调度器已停止")
+    await shutdown_notifier()
 
 
 app = FastAPI(

@@ -5,6 +5,7 @@ import hashlib
 import httpx
 import logging
 import asyncio
+import threading
 from typing import List, Optional, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,8 @@ _last_send_time: float = 0.0
 _http_client: Optional[httpx.AsyncClient] = None
 _sent_count = 0
 _queue_dropped = 0
-_started_at = 0.0
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+_started = False
 
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -26,6 +28,47 @@ def _get_http_client() -> httpx.AsyncClient:
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(timeout=10)
     return _http_client
+
+
+def _ensure_worker():
+    """Create queue+worker on the main loop. MUST be called from main loop context."""
+    global _queue, _worker_task, _started
+    if _queue is None:
+        _queue = asyncio.Queue()
+        queue_logger.debug(f"[feishu-queue] queue created on loop={id(asyncio.get_event_loop())}")
+    if _worker_task is None or _worker_task.done():
+        _worker_task = asyncio.create_task(_queue_worker())
+        queue_logger.info(f"[feishu-queue] worker task created")
+    _started = True
+
+
+async def start_notifier():
+    """Explicitly initialize the queue and worker on the current (main) event loop.
+    Must be called once during app startup before any notifications are sent.
+    """
+    global _main_loop
+    _main_loop = asyncio.get_event_loop()
+    _ensure_worker()
+    queue_logger.info(
+        f"[feishu-queue] notifier started on main loop={id(_main_loop)}, "
+        f"thread={threading.current_thread().name}"
+    )
+
+
+def _enqueue_threadsafe(item) -> bool:
+    """Thread-safe enqueue. Can be called from any thread."""
+    if _main_loop is None or _queue is None:
+        queue_logger.error(
+            f"[feishu-queue] cannot enqueue: main_loop={_main_loop is not None}, "
+            f"queue={_queue is not None}. Call start_notifier() first."
+        )
+        return False
+    try:
+        _main_loop.call_soon_threadsafe(_queue.put_nowait, item)
+        return True
+    except Exception as e:
+        queue_logger.error(f"[feishu-queue] threadsafe enqueue failed: {e}")
+        return False
 
 
 async def _queue_worker():
@@ -57,7 +100,6 @@ async def _queue_worker():
                 queue_logger.debug(f"[feishu-queue] no cooldown needed, sending immediately (last_send_ago={now - _last_send_time:.2f}s)")
 
             loop = asyncio.get_event_loop()
-            pending_before = len(asyncio.all_tasks(loop))
             send_start = loop.time()
             ok = await _do_send(webhook_url, secret, keyword, content)
             send_elapsed = loop.time() - send_start
@@ -68,14 +110,14 @@ async def _queue_worker():
             if ok:
                 _sent_count += 1
                 queue_logger.info(
-                    f"[feishu-queue] ✅ sent ok | took={send_elapsed:.2f}s | "
+                    f"[feishu-queue] sent ok | took={send_elapsed:.2f}s | "
                     f"total_sent={_sent_count} | qsize={_queue.qsize()} | "
                     f"pending_tasks={pending_after}"
                 )
             else:
                 _queue_dropped += 1
                 queue_logger.warning(
-                    f"[feishu-queue] ❌ send FAILED | took={send_elapsed:.2f}s | "
+                    f"[feishu-queue] send FAILED | took={send_elapsed:.2f}s | "
                     f"total_dropped={_queue_dropped}"
                 )
             _queue.task_done()
@@ -93,22 +135,11 @@ async def _queue_worker():
             await asyncio.sleep(0.5)
 
 
-def _ensure_worker():
-    global _queue, _worker_task, _started_at
-    if _queue is None:
-        _queue = asyncio.Queue()
-        queue_logger.debug(f"[feishu-queue] queue created")
-    if _worker_task is None or _worker_task.done():
-        _started_at = time.time()
-        _worker_task = asyncio.create_task(_queue_worker())
-        queue_logger.info(f"[feishu-queue] worker task created")
-
-
 async def shutdown_notifier():
-    global _queue, _worker_task, _http_client
+    global _queue, _worker_task, _http_client, _started
     queue_logger.info(f"[feishu-queue] shutdown requested, draining queue (qsize={_queue.qsize() if _queue else 0})")
-    if _queue is not None:
-        await _queue.put(None)
+    if _queue is not None and _main_loop is not None:
+        _main_loop.call_soon_threadsafe(_queue.put_nowait, None)
     if _worker_task is not None:
         try:
             await asyncio.wait_for(_worker_task, timeout=5)
@@ -121,6 +152,7 @@ async def shutdown_notifier():
     if _http_client is not None and not _http_client.is_closed:
         await _http_client.aclose()
         queue_logger.debug("[feishu-queue] http client closed")
+    _started = False
 
 
 class FeishuNotifier:
@@ -156,6 +188,16 @@ class FeishuNotifier:
         return payload, params
 
     async def send_message(self, content: str) -> bool:
+        # Ensure we're on the main loop; if not, hop to it
+        current_loop = asyncio.get_event_loop()
+        if _main_loop is not None and current_loop is not _main_loop:
+            queue_logger.debug(
+                f"[feishu] send_message called on non-main loop "
+                f"(current={id(current_loop)}, main={id(_main_loop)}), hopping via run_coroutine_threadsafe"
+            )
+            fut = asyncio.run_coroutine_threadsafe(self.send_message(content), _main_loop)
+            return await asyncio.wrap_future(fut)
+
         _ensure_worker()
         try:
             payload, params = self._build_payload(content)
@@ -164,13 +206,12 @@ class FeishuNotifier:
             return False
 
         content_preview = content.replace('\n', ' ')[:60]
-        loop = asyncio.get_event_loop()
         locked = False
         try:
-            lock_start = loop.time()
+            lock_start = asyncio.get_event_loop().time()
             await _lock.acquire()
             locked = True
-            lock_wait = loop.time() - lock_start
+            lock_wait = asyncio.get_event_loop().time() - lock_start
             if lock_wait > 0.05:
                 queue_logger.debug(f"[feishu] lock acquired after {lock_wait:.3f}s wait")
 
@@ -179,7 +220,7 @@ class FeishuNotifier:
             if _last_send_time > 0 and now - _last_send_time < PUSH_COOLDOWN:
                 await _queue.put((self.webhook_url, self.secret, self.keyword, content))
                 queue_logger.info(
-                    f"[feishu] 📥 enqueued (cooldown), keyword='{self.keyword}', "
+                    f"[feishu] enqueued (cooldown), keyword='{self.keyword}', "
                     f"qsize={_queue.qsize()}, preview='{content_preview}'"
                 )
                 return True
@@ -189,7 +230,8 @@ class FeishuNotifier:
 
         try:
             client = _get_http_client()
-            queue_logger.debug(f"[feishu] 📤 direct send, keyword='{self.keyword}', preview='{content_preview}'")
+            queue_logger.debug(f"[feishu] direct send, keyword='{self.keyword}', preview='{content_preview}'")
+            loop = asyncio.get_event_loop()
             send_start = loop.time()
             response = await client.post(self.webhook_url, json=payload, params=params)
             send_elapsed = loop.time() - send_start
@@ -198,12 +240,12 @@ class FeishuNotifier:
                 async with _lock:
                     _last_send_time = time.time()
                 queue_logger.info(
-                    f"[feishu] ✅ direct send ok | took={send_elapsed:.2f}s | keyword='{self.keyword}'"
+                    f"[feishu] direct send ok | took={send_elapsed:.2f}s | keyword='{self.keyword}'"
                 )
                 return True
             else:
                 queue_logger.warning(
-                    f"[feishu] ❌ direct send FAIL: code={result.get('code')}, msg={result.get('msg')}"
+                    f"[feishu] direct send FAIL: code={result.get('code')}, msg={result.get('msg')}"
                 )
                 return False
         except Exception as e:
@@ -215,7 +257,7 @@ class FeishuNotifier:
             queue_logger.debug(f"[feishu] send_news: no news for {source}, skip")
             return False
 
-        header = f"【{self.keyword}】📰 {source}" if not prefix else f"{prefix}📰 {source}"
+        header = f"【{self.keyword}】 {source}" if not prefix else f"{prefix}{source}"
         content_lines = [
             header,
             f"共获取 {len(news_list)} 条新闻",
@@ -240,12 +282,12 @@ class FeishuNotifier:
     async def send_no_news_notification(self) -> bool:
         from datetime import datetime
         now = datetime.now().strftime("%H:%M")
-        content = f"【{self.keyword}】📰 {now} 定时推送\n\n暂无新新闻"
+        content = f"【{self.keyword}】 {now} 定时推送\n\n暂无新新闻"
         return await self.send_message(content)
 
     async def send_analysis(self, keyword: str, news_title: str, analysis_result: str, source: str = "") -> bool:
         content_lines = [
-            f"【{keyword}】📰 新闻深度分析",
+            f"【{keyword}】 新闻深度分析",
             f"来源: {source}" if source else "",
             f"标题: {news_title}",
             "",
@@ -256,31 +298,48 @@ class FeishuNotifier:
         return await self.send_message(content)
 
     def send_message_sync(self, content: str) -> bool:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                queue_logger.debug(f"[feishu] sync send via run_coroutine_threadsafe (loop running)")
-                future = asyncio.run_coroutine_threadsafe(self.send_message(content), loop)
-                return future.result(timeout=30)
-            else:
-                queue_logger.debug(f"[feishu] sync send via run_until_complete (loop not running)")
-                return loop.run_until_complete(self.send_message(content))
-        except RuntimeError:
-            queue_logger.debug(f"[feishu] sync send via asyncio.run (no loop)")
-            return asyncio.run(self.send_message(content))
+        """Thread-safe sync wrapper. Uses main loop via run_coroutine_threadsafe.
+        If main loop is not initialized (standalone script), falls back to asyncio.run().
+        """
+        if _main_loop is not None and _main_loop.is_running():
+            queue_logger.debug(
+                f"[feishu] sync send via run_coroutine_threadsafe "
+                f"(thread={threading.current_thread().name}, main_loop={id(_main_loop)})"
+            )
+            try:
+                fut = asyncio.run_coroutine_threadsafe(self.send_message(content), _main_loop)
+                return fut.result(timeout=30)
+            except Exception as e:
+                queue_logger.error(f"[feishu] run_coroutine_threadsafe failed: {e}", exc_info=True)
+                return False
+        else:
+            # Fallback for standalone scripts without a running main loop
+            queue_logger.debug(
+                f"[feishu] sync send via asyncio.run fallback "
+                f"(thread={threading.current_thread().name})"
+            )
+            try:
+                return asyncio.run(self.send_message(content))
+            except Exception as e:
+                queue_logger.error(f"[feishu] asyncio.run fallback failed: {e}", exc_info=True)
+                return False
 
     def send_news_notification_sync(self, news_list: List[dict], source: str, prefix: str = None) -> bool:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(
-                    self.send_news_notification(news_list, source, prefix), loop
+        if _main_loop is not None and _main_loop.is_running():
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    self.send_news_notification(news_list, source, prefix), _main_loop
                 )
-                return future.result(timeout=30)
-            else:
-                return loop.run_until_complete(self.send_news_notification(news_list, source, prefix))
-        except RuntimeError:
-            return asyncio.run(self.send_news_notification(news_list, source, prefix))
+                return fut.result(timeout=30)
+            except Exception as e:
+                queue_logger.error(f"[feishu] send_news_notification_sync failed: {e}", exc_info=True)
+                return False
+        else:
+            try:
+                return asyncio.run(self.send_news_notification(news_list, source, prefix))
+            except Exception as e:
+                queue_logger.error(f"[feishu] send_news_notification fallback failed: {e}", exc_info=True)
+                return False
 
 
 async def _do_send(webhook_url: str, secret: str, keyword: str, content: str) -> bool:
@@ -478,7 +537,7 @@ def x_feishu_notify(tweets: List[dict]) -> bool:
         logger.info("X推文飞书通知: 没有推文，跳过")
         return False
 
-    header = f"【{notifier.keyword}】🐦 X 推文推送"
+    header = f"【{notifier.keyword}】 X 推文推送"
     content_lines = [
         header,
         f"共获取 {len(tweets)} 条推文",
@@ -506,7 +565,7 @@ def x_feishu_status_notify(status_text: str) -> bool:
     if not notifier:
         logger.warning("X推文飞书 notifier 未初始化，跳过状态推送")
         return False
-    content = f"【{notifier.keyword}】🐦 X 推文状态\n\n{status_text}"
+    content = f"【{notifier.keyword}】 X 推文状态\n\n{status_text}"
     return notifier.send_message_sync(content)
 
 
@@ -542,7 +601,7 @@ def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> 
     notifier = get_kb_feishu_notifier()
     if notifier:
         content_lines = [
-            f"【Talk】📰 新闻深度分析",
+            f"【Talk】 新闻深度分析",
             f"来源: {source}",
             f"标题: {news_title}",
             "",
@@ -558,7 +617,7 @@ def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str,
     notifier = get_openrouter_feishu_notifier()
     if notifier:
         content_lines = [
-            f"【Talk】📰 新闻深度分析",
+            f"【Talk】 新闻深度分析",
             f"来源: {source}",
             f"标题: {news_title}",
         ]
@@ -578,7 +637,7 @@ def deepseek_feishu_notify(news_title: str, analysis_result: str, source: str) -
     notifier = get_deepseek_feishu_notifier()
     if notifier:
         content_lines = [
-            f"【Talk】📰 DeepSeek V4 新闻分析",
+            f"【Talk】 DeepSeek V4 新闻分析",
             f"来源: {source}",
             f"标题: {news_title}",
             "",
@@ -598,4 +657,7 @@ def notify_index_alert_sync(alert_content: str) -> bool:
 
 
 async def notify_index_alert(alert_content: str) -> bool:
-    return notify_index_alert_sync(alert_content)
+    notifier = get_index_feishu_notifier()
+    if notifier:
+        return await notifier.send_message(alert_content)
+    return False

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from app.config import settings
 from app.database import engine, Base
-from app.utils.feishu_notifier import init_all_notifiers
+from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, full_crawl
 
 def signal_handler(signum, frame):
@@ -52,6 +52,8 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     start_scheduler()
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_notifier())
     tokyo_tz = ZoneInfo("Asia/Tokyo")
     now_tokyo = datetime.now(tokyo_tz)
     now_local = datetime.now()
@@ -62,10 +64,11 @@ def main():
     print("按 Ctrl+C 停止")
 
     try:
-        asyncio.get_event_loop().run_forever()
+        loop.run_forever()
     except KeyboardInterrupt:
         print("\n🛑 正在关闭...")
         stop_scheduler()
+        loop.run_until_complete(shutdown_notifier())
 
 if __name__ == "__main__":
     main()
