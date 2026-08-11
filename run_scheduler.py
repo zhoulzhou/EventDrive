@@ -20,7 +20,7 @@ def signal_handler(signum, frame):
 
 def main():
     print("=" * 60)
-    print("🚀 纽约时报新闻抓取服务正在启动...")
+    print("🚀 EventDrive 新闻抓取调度器正在启动...")
     print("=" * 60)
 
     Base.metadata.create_all(bind=engine)

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from app.config import settings
 from app.utils.anti_crawl import random_delay, get_random_headers
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

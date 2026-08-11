@@ -7,22 +7,32 @@ load_dotenv(override=True)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _get_bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).lower() in ("true", "1", "yes")
+
+
+def _get_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
 class Settings:
     APP_NAME: str = os.getenv("APP_NAME", "EventDrive")
     APP_VERSION: str = os.getenv("APP_VERSION", "1.0.0")
-    DEBUG: bool = os.getenv("DEBUG", "True").lower() == "true"
+    DEBUG: bool = _get_bool("DEBUG", True)
 
     HOST: str = os.getenv("HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("PORT", "8000"))
+    PORT: int = _get_int("PORT", 8000)
 
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./data/db.sqlite3")
 
-    CRAWL_INTERVAL_HOURS: int = int(os.getenv("CRAWL_INTERVAL_HOURS", "6"))
-    NEWS_PER_SOURCE: int = int(os.getenv("NEWS_PER_SOURCE", "10"))
-    NEWS_TIME_RANGE_HOURS: int = int(os.getenv("NEWS_TIME_RANGE_HOURS", "24"))
+    NEWS_PER_SOURCE: int = _get_int("NEWS_PER_SOURCE", 10)
+    NEWS_TIME_RANGE_HOURS: int = _get_int("NEWS_TIME_RANGE_HOURS", 24)
 
-    MIN_DELAY: int = int(os.getenv("MIN_DELAY", "2"))
-    MAX_DELAY: int = int(os.getenv("MAX_DELAY", "5"))
+    MIN_DELAY: int = _get_int("MIN_DELAY", 2)
+    MAX_DELAY: int = _get_int("MAX_DELAY", 5)
 
     IMAGES_DIR: Path = BASE_DIR / os.getenv("IMAGES_DIR", "./data/images")
     DATA_DIR: Path = BASE_DIR / "data"
@@ -36,10 +46,10 @@ class Settings:
     NYT_FEISHU_WEBHOOK_URL: str = os.getenv("NYT_FEISHU_WEBHOOK_URL", "")
     NYT_FEISHU_KEYWORD: str = os.getenv("NYT_FEISHU_KEYWORD", "HOT")
 
-    BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/3d2a80af-aa97-48aa-864e-dec19d48ac08")
+    BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "")
     BBC_FEISHU_KEYWORD: str = os.getenv("BBC_FEISHU_KEYWORD", "HOT")
 
-    DFCF_FEISHU_WEBHOOK_URL: str = os.getenv("DFCF_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/1d418960-b397-428e-9808-f9a36a0e2edf")
+    DFCF_FEISHU_WEBHOOK_URL: str = os.getenv("DFCF_FEISHU_WEBHOOK_URL", "")
     DFCF_FEISHU_KEYWORD: str = os.getenv("DFCF_FEISHU_KEYWORD", "头条")
 
     CLS_FEISHU_WEBHOOK_URL: str = os.getenv("CLS_FEISHU_WEBHOOK_URL", "")
@@ -60,22 +70,19 @@ class Settings:
     DEEPSEEK_FEISHU_WEBHOOK_URL: str = os.getenv("DEEPSEEK_FEISHU_WEBHOOK_URL", "")
     DEEPSEEK_KEYWORD: str = os.getenv("DEEPSEEK_KEYWORD", "深度分析")
 
-    FINNHUB_API_KEY: str = os.getenv("FINNHUB_API_KEY", "d7f34c1r01qi33g87p90d7f34c1r01qi33g87p9g")
-    INDEX_FEISHU_WEBHOOK_URL: str = os.getenv("INDEX_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/5977e5fe-e551-4091-829d-2d1e89edd721")
+    FINNHUB_API_KEY: str = os.getenv("FINNHUB_API_KEY", "")
+    INDEX_FEISHU_WEBHOOK_URL: str = os.getenv("INDEX_FEISHU_WEBHOOK_URL", "")
     INDEX_KEYWORD: str = os.getenv("INDEX_KEYWORD", "指数")
 
-    X_CONSUMER_KEY: str = os.getenv("X_CONSUMER_KEY", "")
-    X_CONSUMER_SECRET: str = os.getenv("X_CONSUMER_SECRET", "")
-    X_ACCESS_TOKEN: str = os.getenv("X_ACCESS_TOKEN", "")
-    X_ACCESS_TOKEN_SECRET: str = os.getenv("X_ACCESS_TOKEN_SECRET", "")
     X_B_T: str = os.getenv("X_B_T", "")
-    X_FEISHU_WEBHOOK_URL: str = os.getenv("X_FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/76b00cec-a6f2-4f7f-b0be-e5b98a05a0de")
+    X_FEISHU_WEBHOOK_URL: str = os.getenv("X_FEISHU_WEBHOOK_URL", "")
     X_FEISHU_KEYWORD: str = os.getenv("X_FEISHU_KEYWORD", "X推文")
-    X_MAX_RESULTS: int = int(os.getenv("X_MAX_RESULTS", "5"))
-    X_MONTH_MAX_LIMIT: int = int(os.getenv("X_MONTH_MAX_LIMIT", "190"))
-    X_DAY_MAX_LIMIT: int = int(os.getenv("X_DAY_MAX_LIMIT", "6"))
-    X_USER_ID: str = os.getenv("X_USER_ID", "")
+    X_MAX_RESULTS: int = _get_int("X_MAX_RESULTS", 5)
+    X_MONTH_MAX_LIMIT: int = _get_int("X_MONTH_MAX_LIMIT", 190)
+    X_DAY_MAX_LIMIT: int = _get_int("X_DAY_MAX_LIMIT", 6)
     X_LIST_ID: str = os.getenv("X_LIST_ID", "")
+
+    START_SCHEDULER: bool = _get_bool("START_SCHEDULER", False)
 
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from jinja2 import Environment, FileSystemLoader
 from starlette.requests import Request
 
@@ -11,10 +11,15 @@ from app.config import settings
 from app.database import engine, Base
 from app.api import news, crawl, filter, logs, feishu, login
 from app.utils.feishu_notifier import init_all_notifiers
-from app.scheduler import start_scheduler, stop_scheduler
+from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
 
 logger = logging.getLogger(__name__)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 print("=" * 60)
 print("🚀 新闻抓取应用正在启动...")
@@ -52,11 +57,15 @@ if settings.KB_FEISHU_WEBHOOK_URL:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    start_scheduler()
-    print("✅ 定时任务调度器已启动")
+    if settings.START_SCHEDULER:
+        start_scheduler()
+        print("✅ 定时任务调度器已启动（内嵌模式）")
+    else:
+        print("ℹ️  定时任务调度器未启动（独立模式，请通过 run_scheduler.py 启动）")
     yield
-    stop_scheduler()
-    print("🛑 定时任务调度器已停止")
+    if settings.START_SCHEDULER:
+        stop_scheduler()
+        print("🛑 定时任务调度器已停止")
 
 
 app = FastAPI(
@@ -90,6 +99,16 @@ def render_template(template_name: str, context: dict = None) -> HTMLResponse:
     context = context or {}
     html_content = template.render(**context)
     return HTMLResponse(content=html_content)
+
+
+@app.get("/health")
+async def health_check():
+    return JSONResponse({
+        "status": "ok",
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "scheduler_running": sched_instance.running,
+    })
 
 
 @app.get("/")

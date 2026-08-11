@@ -9,7 +9,6 @@ from app import crud, schemas
 from app.scheduler import full_crawl, set_crawl_progress_callback
 from app.api.login import require_auth
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()

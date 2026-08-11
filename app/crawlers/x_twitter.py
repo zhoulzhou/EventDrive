@@ -2,13 +2,12 @@ import logging
 import json
 import os
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 import tweepy
 
 from app.config import settings
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -16,7 +15,7 @@ MAX_HISTORY_IDS = 50
 history_ids: List[str] = []
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
-QUOTA_FILE = os.path.join(DATA_DIR, "x_twitter_quota.json")
+STATE_FILE = os.path.join(DATA_DIR, "x_twitter_state.json")
 
 day_count: int = 0
 day_key: str = ""
@@ -26,12 +25,13 @@ month_key: str = ""
 _client: tweepy.Client | None = None
 
 
-def _load_quota() -> None:
-    global day_count, day_key, month_count, month_key
+def _load_state() -> None:
+    global history_ids, day_count, day_key, month_count, month_key
     try:
-        if os.path.exists(QUOTA_FILE):
-            with open(QUOTA_FILE, "r", encoding="utf-8") as f:
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            history_ids = data.get("history_ids", [])
             today = datetime.now().strftime("%Y-%m-%d")
             cur_month = datetime.now().strftime("%Y-%m")
             saved_day_key = data.get("day_key", "")
@@ -41,26 +41,30 @@ def _load_quota() -> None:
             month_count = data.get("month_count", 0) if saved_month_key == cur_month else 0
             month_key = cur_month
     except Exception as e:
-        logger.warning(f"[X] 读取额度缓存失败: {e}，从零开始计数")
+        logger.warning(f"[X] 读取状态缓存失败: {e}，从零开始")
+        history_ids = []
         day_count = 0
         month_count = 0
         day_key = datetime.now().strftime("%Y-%m-%d")
         month_key = datetime.now().strftime("%Y-%m")
 
 
-def _save_quota() -> None:
+def _save_state() -> None:
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         data = {
+            "history_ids": history_ids[-MAX_HISTORY_IDS:],
             "day_key": day_key,
             "day_count": day_count,
             "month_key": month_key,
             "month_count": month_count,
         }
-        with open(QUOTA_FILE, "w", encoding="utf-8") as f:
+        tmp_file = STATE_FILE + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, STATE_FILE)
     except Exception as e:
-        logger.warning(f"[X] 保存额度缓存失败: {e}")
+        logger.warning(f"[X] 保存状态缓存失败: {e}")
 
 
 def _get_client() -> tweepy.Client:
@@ -76,7 +80,7 @@ def _check_day_reset() -> None:
     if day_key != today:
         day_key = today
         day_count = 0
-        _save_quota()
+        _save_state()
 
 
 def _check_month_reset() -> None:
@@ -85,7 +89,7 @@ def _check_month_reset() -> None:
     if month_key != cur_month:
         month_key = cur_month
         month_count = 0
-        _save_quota()
+        _save_state()
 
 
 def fetch_tweets() -> Dict[str, Any]:
@@ -115,7 +119,7 @@ def fetch_tweets() -> Dict[str, Any]:
         logger.warning(f"[X] {result['message']}")
         return result
 
-    _load_quota()
+    _load_state()
     _check_day_reset()
     _check_month_reset()
     result["day_count"] = day_count
@@ -188,26 +192,17 @@ def fetch_tweets() -> Dict[str, Any]:
         add_num = len(new_tweets)
 
         new_ids = [str(t.id) for t in new_tweets]
-        combined = history_ids + new_ids
-
-        if len(combined) > MAX_HISTORY_IDS:
-            logger.info(
-                f"[X] 历史缓存已满 ({len(combined)}/{MAX_HISTORY_IDS})，清空缓存只保留最新一批"
-            )
-            history_ids = new_ids[-MAX_HISTORY_IDS:]
-        else:
-            history_ids = combined
+        history_ids = (history_ids + new_ids)[-MAX_HISTORY_IDS:]
 
         day_count += add_num
         month_count += add_num
-        _save_quota()
+        _save_state()
 
         tweet_list: List[Dict[str, Any]] = []
         push_lines = [f"🐦 X 推文推送", f"共获取 {len(new_tweets)} 条推文", ""]
         for idx, tw in enumerate(new_tweets, 1):
-            tweet_id = int(tw.id)
             tweet_list.append({
-                "id": tweet_id,
+                "id": int(tw.id),
                 "text": tw.text,
                 "created_at": str(tw.created_at) if tw.created_at else None,
             })

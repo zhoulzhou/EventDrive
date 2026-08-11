@@ -19,6 +19,7 @@ ENV/
 .idea/
 *.swp
 *.swo
+*~
 
 # Testing
 .pytest_cache/
@@ -28,25 +29,33 @@ htmlcov/
 # Environment
 .env
 .env.local
+.env.*.local
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite3-journal
 
 # Logs
 *.log
 logs/
+nohup.out
+
+# Runtime data
+data/images/
+data/x_twitter_quota.json
+data/x_twitter_state.json
+data/history_tweet_cache.json
+*.pid
 
 # Temporary files
 *.tmp
 .DS_Store
 Thumbs.db
 
-# Test files (test 前缀的所有文件)
+# Test/debug scripts
 test_*.py
-test*.py
-test_*
 debug_*.py
 check_*.py
 minimal*.py
@@ -61,4 +70,3 @@ run_crawl*.py
 check_news.py
 sqlite_query.py
 api_response.json
-"\351\234\200\346\261\202\346\226\207\346\241\243.md"

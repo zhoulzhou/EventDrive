@@ -113,4 +113,4 @@ echo -e "  ${YELLOW}Ctrl+C 停止所有服务${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
 
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000

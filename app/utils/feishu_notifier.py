@@ -5,16 +5,73 @@ import hashlib
 import httpx
 import logging
 import asyncio
-from typing import List, Optional
-from threading import Thread, Lock
+from typing import List, Optional, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-LAST_SEND_TIME = 0.0
-PUSH_COOLDOWN = 30
-_pending_queue: List[tuple] = []
-_draining = False
+PUSH_COOLDOWN = 2
+_queue: Optional[asyncio.Queue] = None
+_worker_task: Optional[asyncio.Task] = None
 _lock = asyncio.Lock()
+_last_send_time: float = 0.0
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=10)
+    return _http_client
+
+
+async def _queue_worker():
+    global _last_send_time
+    while True:
+        try:
+            item = await _queue.get()
+            if item is None:
+                _queue.task_done()
+                break
+
+            webhook_url, secret, keyword, content = item
+
+            now = time.time()
+            wait = _last_send_time + PUSH_COOLDOWN - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+
+            await _do_send(webhook_url, secret, keyword, content)
+            _last_send_time = time.time()
+            _queue.task_done()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"飞书队列消费异常: {e}", exc_info=True)
+            try:
+                _queue.task_done()
+            except Exception:
+                pass
+
+
+def _ensure_worker():
+    global _queue, _worker_task
+    if _queue is None:
+        _queue = asyncio.Queue()
+    if _worker_task is None or _worker_task.done():
+        _worker_task = asyncio.create_task(_queue_worker())
+
+
+async def shutdown_notifier():
+    global _queue, _worker_task, _http_client
+    if _queue is not None:
+        await _queue.put(None)
+    if _worker_task is not None:
+        try:
+            await asyncio.wait_for(_worker_task, timeout=5)
+        except Exception:
+            _worker_task.cancel()
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
 
 
 class FeishuNotifier:
@@ -23,136 +80,67 @@ class FeishuNotifier:
         self.secret = secret
         self.keyword = keyword
 
-    def _generate_sign(self) -> str:
+    def _generate_sign(self) -> Tuple[str, str]:
         timestamp = str(int(time.time()))
-        secret_enc = self.secret.encode('utf-8')
         string_to_sign = f'{timestamp}\n{self.secret}'
-        string_to_sign_enc = string_to_sign.encode('utf-8')
-        logger.info(f"签名计算: timestamp={timestamp}, string_to_sign='{string_to_sign}', secret_len={len(self.secret)}")
-        hmac_code = hmac.new(secret_enc, string_to_sign_enc, digestmod=hashlib.sha256).digest()
+        hmac_code = hmac.new(
+            self.secret.encode('utf-8'),
+            string_to_sign.encode('utf-8'),
+            digestmod=hashlib.sha256
+        ).digest()
         sign = base64.b64encode(hmac_code).decode('utf-8')
-        logger.info(f"签名结果: sign={sign}")
         return timestamp, sign
 
-    def send_message(self, content: str) -> bool:
-        global LAST_SEND_TIME, _pending_queue
-        now = time.time()
-
-        if now - LAST_SEND_TIME < PUSH_COOLDOWN:
-            _pending_queue.append((self.webhook_url, self.secret, self.keyword, content))
-            wait_time = int(PUSH_COOLDOWN - (now - LAST_SEND_TIME))
-            logger.warning(f"飞书推送冷却中，任务已缓存({len(_pending_queue)}条待发)，还需等待 {wait_time} 秒")
-            self._start_drain_timer()
-            return True
-
-        logger.info(f"飞书推送检查: 关键词='{self.keyword}', 内容长度={len(content)}")
-
+    def _build_payload(self, content: str) -> Tuple[Dict[str, Any], Dict[str, str]]:
         if self.keyword and self.keyword not in content:
-            logger.info(f"消息中不包含关键词 '{self.keyword}'，跳过推送")
-            return False
+            raise ValueError(f"消息中不包含关键词 '{self.keyword}'")
 
         payload = {
             "msg_type": "text",
-            "content": {
-                "text": content
-            }
+            "content": {"text": content}
         }
-
+        params: Dict[str, str] = {}
         if self.secret:
             timestamp, sign = self._generate_sign()
             params = {"timestamp": timestamp, "sign": sign}
-            logger.info(f"飞书推送请求(有签名): url={self.webhook_url}, timestamp={timestamp}, sign={sign}")
-        else:
-            params = {}
-            logger.info(f"飞书推送请求(无签名): url={self.webhook_url}")
+        return payload, params
 
-        logger.debug(f"飞书推送 payload: {payload}")
+    async def send_message(self, content: str) -> bool:
+        _ensure_worker()
+        try:
+            payload, params = self._build_payload(content)
+        except ValueError as e:
+            logger.info(str(e))
+            return False
+
+        async with _lock:
+            global _last_send_time
+            now = time.time()
+            if _last_send_time > 0 and now - _last_send_time < PUSH_COOLDOWN:
+                await _queue.put((self.webhook_url, self.secret, self.keyword, content))
+                logger.info(f"飞书推送冷却中，任务已入队列(队列深度: {_queue.qsize()})")
+                return True
 
         try:
-            with httpx.Client(timeout=10) as client:
-                response = client.post(self.webhook_url, json=payload, params=params)
-                result = response.json()
-                logger.info(f"飞书推送响应: code={result.get('code')}, msg={result.get('msg')}, 状态码={response.status_code}")
-                if result.get("code") == 0:
-                    LAST_SEND_TIME = time.time()
-                    logger.info("飞书推送成功")
-                    return True
-                else:
-                    logger.warning(f"飞书推送失败: {result.get('msg')}")
-                    return False
+            client = _get_http_client()
+            response = await client.post(self.webhook_url, json=payload, params=params)
+            result = response.json()
+            if result.get("code") == 0:
+                async with _lock:
+                    _last_send_time = time.time()
+                logger.debug("飞书推送成功")
+                return True
+            else:
+                logger.warning(f"飞书推送失败: code={result.get('code')}, msg={result.get('msg')}")
+                return False
         except Exception as e:
-            logger.error(f"飞书推送异常: {e}", exc_info=True)
+            logger.error(f"飞书推送异常: {e}")
             return False
 
-    def _start_drain_timer(self):
-        global _draining
-        if _draining:
-            return
-        _draining = True
-
-        def drain_later():
-            time.sleep(PUSH_COOLDOWN)
-            self._drain_queue()
-            global _draining
-            _draining = False
-
-        t = Thread(target=drain_later, daemon=True)
-        t.start()
-
-    def _drain_queue(self):
-        global LAST_SEND_TIME, _pending_queue
-        if not _pending_queue:
-            return
-
-        now = time.time()
-        if now - LAST_SEND_TIME < PUSH_COOLDOWN:
-            wait_time = PUSH_COOLDOWN - (now - LAST_SEND_TIME)
-            time.sleep(wait_time)
-
-        while _pending_queue:
-            webhook_url, secret, keyword, content = _pending_queue.pop(0)
-            LAST_SEND_TIME = time.time()
-            logger.info(f"发送缓存任务到 {webhook_url}: {content[:50]}...")
-            self._do_send(webhook_url, secret, keyword, content)
-
-    def _do_send(self, webhook_url: str, secret: str, keyword: str, content: str) -> bool:
-        if keyword and keyword not in content:
-            logger.info(f"消息中不包含关键词 '{keyword}'，跳过")
-            return False
-
-        payload = {
-            "msg_type": "text",
-            "content": {
-                "text": content
-            }
-        }
-
-        if secret:
-            timestamp, sign = self._generate_sign()
-            params = {"timestamp": timestamp, "sign": sign}
-        else:
-            params = {}
-
-        try:
-            with httpx.Client(timeout=10) as client:
-                response = client.post(webhook_url, json=payload, params=params)
-                result = response.json()
-                if result.get("code") == 0:
-                    logger.info("缓存任务推送成功")
-                    return True
-                else:
-                    logger.warning(f"缓存任务推送失败: {result.get('msg')}")
-                    return False
-        except Exception as e:
-            logger.error(f"缓存任务推送异常: {e}")
-            return False
-
-    def send_news_notification(self, news_list: List[dict], source: str, prefix: str = None) -> bool:
+    async def send_news_notification(self, news_list: List[dict], source: str, prefix: str = None) -> bool:
         if not news_list:
             logger.info(f"飞书通知: {source} 没有新闻，跳过")
             return False
-
-        logger.info(f"飞书通知: {source} 准备发送 {len(news_list)} 条新闻")
 
         header = f"【{self.keyword}】📰 {source}" if not prefix else f"{prefix}📰 {source}"
         content_lines = [
@@ -174,20 +162,15 @@ class FeishuNotifier:
             content_lines.append("")
 
         content = "\n".join(content_lines)
-        logger.info(f"飞书通知内容预览: {content[:500]}...")
-        return self.send_message(content)
+        return await self.send_message(content)
 
-    def send_no_news_notification(self) -> bool:
+    async def send_no_news_notification(self) -> bool:
         from datetime import datetime
         now = datetime.now().strftime("%H:%M")
         content = f"【{self.keyword}】📰 {now} 定时推送\n\n暂无新新闻"
-        logger.info(f"飞书无新新闻通知: {content}")
-        return self.send_message(content)
+        return await self.send_message(content)
 
-    def send_analysis(self, keyword: str, news_title: str, analysis_result: str, source: str = "") -> bool:
-        """
-        发送大模型分析结果到飞书
-        """
+    async def send_analysis(self, keyword: str, news_title: str, analysis_result: str, source: str = "") -> bool:
         content_lines = [
             f"【{keyword}】📰 新闻深度分析",
             f"来源: {source}" if source else "",
@@ -197,26 +180,69 @@ class FeishuNotifier:
             analysis_result
         ]
         content = "\n".join([line for line in content_lines if line])
-        return self.send_message(content)
+        return await self.send_message(content)
+
+    def send_message_sync(self, content: str) -> bool:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(self.send_message(content), loop)
+                return future.result(timeout=30)
+            else:
+                return loop.run_until_complete(self.send_message(content))
+        except RuntimeError:
+            return asyncio.run(self.send_message(content))
+
+    def send_news_notification_sync(self, news_list: List[dict], source: str, prefix: str = None) -> bool:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(
+                    self.send_news_notification(news_list, source, prefix), loop
+                )
+                return future.result(timeout=30)
+            else:
+                return loop.run_until_complete(self.send_news_notification(news_list, source, prefix))
+        except RuntimeError:
+            return asyncio.run(self.send_news_notification(news_list, source, prefix))
 
 
-def send_analysis_to_feishu(news_title: str, analysis_result: str, source: str = "", analyzer_type: str = "kb") -> bool:
-    """
-    统一发送分析结果到飞书
-    analyzer_type: 'kb' = 豆包分析, 'openrouter' = OpenRouter分析
-    """
-    if analyzer_type == "openrouter":
-        notifier = _openrouter_feishu_notifier
-    else:
-        notifier = _kb_feishu_notifier
-
-    if not notifier:
-        logger.warning(f"分析飞书未初始化({analyzer_type})，跳过推送")
+async def _do_send(webhook_url: str, secret: str, keyword: str, content: str) -> bool:
+    if keyword and keyword not in content:
+        logger.info(f"消息中不包含关键词 '{keyword}'，跳过")
         return False
-    return notifier.send_analysis("Talk", news_title, analysis_result, source)
+
+    payload = {
+        "msg_type": "text",
+        "content": {"text": content}
+    }
+    params: Dict[str, str] = {}
+    if secret:
+        timestamp = str(int(time.time()))
+        string_to_sign = f'{timestamp}\n{secret}'
+        hmac_code = hmac.new(
+            secret.encode('utf-8'),
+            string_to_sign.encode('utf-8'),
+            digestmod=hashlib.sha256
+        ).digest()
+        sign = base64.b64encode(hmac_code).decode('utf-8')
+        params = {"timestamp": timestamp, "sign": sign}
+
+    try:
+        client = _get_http_client()
+        response = await client.post(webhook_url, json=payload, params=params)
+        result = response.json()
+        if result.get("code") == 0:
+            logger.debug("飞书队列推送成功")
+            return True
+        else:
+            logger.warning(f"飞书队列推送失败: code={result.get('code')}, msg={result.get('msg')}")
+            return False
+    except Exception as e:
+        logger.error(f"飞书队列推送异常: {e}")
+        return False
 
 
-_feishu_notifier: Optional[FeishuNotifier] = None
 _nyt_feishu_notifier: Optional[FeishuNotifier] = None
 _bbc_feishu_notifier: Optional[FeishuNotifier] = None
 _dfcf_feishu_notifier: Optional[FeishuNotifier] = None
@@ -231,55 +257,55 @@ _x_feishu_notifier: Optional[FeishuNotifier] = None
 def init_nyt_feishu_notifier(webhook_url: str, secret: str, keyword: str = "HOT"):
     global _nyt_feishu_notifier
     _nyt_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"纽约时报飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"纽约时报飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_bbc_feishu_notifier(webhook_url: str, secret: str, keyword: str = "HOT"):
     global _bbc_feishu_notifier
     _bbc_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"BBC飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"BBC飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_dfcf_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
     global _dfcf_feishu_notifier
     _dfcf_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"东方财富(dfcf)飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"东方财富(dfcf)飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_index_feishu_notifier(webhook_url: str, secret: str, keyword: str = "指数"):
     global _index_feishu_notifier
     _index_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"指数飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"指数飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_cls_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
     global _cls_feishu_notifier
     _cls_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"财联社飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"财联社飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_kb_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"):
     global _kb_feishu_notifier
     _kb_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"豆包分析飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"豆包分析飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_openrouter_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"):
     global _openrouter_feishu_notifier
     _openrouter_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"OpenRouter分析飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"OpenRouter分析飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_deepseek_feishu_notifier(webhook_url: str, secret: str, keyword: str = "深度分析"):
     global _deepseek_feishu_notifier
     _deepseek_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"DeepSeek分析飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"DeepSeek分析飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_x_feishu_notifier(webhook_url: str, secret: str, keyword: str = "X推文"):
     global _x_feishu_notifier
     _x_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"X推文飞书推送已初始化，关键词: '{keyword}', webhook_url: {webhook_url}")
+    logger.info(f"X推文飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_all_notifiers(
@@ -302,9 +328,6 @@ def init_all_notifiers(
     x_url: str = "",
     x_keyword: str = "X推文",
 ):
-    """
-    统一初始化所有飞书推送实例，新增飞书配置都在这里加
-    """
     if nyt_url:
         init_nyt_feishu_notifier(nyt_url, "", nyt_keyword)
     if bbc_url:
@@ -391,7 +414,7 @@ def x_feishu_notify(tweets: List[dict]) -> bool:
         content_lines.append("")
 
     content = "\n".join(content_lines)
-    return notifier.send_message(content)
+    return notifier.send_message_sync(content)
 
 
 def x_feishu_status_notify(status_text: str) -> bool:
@@ -400,54 +423,34 @@ def x_feishu_status_notify(status_text: str) -> bool:
         logger.warning("X推文飞书 notifier 未初始化，跳过状态推送")
         return False
     content = f"【{notifier.keyword}】🐦 X 推文状态\n\n{status_text}"
-    return notifier.send_message(content)
-
-
-def send_with_cooldown(content: str) -> bool:
-    """
-    统一推送入口，带30秒冷却限制
-    所有飞书推送都走这个函数
-    """
-    global _feishu_notifier, LAST_SEND_TIME
-    notifier = _feishu_notifier
-    if not notifier:
-        logger.warning("飞书 notifier 未初始化，跳过推送")
-        return False
-    return notifier.send_message(content)
-
-
-async def notify_index_alert(alert_content: str) -> bool:
-    notifier = get_index_feishu_notifier()
-    if notifier:
-        return notifier.send_message(alert_content)
-    return False
+    return notifier.send_message_sync(content)
 
 
 def dfcf_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_dfcf_feishu_notifier()
     if notifier:
-        return notifier.send_news_notification(news_list, source)
+        return notifier.send_news_notification_sync(news_list, source)
     return False
 
 
 def cls_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_cls_feishu_notifier()
     if notifier:
-        return notifier.send_news_notification(news_list, source)
+        return notifier.send_news_notification_sync(news_list, source)
     return False
 
 
 def nyt_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_nyt_feishu_notifier()
     if notifier:
-        return notifier.send_news_notification(news_list, source)
+        return notifier.send_news_notification_sync(news_list, source)
     return False
 
 
 def bbc_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_bbc_feishu_notifier()
     if notifier:
-        return notifier.send_news_notification(news_list, source)
+        return notifier.send_news_notification_sync(news_list, source)
     return False
 
 
@@ -463,7 +466,7 @@ def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> 
             analysis_result
         ]
         content = "\n".join(content_lines)
-        return notifier.send_message(content)
+        return notifier.send_message_sync(content)
     return False
 
 
@@ -483,7 +486,7 @@ def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str,
             analysis_result
         ])
         content = "\n".join(content_lines)
-        return notifier.send_message(content)
+        return notifier.send_message_sync(content)
     return False
 
 
@@ -499,12 +502,16 @@ def deepseek_feishu_notify(news_title: str, analysis_result: str, source: str) -
             analysis_result
         ]
         content = "\n".join(content_lines)
-        return notifier.send_message(content)
+        return notifier.send_message_sync(content)
     return False
 
 
-async def notify_no_news() -> bool:
-    notifier = get_feishu_notifier()
+def notify_index_alert_sync(alert_content: str) -> bool:
+    notifier = get_index_feishu_notifier()
     if notifier:
-        return notifier.send_no_news_notification()
+        return notifier.send_message_sync(alert_content)
     return False
+
+
+async def notify_index_alert(alert_content: str) -> bool:
+    return notify_index_alert_sync(alert_content)
