@@ -1,5 +1,5 @@
 import logging
-import requests
+import httpx
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,14 @@ class DeepSeekAnalyzer:
         self.base_url = "https://api.deepseek.com/v1/chat/completions"
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
+        self._client: Optional[httpx.AsyncClient] = None
 
-    def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=45, trust_env=False)
+        return self._client
+
+    async def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
         prompt = f"""你是专业金融新闻分析师，请对以下新闻进行深度、结构化分析，严格按以下4个维度输出：
 
 【新闻标题】
@@ -77,10 +83,8 @@ class DeepSeekAnalyzer:
 """
 
         try:
-            session = requests.Session()
-            session.trust_env = False
-
-            resp = session.post(
+            client = self._get_client()
+            resp = await client.post(
                 self.base_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
@@ -95,8 +99,7 @@ class DeepSeekAnalyzer:
                     "temperature": 0.3,
                     "max_tokens": 1024,
                     "stream": False
-                },
-                timeout=45
+                }
             )
 
             if resp.status_code == 200:
@@ -115,9 +118,9 @@ class DeepSeekAnalyzer:
             logger.error(f"新闻分析出错: {str(e)}", exc_info=True)
             return None
 
-    def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
+    async def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
         logger.info(f"开始分析新闻: {news_title}")
-        analysis_result = self.analyze_news(news_content, news_title)
+        analysis_result = await self.analyze_news(news_content, news_title)
         return analysis_result
 
 

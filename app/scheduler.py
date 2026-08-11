@@ -10,7 +10,6 @@ from app.config import settings
 from app.database import SessionLocal
 from app import crud, schemas
 from app.crawlers import (
-    CLSDepthCrawler,
     EastmoneyDepthCrawler,
     NYTDepthCrawler,
     BBCCrawler,
@@ -19,9 +18,9 @@ from app.crawlers import (
 )
 from app.crawlers.x_twitter import fetch_tweets
 from app.utils.feishu_notifier import (
-    dfcf_feishu_notify, cls_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
+    dfcf_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
     doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify,
-    notify_index_alert, x_feishu_status_notify
+    notify_index_alert, x_feishu_status_notify, x_feishu_notify
 )
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.openrouter_analyzer import init_openrouter_analyzer, get_openrouter_analyzer
@@ -77,7 +76,7 @@ async def crawl_single_source(crawler_class) -> Tuple[int, List[Dict[str, Any]]]
     try:
         crawler = crawler_class()
         source_name = crawler.source_name
-        log_crawl(f"📰 开始抓取: {source_name}")
+        log_crawl(f"开始抓取: {source_name}")
 
         news_items = await crawler.crawl()
         log_crawl(f"[{source_name}] 获取到 {len(news_items)} 条新闻，准备保存...")
@@ -98,9 +97,9 @@ async def crawl_single_source(crawler_class) -> Tuple[int, List[Dict[str, Any]]]
                     "content": news_item.content,
                     "news_type": getattr(news_item, 'news_type', None)
                 })
-                log_crawl(f"[{source_name}] ✅ 保存成功 (累计: {saved_count})")
+                log_crawl(f"[{source_name}] 保存成功 (累计: {saved_count})")
             else:
-                log_crawl(f"[{source_name}] ⏭️ 已存在，跳过")
+                log_crawl(f"[{source_name}] 已存在，跳过")
 
         log_entry = schemas.CrawlLogCreate(
             source=crawler.source_name,
@@ -111,11 +110,11 @@ async def crawl_single_source(crawler_class) -> Tuple[int, List[Dict[str, Any]]]
         )
         await _db_execute(crud.create_crawl_log, db, log_entry)
 
-        log_crawl(f"🏁 {source_name} 抓取完成: 保存 {saved_count} 条")
+        log_crawl(f"{source_name} 抓取完成: 保存 {saved_count} 条")
         return saved_count, saved_news
 
     except Exception as e:
-        log_crawl(f"❌ {source_name} 抓取出错: {str(e)}")
+        log_crawl(f"{source_name} 抓取出错: {str(e)}")
         logger.error(f"!!! {source_name} 抓取出错: {e}", exc_info=True)
         return 0, []
     finally:
@@ -130,7 +129,7 @@ async def crawl_with_semaphore(sem: asyncio.Semaphore, crawler_class) -> Tuple[s
 
 async def crawl_indices():
     log_crawl("=" * 50)
-    log_crawl("📊 开始执行指数监控任务...")
+    log_crawl("开始执行指数监控任务...")
     log_crawl("=" * 50)
 
     crawler = None
@@ -139,20 +138,20 @@ async def crawl_indices():
         alert_message = await crawler.crawl()
 
         if alert_message and settings.INDEX_FEISHU_WEBHOOK_URL:
-            log_crawl("📤 正在发送指数监控通知...")
-            result = await asyncio.to_thread(notify_index_alert, alert_message)
-            log_crawl(f"📤 指数监控通知发送结果: {result}")
+            log_crawl("正在发送指数监控通知...")
+            result = await notify_index_alert(alert_message)
+            log_crawl(f"指数监控通知发送结果: {result}")
         elif alert_message:
-            log_crawl(f"📊 指数监控结果:\n{alert_message}")
+            log_crawl(f"指数监控结果:\n{alert_message}")
         else:
-            log_crawl("⚠️ 未获取到指数数据")
+            log_crawl("未获取到指数数据")
 
         log_crawl("=" * 50)
-        log_crawl("✅ 指数监控任务完成")
+        log_crawl("指数监控任务完成")
         log_crawl("=" * 50)
 
     except Exception as e:
-        log_crawl(f"❌ 指数监控任务出错: {str(e)}")
+        log_crawl(f"指数监控任务出错: {str(e)}")
         logger.error(f"!!! 指数监控任务出错: {e}", exc_info=True)
     finally:
         if crawler:
@@ -161,23 +160,23 @@ async def crawl_indices():
 
 async def full_crawl():
     log_crawl("=" * 50)
-    log_crawl("🚀 开始执行新闻抓取任务...")
+    log_crawl("开始执行新闻抓取任务...")
     log_crawl("=" * 50)
     start_time = datetime.now()
 
     if settings.KB_API_KEY:
         try:
             init_doubao_analyzer(api_key=settings.KB_API_KEY, model=settings.KB_MODEL_ID, region=settings.KB_REGION)
-            log_crawl("✅ 豆包大模型分析器初始化完成")
+            log_crawl("豆包大模型分析器初始化完成")
         except Exception as e:
-            logger.error(f"❌ 豆包分析器初始化失败: {e}", exc_info=True)
+            logger.error(f"豆包分析器初始化失败: {e}", exc_info=True)
 
     if settings.OPENROUTER_API_KEY:
         try:
             init_openrouter_analyzer(api_key=settings.OPENROUTER_API_KEY)
-            log_crawl("✅ OpenRouter大模型分析器初始化完成")
+            log_crawl("OpenRouter大模型分析器初始化完成")
         except Exception as e:
-            logger.error(f"❌ OpenRouter分析器初始化失败: {e}", exc_info=True)
+            logger.error(f"OpenRouter分析器初始化失败: {e}", exc_info=True)
 
     if settings.DEEPSEEK_API_KEY:
         try:
@@ -187,18 +186,18 @@ async def full_crawl():
                 feishu_webhook_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL,
                 keyword=settings.DEEPSEEK_KEYWORD
             )
-            log_crawl("✅ DeepSeek大模型分析器初始化完成")
+            log_crawl("DeepSeek大模型分析器初始化完成")
         except Exception as e:
-            logger.error(f"❌ DeepSeek分析器初始化失败: {e}", exc_info=True)
+            logger.error(f"DeepSeek分析器初始化失败: {e}", exc_info=True)
 
     doubao_analyzer = get_doubao_analyzer()
     openrouter_analyzer = get_openrouter_analyzer()
     deepseek_analyzer = get_deepseek_analyzer()
 
-    news_sources = [EastmoneyDepthCrawler, CLSDepthCrawler, NYTDepthCrawler, BBCCrawler]
+    news_sources = [EastmoneyDepthCrawler, NYTDepthCrawler, BBCCrawler]
     sem = asyncio.Semaphore(CONCURRENT_CRAWLERS)
 
-    log_crawl(f"🚀 并发抓取 {len(news_sources)} 个新闻源 (并发数: {CONCURRENT_CRAWLERS})")
+    log_crawl(f"并发抓取 {len(news_sources)} 个新闻源 (并发数: {CONCURRENT_CRAWLERS})")
     tasks = [crawl_with_semaphore(sem, cls) for cls in news_sources]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -220,72 +219,69 @@ async def full_crawl():
             title = news.get('title', '')
             summary = news.get('summary', '')
             source = news.get('source', label)
-            log_crawl(f"🔍 [{label}] 正在分析: {title[:50]}...")
+            log_crawl(f"[{label}] 正在分析: {title[:50]}...")
             try:
-                result = await asyncio.to_thread(analyzer.analyze_only, title, summary, source)
+                result = await analyzer.analyze_only(title, summary, source)
                 if result:
                     if model_name:
-                        await asyncio.to_thread(notifier_func, title, result, source, model_name)
+                        await notifier_func(title, result, source, model_name)
                     else:
-                        await asyncio.to_thread(notifier_func, title, result, source)
-                    log_crawl(f"✅ [{label}] 分析并推送成功")
+                        await notifier_func(title, result, source)
+                    log_crawl(f"[{label}] 分析并推送成功")
                     total_analyzed += 1
                 else:
-                    log_crawl(f"❌ [{label}] 分析失败")
+                    log_crawl(f"[{label}] 分析失败")
             except Exception as e:
                 logger.error(f"[{label}] 分析异常: {e}", exc_info=True)
-                log_crawl(f"❌ [{label}] 分析异常: {e}")
+                log_crawl(f"[{label}] 分析异常: {e}")
             await asyncio.sleep(2)
 
     total_analyzed = 0
 
     dfcf_count, dfcf_news = source_results.get("EastmoneyDepthCrawler", (0, []))
     if dfcf_news:
-        await asyncio.to_thread(dfcf_feishu_notify, dfcf_news[:5], "东方财富")
+        await dfcf_feishu_notify(dfcf_news[:5], "东方财富")
         await _analyze_and_notify(dfcf_news, deepseek_analyzer, deepseek_feishu_notify, "DeepSeek")
         await _analyze_and_notify(dfcf_news, doubao_analyzer, doubao_feishu_notify, "豆包")
     else:
-        log_crawl("📭 东方财富没有新新闻")
-
-    cls_count, cls_news = source_results.get("CLSDepthCrawler", (0, []))
-    if cls_news:
-        await asyncio.to_thread(cls_feishu_notify, cls_news[:5], "财联社")
-    else:
-        log_crawl("📭 财联社没有新新闻")
+        log_crawl("东方财富没有新新闻")
 
     nyt_count, nyt_news = source_results.get("NYTDepthCrawler", (0, []))
     if nyt_news:
-        await asyncio.to_thread(nyt_feishu_notify, nyt_news[:5], "纽约时报")
+        await nyt_feishu_notify(nyt_news[:5], "纽约时报")
         if openrouter_analyzer:
             await _analyze_and_notify(
                 nyt_news, openrouter_analyzer, openrouter_feishu_notify,
                 "OpenRouter", openrouter_analyzer.last_used_model
             )
     else:
-        log_crawl("📭 纽约时报没有新新闻")
+        log_crawl("纽约时报没有新新闻")
 
     bbc_count, bbc_news = source_results.get("BBCCrawler", (0, []))
     if bbc_news:
-        await asyncio.to_thread(bbc_feishu_notify, bbc_news[:5], "BBC")
+        await bbc_feishu_notify(bbc_news[:5], "BBC")
     else:
-        log_crawl("📭 BBC没有新新闻")
+        log_crawl("BBC没有新新闻")
 
     log_crawl("=" * 50)
-    log_crawl("🐦 X平台推文抓取")
+    log_crawl("X平台推文抓取")
     log_crawl("=" * 50)
     if settings.X_B_T and settings.X_LIST_ID:
         x_result = await asyncio.to_thread(fetch_tweets)
         x_msg = x_result.get("message", "")
         x_status = x_result.get("status", "error")
+        x_tweets = x_result.get("tweets", [])
         x_push = x_result.get("push_message")
         log_crawl(f"[X] {x_msg} (状态: {x_status})")
         if x_push:
-            await asyncio.to_thread(x_feishu_status_notify, x_push)
+            await x_feishu_status_notify(x_push)
+        if x_tweets:
+            await x_feishu_notify(x_tweets)
     else:
-        log_crawl("⚠️ X平台未配置，跳过")
+        log_crawl("X平台未配置，跳过")
 
     log_crawl("=" * 50)
-    log_crawl(f"✅ 所有任务完成! 保存: {total_saved} 条, 分析推送: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
+    log_crawl(f"所有任务完成! 保存: {total_saved} 条, 分析推送: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
     log_crawl("=" * 50)
 
 

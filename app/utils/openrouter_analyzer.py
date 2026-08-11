@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +17,12 @@ class OpenRouterAnalyzer:
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
         self.last_used_model = ""
-        self.client = OpenAI(
+        self.client = AsyncOpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key
         )
 
-    def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
+    async def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
         prompt = f"""You are a professional financial news analyst. Provide a deep, structured analysis of the following news, strictly following the 4 dimensions below:
 
 【News Title】
@@ -80,7 +80,7 @@ class OpenRouterAnalyzer:
 """
 
         try:
-            resp = self.client.chat.completions.create(
+            resp = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
@@ -100,9 +100,9 @@ class OpenRouterAnalyzer:
             logger.error(f"OpenRouter分析出错: {str(e)}", exc_info=True)
             return None
 
-    def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
+    async def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
         logger.info(f"开始分析新闻: {news_title}")
-        analysis_result = self.analyze_news(news_content, news_title)
+        analysis_result = await self.analyze_news(news_content, news_title)
         return analysis_result
 
 

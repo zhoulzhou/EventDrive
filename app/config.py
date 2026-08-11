@@ -51,9 +51,6 @@ class Settings:
     DFCF_FEISHU_WEBHOOK_URL: str = os.getenv("DFCF_FEISHU_WEBHOOK_URL", "")
     DFCF_FEISHU_KEYWORD: str = os.getenv("DFCF_FEISHU_KEYWORD", "头条")
 
-    CLS_FEISHU_WEBHOOK_URL: str = os.getenv("CLS_FEISHU_WEBHOOK_URL", "")
-    CLS_FEISHU_KEYWORD: str = os.getenv("CLS_FEISHU_KEYWORD", "头条")
-
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     OPENROUTER_FEISHU_WEBHOOK_URL: str = os.getenv("OPENROUTER_FEISHU_WEBHOOK_URL", "")
     OPENROUTER_KEYWORD: str = os.getenv("OPENROUTER_KEYWORD", "Talk")

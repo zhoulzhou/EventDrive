@@ -390,7 +390,6 @@ _nyt_feishu_notifier: Optional[FeishuNotifier] = None
 _bbc_feishu_notifier: Optional[FeishuNotifier] = None
 _dfcf_feishu_notifier: Optional[FeishuNotifier] = None
 _index_feishu_notifier: Optional[FeishuNotifier] = None
-_cls_feishu_notifier: Optional[FeishuNotifier] = None
 _kb_feishu_notifier: Optional[FeishuNotifier] = None
 _openrouter_feishu_notifier: Optional[FeishuNotifier] = None
 _deepseek_feishu_notifier: Optional[FeishuNotifier] = None
@@ -419,12 +418,6 @@ def init_index_feishu_notifier(webhook_url: str, secret: str, keyword: str = "�
     global _index_feishu_notifier
     _index_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
     logger.info(f"指数飞书推送已初始化，关键词: '{keyword}'")
-
-
-def init_cls_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
-    global _cls_feishu_notifier
-    _cls_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"财联社飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_kb_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"):
@@ -458,8 +451,6 @@ def init_all_notifiers(
     bbc_keyword: str = "HOT",
     dfcf_url: str = "",
     dfcf_keyword: str = "头条",
-    cls_url: str = "",
-    cls_keyword: str = "头条",
     index_url: str = "",
     index_keyword: str = "指数",
     kb_url: str = "",
@@ -477,8 +468,6 @@ def init_all_notifiers(
         init_bbc_feishu_notifier(bbc_url, "", bbc_keyword)
     if dfcf_url:
         init_dfcf_feishu_notifier(dfcf_url, "", dfcf_keyword)
-    if cls_url:
-        init_cls_feishu_notifier(cls_url, "", cls_keyword)
     if index_url:
         init_index_feishu_notifier(index_url, "", index_keyword)
     if kb_url:
@@ -507,10 +496,6 @@ def get_index_feishu_notifier() -> Optional[FeishuNotifier]:
     return _index_feishu_notifier
 
 
-def get_cls_feishu_notifier() -> Optional[FeishuNotifier]:
-    return _cls_feishu_notifier
-
-
 def get_kb_feishu_notifier() -> Optional[FeishuNotifier]:
     return _kb_feishu_notifier
 
@@ -527,7 +512,7 @@ def get_x_feishu_notifier() -> Optional[FeishuNotifier]:
     return _x_feishu_notifier
 
 
-def x_feishu_notify(tweets: List[dict]) -> bool:
+async def x_feishu_notify(tweets: List[dict]) -> bool:
     notifier = get_x_feishu_notifier()
     if not notifier:
         logger.warning("X推文飞书 notifier 未初始化，跳过推送")
@@ -557,47 +542,40 @@ def x_feishu_notify(tweets: List[dict]) -> bool:
         content_lines.append("")
 
     content = "\n".join(content_lines)
-    return notifier.send_message_sync(content)
+    return await notifier.send_message(content)
 
 
-def x_feishu_status_notify(status_text: str) -> bool:
+async def x_feishu_status_notify(status_text: str) -> bool:
     notifier = get_x_feishu_notifier()
     if not notifier:
         logger.warning("X推文飞书 notifier 未初始化，跳过状态推送")
         return False
     content = f"【{notifier.keyword}】 X 推文状态\n\n{status_text}"
-    return notifier.send_message_sync(content)
+    return await notifier.send_message(content)
 
 
-def dfcf_feishu_notify(news_list: List[dict], source: str) -> bool:
+async def dfcf_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_dfcf_feishu_notifier()
     if notifier:
-        return notifier.send_news_notification_sync(news_list, source)
+        return await notifier.send_news_notification(news_list, source)
     return False
 
 
-def cls_feishu_notify(news_list: List[dict], source: str) -> bool:
-    notifier = get_cls_feishu_notifier()
-    if notifier:
-        return notifier.send_news_notification_sync(news_list, source)
-    return False
-
-
-def nyt_feishu_notify(news_list: List[dict], source: str) -> bool:
+async def nyt_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_nyt_feishu_notifier()
     if notifier:
-        return notifier.send_news_notification_sync(news_list, source)
+        return await notifier.send_news_notification(news_list, source)
     return False
 
 
-def bbc_feishu_notify(news_list: List[dict], source: str) -> bool:
+async def bbc_feishu_notify(news_list: List[dict], source: str) -> bool:
     notifier = get_bbc_feishu_notifier()
     if notifier:
-        return notifier.send_news_notification_sync(news_list, source)
+        return await notifier.send_news_notification(news_list, source)
     return False
 
 
-def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
+async def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
     notifier = get_kb_feishu_notifier()
     if notifier:
         content_lines = [
@@ -609,11 +587,11 @@ def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> 
             analysis_result
         ]
         content = "\n".join(content_lines)
-        return notifier.send_message_sync(content)
+        return await notifier.send_message(content)
     return False
 
 
-def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str, model: str = "") -> bool:
+async def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str, model: str = "") -> bool:
     notifier = get_openrouter_feishu_notifier()
     if notifier:
         content_lines = [
@@ -629,11 +607,11 @@ def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str,
             analysis_result
         ])
         content = "\n".join(content_lines)
-        return notifier.send_message_sync(content)
+        return await notifier.send_message(content)
     return False
 
 
-def deepseek_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
+async def deepseek_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
     notifier = get_deepseek_feishu_notifier()
     if notifier:
         content_lines = [
@@ -645,14 +623,7 @@ def deepseek_feishu_notify(news_title: str, analysis_result: str, source: str) -
             analysis_result
         ]
         content = "\n".join(content_lines)
-        return notifier.send_message_sync(content)
-    return False
-
-
-def notify_index_alert_sync(alert_content: str) -> bool:
-    notifier = get_index_feishu_notifier()
-    if notifier:
-        return notifier.send_message_sync(alert_content)
+        return await notifier.send_message(content)
     return False
 
 

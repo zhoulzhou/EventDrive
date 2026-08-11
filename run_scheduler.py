@@ -33,8 +33,6 @@ def main():
         bbc_keyword=settings.BBC_FEISHU_KEYWORD,
         dfcf_url=settings.DFCF_FEISHU_WEBHOOK_URL or "",
         dfcf_keyword=settings.DFCF_FEISHU_KEYWORD,
-        cls_url=settings.CLS_FEISHU_WEBHOOK_URL or "",
-        cls_keyword=settings.CLS_FEISHU_KEYWORD,
         index_url=settings.INDEX_FEISHU_WEBHOOK_URL or "",
         index_keyword=settings.INDEX_KEYWORD,
         kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",

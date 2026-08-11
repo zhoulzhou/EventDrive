@@ -3,7 +3,6 @@ from datetime import datetime
 from pathlib import Path
 import sys
 import re
-import concurrent.futures
 import logging
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -107,10 +106,7 @@ class EastmoneyDepthCrawler(BaseCrawler):
         return news_list
 
     async def fetch_news_list(self):
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            result = await loop.run_in_executor(pool, self._fetch_sync)
-        return result
+        return await asyncio.to_thread(self._fetch_sync)
 
     def _parse_publish_time(self, time_str: str) -> datetime:
         try:

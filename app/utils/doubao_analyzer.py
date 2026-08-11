@@ -1,5 +1,5 @@
 import logging
-import requests
+import httpx
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -20,8 +20,14 @@ class DoubaoAnalyzer:
         self.url = f"https://ark.{region}.volces.com/api/v3/chat/completions"
         self.feishu_webhook_url = feishu_webhook_url
         self.keyword = keyword
+        self._client: Optional[httpx.AsyncClient] = None
 
-    def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=180)
+        return self._client
+
+    async def analyze_news(self, news_content: str, news_title: str = "") -> Optional[str]:
         prompt = f"""你是专业金融新闻分析师，请对以下新闻进行深度、结构化分析，严格按以下4个维度输出：
 
 【新闻标题】
@@ -91,7 +97,8 @@ class DoubaoAnalyzer:
         }
 
         try:
-            resp = requests.post(self.url, headers=headers, json=data, timeout=180)
+            client = self._get_client()
+            resp = await client.post(self.url, headers=headers, json=data)
 
             if resp.status_code == 200:
                 result = resp.json()
@@ -109,13 +116,9 @@ class DoubaoAnalyzer:
             logger.error(f"新闻分析出错, model={self.model}: {str(e)}", exc_info=True)
             return None
 
-    def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
-        """
-        只分析新闻，不推送到飞书，返回分析结果
-        """
+    async def analyze_only(self, news_title: str, news_content: str, source: str = "") -> Optional[str]:
         logger.info(f"开始分析新闻: {news_title}")
-
-        analysis_result = self.analyze_news(news_content, news_title)
+        analysis_result = await self.analyze_news(news_content, news_title)
         return analysis_result
 
 
