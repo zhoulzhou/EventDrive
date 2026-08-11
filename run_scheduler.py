@@ -11,14 +11,17 @@
 import asyncio
 import signal
 import logging
-from app.config import settings, configure_logging
+from app.config import settings
 from app.database import Base, engine
 from app.scheduler import start_scheduler, stop_scheduler, scheduler
 from app.utils.feishu_notifier import (
     init_all_notifiers, start_notifier, shutdown_notifier
 )
 
-configure_logging()
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 _shutdown_event = None
