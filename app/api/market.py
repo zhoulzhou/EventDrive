@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
 from app import crud
-from app.crawlers.market_data import refresh_market_data
+from app.crawlers.market_data import refresh_market_data, SERIES
 from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,10 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         items = []
         for sym, rows in latest.items():
             items.append(_to_item({"current": rows[0], "previous": rows[1] if len(rows) > 1 else None}))
+
+        # 按预定义顺序排序：纳斯达克、VIX、美债2年、美债10年
+        order = {s["symbol"]: i for i, s in enumerate(SERIES)}
+        items.sort(key=lambda it: order.get(it["symbol"], len(order)))
 
         return {
             "status": "ok",
