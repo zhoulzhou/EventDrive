@@ -175,30 +175,6 @@ function showEmpty(msg) {
     if (chart) { chart.destroy(); chart = null; }
 }
 
-function renderCard(item) {
-    const isYield = item.unit === '%';
-    const value = item.value != null ? formatValue(item.value, isYield) : '--';
-    const date = item.date ? `数据日期：${item.date}` : '';
-
-    let changeHtml = '';
-    if (item.change != null) {
-        const cls = item.change >= 0 ? 'up' : 'down';
-        const sign = item.change >= 0 ? '+' : '';
-        const changeText = `${sign}${formatValue(item.change, isYield)}${item.unit}`;
-        const pct = item.change_percent != null ? ` (${sign}${item.change_percent.toFixed(2)}%)` : '';
-        changeHtml = `<div class="market-change ${cls}">${changeText}${pct}</div>`;
-    }
-
-    return `
-        <div class="market-card">
-            <div class="market-name">${escapeHtml(item.name)}</div>
-            <div class="market-value">${value}<span class="market-unit">${item.unit}</span></div>
-            ${changeHtml}
-            <div class="market-date">${date}</div>
-        </div>
-    `;
-}
-
 function formatValue(num, isYield) {
     return isYield ? num.toFixed(3) : num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
