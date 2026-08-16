@@ -22,7 +22,7 @@
     </div>
     <div class="chart-wrap">
         <canvas id="historyChart"></canvas>
-        <div id="chartEmpty" class="chart-empty">点击上方卡片查看历史曲线</div>
+        <div id="chartEmpty" class="chart-empty">点击上方卡片切换历史走势</div>
     </div>
 </div>
 {% endblock %}
@@ -163,7 +163,7 @@ function renderChart(data) {
 
 function hideChart() {
     document.getElementById('chartEmpty').style.display = 'flex';
-    document.getElementById('chartEmpty').textContent = '点击上方卡片查看历史曲线';
+    document.getElementById('chartEmpty').textContent = '点击上方卡片切换历史走势';
     document.getElementById('historyChart').style.display = 'none';
     if (chart) { chart.destroy(); chart = null; }
 }
