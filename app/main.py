@@ -91,6 +91,7 @@ app.include_router(filter.router, prefix="/api", tags=["filter"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
 app.include_router(feishu.router, prefix="/api", tags=["feishu"])
 app.include_router(login.router, prefix="/api", tags=["login"])
+app.include_router(market.router, prefix="/api", tags=["market"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:
