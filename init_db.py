@@ -5,8 +5,8 @@
 """
 import asyncio
 from app.config import settings
-from app.database import engine, Base, SessionLocal
-from app.models import News, FilterRule, CrawlLog, IndexHigh
+from app.database import engine, Base, SessionLocal, ensure_schema_compatibility
+from app.models import News, FilterRule, CrawlLog, MarketPrice
 from app import crud, schemas
 
 
@@ -14,6 +14,7 @@ async def init_db():
     """初始化数据库"""
     print("正在创建数据库表...")
     
+    ensure_schema_compatibility(engine)
     Base.metadata.create_all(bind=engine)
     
     print("数据库表创建成功！")

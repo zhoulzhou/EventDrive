@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float
+from sqlalchemy import Column, Integer, String, Text, DateTime, Float, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -42,11 +42,15 @@ class CrawlLog(Base):
     duration = Column(Integer, nullable=True)
 
 
-class IndexHigh(Base):
-    __tablename__ = "index_highs"
+class MarketPrice(Base):
+    __tablename__ = "market_prices"
+    __table_args__ = (UniqueConstraint("symbol", "date", name="uq_market_symbol_date"),)
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    symbol = Column(Text, nullable=False, unique=True, index=True)
-    high_price = Column(Float, nullable=False)
+    symbol = Column(Text, nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    unit = Column(Text, nullable=True)
+    value = Column(Float, nullable=True)
+    date = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

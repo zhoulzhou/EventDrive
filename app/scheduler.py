@@ -13,14 +13,14 @@ from app.crawlers import (
     EastmoneyDepthCrawler,
     NYTDepthCrawler,
     BBCCrawler,
-    FinnhubIndexCrawler,
     NewsItem
 )
 from app.crawlers.x_twitter import fetch_tweets
+from app.crawlers.market_data import refresh_market_data
 from app.utils.feishu_notifier import (
     dfcf_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
     doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify,
-    notify_index_alert, x_feishu_status_notify, x_feishu_notify
+    x_feishu_status_notify, x_feishu_notify
 )
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.openrouter_analyzer import init_openrouter_analyzer, get_openrouter_analyzer
@@ -127,35 +127,24 @@ async def crawl_with_semaphore(sem: asyncio.Semaphore, crawler_class) -> Tuple[s
         return crawler_class.__name__, count, news
 
 
-async def crawl_indices():
+async def crawl_market_data():
     log_crawl("=" * 50)
-    log_crawl("开始执行指数监控任务...")
+    log_crawl("开始更新市场行情数据...")
     log_crawl("=" * 50)
 
-    crawler = None
     try:
-        crawler = FinnhubIndexCrawler()
-        alert_message = await crawler.crawl()
-
-        if alert_message and settings.INDEX_FEISHU_WEBHOOK_URL:
-            log_crawl("正在发送指数监控通知...")
-            result = await notify_index_alert(alert_message)
-            log_crawl(f"指数监控通知发送结果: {result}")
-        elif alert_message:
-            log_crawl(f"指数监控结果:\n{alert_message}")
-        else:
-            log_crawl("未获取到指数数据")
-
-        log_crawl("=" * 50)
-        log_crawl("指数监控任务完成")
-        log_crawl("=" * 50)
-
+        data = await refresh_market_data()
+        count = len(data.get("items", []))
+        log_crawl(f"市场行情更新完成: {count} 项指标")
+        for item in data.get("items", []):
+            log_crawl(f"  - {item['name']}: {item.get('value')} ({item.get('date')})")
     except Exception as e:
-        log_crawl(f"指数监控任务出错: {str(e)}")
-        logger.error(f"!!! 指数监控任务出错: {e}", exc_info=True)
-    finally:
-        if crawler:
-            crawler.close()
+        log_crawl(f"市场行情更新出错: {str(e)}")
+        logger.error(f"!!! 市场行情更新出错: {e}", exc_info=True)
+
+    log_crawl("=" * 50)
+    log_crawl("市场行情更新任务完成")
+    log_crawl("=" * 50)
 
 
 async def full_crawl():
@@ -295,10 +284,10 @@ def start_scheduler():
             replace_existing=True
         )
         scheduler.add_job(
-            crawl_indices,
+            crawl_market_data,
             trigger=CronTrigger(hour='8,12,16,20', minute=0, timezone=TOKYO_TZ),
-            id='index_crawl_job_daily_4_times',
-            name='Crawl indices at 8,12,16,20 JST',
+            id='market_crawl_job_daily_4_times',
+            name='Crawl market data at 8,12,16,20 JST',
             replace_existing=True
         )
         scheduler.start()

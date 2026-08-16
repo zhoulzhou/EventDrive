@@ -5,8 +5,8 @@
 ### 新闻抓取
 每 3 小时一次：`00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00`
 
-### 指数监控
-每小时一次：`*:00`
+### 市场行情
+每日 `08:00, 12:00, 16:00, 20:00`（JST，Asia/Tokyo）
 
 ## 新闻源顺序（4个源串行执行）
 
@@ -29,21 +29,19 @@ for each 新闻源:
             - xxx_feishu_notify(title, result)       # 推送分析结果
 ```
 
-## 指数监控（crawl_indices）
+## 市场行情（crawl_market_data）
 
 ### 功能
-- 使用腾讯财经API获取 NDX 和 VIX 指数
-- 追踪年内高点（初始值 26011.75）
-- 推送条件：
-  - NDX 突破历史新高：发送"🎉 突破历史新高!"提示
-  - NDX 偏离高点 ≥10%/5%/3%：发送偏离预警
-  - NDX 下跌 ≥30%/20%/10%/5%/3%：发送下跌警报
-  - VIX ≥ 25/30：发送恐慌预警
+- 使用海外数据源 FRED（美国圣路易斯联储）获取 4 项指标
+- 纳斯达克指数（`NASDAQCOM`）、VIX恐慌指数（`VIXCLS`）
+- 美债2年期收益率（`DGS2`）、美债10年期收益率（`DGS10`）
+- 抓取结果写入 `market_prices` 表（定时落库），页面 `/api/market` 从数据库读取
 
-### 飞书推送
-- 使用 `notify_index_alert` 发送
-- 飞书 Webhook: `INDEX_FEISHU_WEBHOOK_URL`
-- 关键词: `INDEX_KEYWORD`
+### 流程
+- 调度器触发 `crawl_market_data()` → `refresh_market_data()`（异步）
+- `fetch_fred_prices()` 逐个异步请求 FRED CSV 序列
+- `save_market_prices()` 通过 `asyncio.to_thread` 写入数据库，避免阻塞事件循环
+- 页面首次访问且库为空时，`/api/market` 兜底实时抓取一次
 
 ## 初始化
 
@@ -62,7 +60,7 @@ for each 新闻源:
 | `app/utils/feishu_notifier.py` | 所有飞书推送 |
 | `app/utils/doubao_analyzer.py` | 豆包分析（只分析不推送） |
 | `app/utils/openrouter_analyzer.py` | OpenRouter 分析（只分析不推送） |
-| `app/crawlers/finnhub_index.py` | 指数获取（腾讯财经API） |
+| `app/crawlers/market_data.py` | 市场行情获取（FRED） |
 | `app/main.py` | 启动时统一初始化飞书 |
 
 ## 飞书推送通道
@@ -71,7 +69,6 @@ for each 新闻源:
 |------|------|------|
 | 豆包飞书 | `doubao_feishu_notify` | 东方财富、财联社分析结果推送 |
 | OpenRouter飞书 | `openrouter_feishu_notify` | 纽约时报、BBC分析结果推送 |
-| 指数飞书 | `notify_index_alert` | 指数监控结果推送 |
 | 东方财富飞书 | `dfcf_feishu_notify` | 东方财富原始新闻推送 |
 | 财联社飞书 | `cls_feishu_notify` | 财联社原始新闻推送 |
 | 纽约时报飞书 | `nyt_feishu_notify` | 纽约时报原始新闻推送 |
@@ -109,7 +106,7 @@ for each 新闻源:
 3. 检查 API Key 是否有效
 4. 检查网络连接和大模型 API 限流
 
-### 指数获取失败
-1. 检查腾讯财经API `qt.gtimg.cn` 是否可访问
-2. 查看日志中是否有解析错误
-3. 检查 `NDX_INITIAL_HIGH` 配置是否正确
+### 市场行情获取失败
+1. 检查 FRED 接口 `fred.stlouisfed.org` 是否可访问
+2. 查看日志中是否有请求超时或解析错误
+3. 确认 `market_prices` 表是否有数据（首次运行需等待调度触发或页面兜底抓取）

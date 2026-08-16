@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
@@ -177,45 +177,51 @@ def delete_crawl_log(db: Session, log_id: int) -> bool:
     return False
 
 
-def get_index_high(db: Session, symbol: str) -> Optional[models.IndexHigh]:
-    return db.query(models.IndexHigh).filter(models.IndexHigh.symbol == symbol).first()
+def get_all_market_prices(db: Session) -> List[models.MarketPrice]:
+    return db.query(models.MarketPrice).all()
 
 
-def get_all_index_highs(db: Session) -> List[models.IndexHigh]:
-    return db.query(models.IndexHigh).all()
-
-
-def create_index_high(db: Session, index_high: schemas.IndexHighCreate) -> models.IndexHigh:
-    db_index_high = models.IndexHigh(**index_high.model_dump())
-    db.add(db_index_high)
+def upsert_market_price(db: Session, price: schemas.MarketPriceCreate) -> models.MarketPrice:
+    """按 (symbol, date) 更新或插入一条历史记录。"""
+    db_price = (
+        db.query(models.MarketPrice)
+        .filter(models.MarketPrice.symbol == price.symbol, models.MarketPrice.date == price.date)
+        .first()
+    )
+    if db_price:
+        db_price.name = price.name
+        db_price.unit = price.unit
+        db_price.value = price.value
+    else:
+        db_price = models.MarketPrice(**price.model_dump())
+        db.add(db_price)
     db.commit()
-    db.refresh(db_index_high)
-    return db_index_high
+    db.refresh(db_price)
+    return db_price
 
 
-def update_index_high(db: Session, symbol: str, high_price: float) -> Optional[models.IndexHigh]:
-    db_index_high = get_index_high(db, symbol)
-    if db_index_high:
-        db_index_high.high_price = high_price
-        db.commit()
-        db.refresh(db_index_high)
-    return db_index_high
+def get_latest_market_prices(db: Session) -> Dict[str, List[models.MarketPrice]]:
+    """返回每个 symbol 最新两条记录（用于显示最新值并计算涨跌幅）。"""
+    symbols = [r[0] for r in db.query(models.MarketPrice.symbol).distinct().all()]
+    result: Dict[str, List[models.MarketPrice]] = {}
+    for sym in symbols:
+        rows = (
+            db.query(models.MarketPrice)
+            .filter(models.MarketPrice.symbol == sym)
+            .order_by(models.MarketPrice.date.desc())
+            .limit(2)
+            .all()
+        )
+        if rows:
+            result[sym] = rows
+    return result
 
 
-def get_or_create_index_high(db: Session, symbol: str, initial_high: float) -> models.IndexHigh:
-    db_index_high = get_index_high(db, symbol)
-    if db_index_high:
-        return db_index_high
-    return create_index_high(db, schemas.IndexHighCreate(symbol=symbol, high_price=initial_high))
-
-
-def update_index_high_if_higher(db: Session, symbol: str, current_price: float) -> Optional[models.IndexHigh]:
-    db_index_high = get_index_high(db, symbol)
-    if not db_index_high:
-        return None
-    if current_price > db_index_high.high_price:
-        db_index_high.high_price = current_price
-        db.commit()
-        db.refresh(db_index_high)
-        return db_index_high
-    return None
+def get_market_history(db: Session, symbol: str) -> List[models.MarketPrice]:
+    """返回某个 symbol 的全部历史记录（按日期升序）。"""
+    return (
+        db.query(models.MarketPrice)
+        .filter(models.MarketPrice.symbol == symbol)
+        .order_by(models.MarketPrice.date.asc())
+        .all()
+    )

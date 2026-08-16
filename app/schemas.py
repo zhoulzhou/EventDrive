@@ -85,20 +85,19 @@ class CrawlLog(CrawlLogBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class IndexHighBase(BaseModel):
+class MarketPriceBase(BaseModel):
     symbol: str
-    high_price: float
+    name: str
+    unit: Optional[str] = None
+    value: Optional[float] = None
+    date: Optional[str] = None
 
 
-class IndexHighCreate(IndexHighBase):
+class MarketPriceCreate(MarketPriceBase):
     pass
 
 
-class IndexHighUpdate(BaseModel):
-    high_price: Optional[float] = None
-
-
-class IndexHigh(IndexHighBase):
+class MarketPrice(MarketPriceBase):
     id: int
     created_at: datetime
     updated_at: datetime

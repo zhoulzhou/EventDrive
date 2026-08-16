@@ -389,7 +389,6 @@ async def _do_send(webhook_url: str, secret: str, keyword: str, content: str) ->
 _nyt_feishu_notifier: Optional[FeishuNotifier] = None
 _bbc_feishu_notifier: Optional[FeishuNotifier] = None
 _dfcf_feishu_notifier: Optional[FeishuNotifier] = None
-_index_feishu_notifier: Optional[FeishuNotifier] = None
 _kb_feishu_notifier: Optional[FeishuNotifier] = None
 _openrouter_feishu_notifier: Optional[FeishuNotifier] = None
 _deepseek_feishu_notifier: Optional[FeishuNotifier] = None
@@ -412,12 +411,6 @@ def init_dfcf_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头
     global _dfcf_feishu_notifier
     _dfcf_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
     logger.info(f"东方财富(dfcf)飞书推送已初始化，关键词: '{keyword}'")
-
-
-def init_index_feishu_notifier(webhook_url: str, secret: str, keyword: str = "指数"):
-    global _index_feishu_notifier
-    _index_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"指数飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_kb_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"):
@@ -451,8 +444,6 @@ def init_all_notifiers(
     bbc_keyword: str = "HOT",
     dfcf_url: str = "",
     dfcf_keyword: str = "头条",
-    index_url: str = "",
-    index_keyword: str = "指数",
     kb_url: str = "",
     kb_keyword: str = "Talk",
     openrouter_url: str = "",
@@ -468,8 +459,6 @@ def init_all_notifiers(
         init_bbc_feishu_notifier(bbc_url, "", bbc_keyword)
     if dfcf_url:
         init_dfcf_feishu_notifier(dfcf_url, "", dfcf_keyword)
-    if index_url:
-        init_index_feishu_notifier(index_url, "", index_keyword)
     if kb_url:
         init_kb_feishu_notifier(kb_url, "", kb_keyword)
     if openrouter_url:
@@ -490,10 +479,6 @@ def get_bbc_feishu_notifier() -> Optional[FeishuNotifier]:
 
 def get_dfcf_feishu_notifier() -> Optional[FeishuNotifier]:
     return _dfcf_feishu_notifier
-
-
-def get_index_feishu_notifier() -> Optional[FeishuNotifier]:
-    return _index_feishu_notifier
 
 
 def get_kb_feishu_notifier() -> Optional[FeishuNotifier]:
@@ -624,11 +609,4 @@ async def deepseek_feishu_notify(news_title: str, analysis_result: str, source: 
         ]
         content = "\n".join(content_lines)
         return await notifier.send_message(content)
-    return False
-
-
-async def notify_index_alert(alert_content: str) -> bool:
-    notifier = get_index_feishu_notifier()
-    if notifier:
-        return await notifier.send_message(alert_content)
     return False

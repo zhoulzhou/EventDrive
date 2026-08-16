@@ -66,10 +66,6 @@ class Settings:
     DEEPSEEK_FEISHU_WEBHOOK_URL: str = os.getenv("DEEPSEEK_FEISHU_WEBHOOK_URL", "")
     DEEPSEEK_KEYWORD: str = os.getenv("DEEPSEEK_KEYWORD", "深度分析")
 
-    FINNHUB_API_KEY: str = os.getenv("FINNHUB_API_KEY", "")
-    INDEX_FEISHU_WEBHOOK_URL: str = os.getenv("INDEX_FEISHU_WEBHOOK_URL", "")
-    INDEX_KEYWORD: str = os.getenv("INDEX_KEYWORD", "指数")
-
     X_B_T: str = os.getenv("X_B_T", "")
     X_FEISHU_WEBHOOK_URL: str = os.getenv("X_FEISHU_WEBHOOK_URL", "")
     X_FEISHU_KEYWORD: str = os.getenv("X_FEISHU_KEYWORD", "X推文")

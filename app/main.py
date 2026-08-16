@@ -8,8 +8,8 @@ from jinja2 import Environment, FileSystemLoader
 from starlette.requests import Request
 
 from app.config import settings
-from app.database import engine, Base
-from app.api import news, crawl, filter, logs, feishu, login
+from app.database import engine, Base, ensure_schema_compatibility
+from app.api import news, crawl, filter, logs, feishu, login, market
 from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
@@ -25,6 +25,7 @@ print("=" * 60)
 print("🚀 新闻抓取应用正在启动...")
 print("=" * 60)
 
+ensure_schema_compatibility(engine)
 Base.metadata.create_all(bind=engine)
 print("✅ 数据库表初始化完成")
 
@@ -35,8 +36,6 @@ init_all_notifiers(
     bbc_keyword=settings.BBC_FEISHU_KEYWORD,
     dfcf_url=settings.DFCF_FEISHU_WEBHOOK_URL or "",
     dfcf_keyword=settings.DFCF_FEISHU_KEYWORD,
-    index_url=settings.INDEX_FEISHU_WEBHOOK_URL or "",
-    index_keyword=settings.INDEX_KEYWORD,
     kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
     kb_keyword=settings.KB_KEYWORD,
     openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",
@@ -154,3 +153,10 @@ async def crawl_logs(request: Request):
     if not is_logged_in(request):
         return RedirectResponse(url="/login")
     return render_template("crawl_logs.html", {"request": request})
+
+
+@app.get("/market")
+async def market_page(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("market.html", {"request": request})

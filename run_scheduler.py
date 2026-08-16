@@ -12,7 +12,7 @@ import asyncio
 import signal
 import logging
 from app.config import settings
-from app.database import Base, engine
+from app.database import Base, engine, ensure_schema_compatibility
 from app.scheduler import start_scheduler, stop_scheduler, scheduler
 from app.utils.feishu_notifier import (
     init_all_notifiers, start_notifier, shutdown_notifier
@@ -28,6 +28,7 @@ _shutdown_event = None
 
 
 def _sync_create_tables():
+    ensure_schema_compatibility(engine)
     Base.metadata.create_all(bind=engine)
 
 
@@ -55,8 +56,6 @@ async def _main_async():
         bbc_keyword=settings.BBC_FEISHU_KEYWORD,
         dfcf_url=settings.DFCF_FEISHU_WEBHOOK_URL or "",
         dfcf_keyword=settings.DFCF_FEISHU_KEYWORD,
-        index_url=settings.INDEX_FEISHU_WEBHOOK_URL or "",
-        index_keyword=settings.INDEX_KEYWORD,
         kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
         kb_keyword=settings.KB_KEYWORD,
         openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",

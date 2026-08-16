@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}市场行情 - 新闻抓取应用{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>市场行情</h1>
+    <p class="form-hint" id="metaInfo">数据来源：FRED（美国圣路易斯联储）</p>
+</div>
+
+<div id="marketGrid" class="sources-grid">
+    <div class="loading">加载中...</div>
+</div>
+
+<div class="filter-bar" style="margin-top: 1.5rem;">
+    <button id="refreshBtn" class="btn btn-primary">🔄 刷新数据</button>
+</div>
+
+<div class="chart-section">
+    <div class="chart-header">
+        <h2>历史走势</h2>
+        <select id="symbolSelect" class="form-select">
+            <option value="">请选择指数</option>
+        </select>
+    </div>
+    <div class="chart-wrap">
+        <canvas id="historyChart"></canvas>
+        <div id="chartEmpty" class="chart-empty">请选择上方指数查看历史曲线</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+let chart = null;
+
+async function loadMarket() {
+    const grid = document.getElementById('marketGrid');
+    grid.innerHTML = '<div class="loading">加载中...</div>';
+
+    try {
+        const response = await fetchWithAuth('/api/market');
+        const data = await response.json();
+
+        if (data.status !== 'ok') {
+            grid.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
+            return;
+        }
+
+        const meta = document.getElementById('metaInfo');
+        meta.textContent = `数据来源：${data.source} · 更新时间：${data.updated_at}`;
+
+        grid.innerHTML = data.items.map(item => renderCard(item)).join('');
+        fillSymbolSelect(data.items);
+    } catch (error) {
+        grid.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
+    }
+}
+
+function fillSymbolSelect(items) {
+    const select = document.getElementById('symbolSelect');
+    const current = select.value;
+    select.innerHTML = '<option value="">请选择指数</option>';
+    items.forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item.symbol;
+        opt.textContent = item.name;
+        select.appendChild(opt);
+    });
+    // 保持此前选择（若仍存在），否则默认选中第一项并加载
+    if (current && [...select.options].some(o => o.value === current)) {
+        select.value = current;
+    } else if (items.length) {
+        select.value = items[0].symbol;
+    }
+    if (select.value) loadHistory(select.value);
+}
+
+async function loadHistory(symbol) {
+    const empty = document.getElementById('chartEmpty');
+    if (!symbol) {
+        hideChart();
+        return;
+    }
+    try {
+        const response = await fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(symbol)}`);
+        const data = await response.json();
+        if (data.status !== 'ok') {
+            showEmpty('加载失败：' + escapeHtml(data.message || ''));
+            return;
+        }
+        if (!data.points.length) {
+            showEmpty('暂无该指数历史数据');
+            return;
+        }
+        renderChart(data);
+    } catch (error) {
+        showEmpty('加载失败：' + escapeHtml(error.message || ''));
+    }
+}
+
+function renderChart(data) {
+    const empty = document.getElementById('chartEmpty');
+    empty.style.display = 'none';
+    const canvas = document.getElementById('historyChart');
+    canvas.style.display = 'block';
+
+    const labels = data.points.map(p => p.date);
+    const values = data.points.map(p => p.value);
+    const unitSuffix = data.unit ? ` ${data.unit}` : '';
+
+    const color = '#2563eb';
+    if (chart) chart.destroy();
+
+    chart = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: data.name,
+                data: values,
+                borderColor: color,
+                backgroundColor: color + '22',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 1,
+                pointHoverRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}${unitSuffix}`
+                    }
+                }
+            },
+            scales: {
+                x: { ticks: { maxTicksLimit: 10 } },
+                y: { ticks: { callback: v => v + unitSuffix } }
+            }
+        }
+    });
+}
+
+function hideChart() {
+    document.getElementById('chartEmpty').style.display = 'flex';
+    document.getElementById('chartEmpty').textContent = '请选择上方指数查看历史曲线';
+    document.getElementById('historyChart').style.display = 'none';
+    if (chart) { chart.destroy(); chart = null; }
+}
+
+function showEmpty(msg) {
+    document.getElementById('chartEmpty').style.display = 'flex';
+    document.getElementById('chartEmpty').innerHTML = msg;
+    document.getElementById('historyChart').style.display = 'none';
+    if (chart) { chart.destroy(); chart = null; }
+}
+
+function renderCard(item) {
+    const isYield = item.unit === '%';
+    const value = item.value != null ? formatValue(item.value, isYield) : '--';
+    const date = item.date ? `数据日期：${item.date}` : '';
+
+    let changeHtml = '';
+    if (item.change != null) {
+        const cls = item.change >= 0 ? 'up' : 'down';
+        const sign = item.change >= 0 ? '+' : '';
+        const changeText = `${sign}${formatValue(item.change, isYield)}${item.unit}`;
+        const pct = item.change_percent != null ? ` (${sign}${item.change_percent.toFixed(2)}%)` : '';
+        changeHtml = `<div class="market-change ${cls}">${changeText}${pct}</div>`;
+    }
+
+    return `
+        <div class="market-card">
+            <div class="market-name">${escapeHtml(item.name)}</div>
+            <div class="market-value">${value}<span class="market-unit">${item.unit}</span></div>
+            ${changeHtml}
+            <div class="market-date">${date}</div>
+        </div>
+    `;
+}
+
+function formatValue(num, isYield) {
+    return isYield ? num.toFixed(3) : num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.getElementById('refreshBtn').addEventListener('click', loadMarket);
+document.getElementById('symbolSelect').addEventListener('change', (e) => loadHistory(e.target.value));
+loadMarket();
+</script>
+
+<style>
+.market-card {
+    background: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    text-align: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.market-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.market-name {
+    font-weight: 500;
+    color: #666;
+    margin-bottom: 0.75rem;
+}
+.market-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #333;
+}
+.market-unit {
+    font-size: 1rem;
+    font-weight: 400;
+    color: #888;
+    margin-left: 0.25rem;
+}
+.market-change {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-top: 0.5rem;
+}
+.market-change.up { color: #28a745; }
+.market-change.down { color: #dc3545; }
+.market-date {
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: #888;
+}
+.chart-section {
+    margin-top: 2rem;
+    background: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+.chart-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #333;
+}
+.form-select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    background: #fff;
+    color: #333;
+    cursor: pointer;
+}
+.chart-wrap {
+    position: relative;
+    height: 360px;
+    width: 100%;
+}
+.chart-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 0.95rem;
+}
+#historyChart {
+    width: 100%;
+    height: 100%;
+}
+</style>
+{% endblock %}
