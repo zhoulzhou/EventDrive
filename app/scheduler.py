@@ -269,6 +269,8 @@ async def full_crawl():
     else:
         log_crawl("X平台未配置，跳过")
 
+    await crawl_market_data()
+
     log_crawl("=" * 50)
     log_crawl(f"所有任务完成! 保存: {total_saved} 条, 分析推送: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
     log_crawl("=" * 50)
