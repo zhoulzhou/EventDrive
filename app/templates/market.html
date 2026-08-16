@@ -19,13 +19,10 @@
 <div class="chart-section">
     <div class="chart-header">
         <h2>历史走势</h2>
-        <select id="symbolSelect" class="form-select">
-            <option value="">请选择指数</option>
-        </select>
     </div>
     <div class="chart-wrap">
         <canvas id="historyChart"></canvas>
-        <div id="chartEmpty" class="chart-empty">请选择上方指数查看历史曲线</div>
+        <div id="chartEmpty" class="chart-empty">点击上方卡片查看历史曲线</div>
     </div>
 </div>
 {% endblock %}
@@ -34,6 +31,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 let chart = null;
+let chartSymbol = null;
 
 async function loadMarket() {
     const grid = document.getElementById('marketGrid');
@@ -52,29 +50,45 @@ async function loadMarket() {
         meta.textContent = `数据来源：${data.source} · 更新时间：${data.updated_at}`;
 
         grid.innerHTML = data.items.map(item => renderCard(item)).join('');
-        fillSymbolSelect(data.items);
+        // 默认选中并加载第一张卡片的历史走势
+        if (data.items.length) {
+            selectCard(data.items[0].symbol);
+            loadHistory(data.items[0].symbol);
+        }
     } catch (error) {
         grid.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
     }
 }
 
-function fillSymbolSelect(items) {
-    const select = document.getElementById('symbolSelect');
-    const current = select.value;
-    select.innerHTML = '<option value="">请选择指数</option>';
-    items.forEach(item => {
-        const opt = document.createElement('option');
-        opt.value = item.symbol;
-        opt.textContent = item.name;
-        select.appendChild(opt);
-    });
-    // 保持此前选择（若仍存在），否则默认选中第一项并加载
-    if (current && [...select.options].some(o => o.value === current)) {
-        select.value = current;
-    } else if (items.length) {
-        select.value = items[0].symbol;
+function renderCard(item) {
+    const isYield = item.unit === '%';
+    const value = item.value != null ? formatValue(item.value, isYield) : '--';
+    const date = item.date ? `数据日期：${item.date}` : '';
+
+    let changeHtml = '';
+    if (item.change != null) {
+        const cls = item.change >= 0 ? 'up' : 'down';
+        const sign = item.change >= 0 ? '+' : '';
+        const changeText = `${sign}${formatValue(item.change, isYield)}${item.unit}`;
+        const pct = item.change_percent != null ? ` (${sign}${item.change_percent.toFixed(2)}%)` : '';
+        changeHtml = `<div class="market-change ${cls}">${changeText}${pct}</div>`;
     }
-    if (select.value) loadHistory(select.value);
+
+    return `
+        <div class="market-card" data-symbol="${escapeHtml(item.symbol)}" title="点击查看历史走势">
+            <div class="market-name">${escapeHtml(item.name)}</div>
+            <div class="market-value">${value}<span class="market-unit">${item.unit}</span></div>
+            ${changeHtml}
+            <div class="market-date">${date}</div>
+        </div>
+    `;
+}
+
+function selectCard(symbol) {
+    chartSymbol = symbol;
+    document.querySelectorAll('#marketGrid .market-card').forEach(card => {
+        card.classList.toggle('active', card.dataset.symbol === symbol);
+    });
 }
 
 async function loadHistory(symbol) {
@@ -149,7 +163,7 @@ function renderChart(data) {
 
 function hideChart() {
     document.getElementById('chartEmpty').style.display = 'flex';
-    document.getElementById('chartEmpty').textContent = '请选择上方指数查看历史曲线';
+    document.getElementById('chartEmpty').textContent = '点击上方卡片查看历史曲线';
     document.getElementById('historyChart').style.display = 'none';
     if (chart) { chart.destroy(); chart = null; }
 }
@@ -196,7 +210,14 @@ function escapeHtml(text) {
 }
 
 document.getElementById('refreshBtn').addEventListener('click', loadMarket);
-document.getElementById('symbolSelect').addEventListener('change', (e) => loadHistory(e.target.value));
+document.getElementById('marketGrid').addEventListener('click', (e) => {
+    const card = e.target.closest('.market-card');
+    if (!card) return;
+    const symbol = card.dataset.symbol;
+    if (!symbol) return;
+    selectCard(symbol);
+    loadHistory(symbol);
+});
 loadMarket();
 </script>
 
@@ -212,6 +233,14 @@ loadMarket();
 .market-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.market-card.active {
+    border: 2px solid #2563eb;
+    box-shadow: 0 4px 16px rgba(37,99,235,0.15);
+    cursor: pointer;
+}
+.market-card[data-symbol] {
+    cursor: pointer;
 }
 .market-name {
     font-weight: 500;
@@ -258,15 +287,6 @@ loadMarket();
     margin: 0;
     font-size: 1.1rem;
     color: #333;
-}
-.form-select {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    background: #fff;
-    color: #333;
-    cursor: pointer;
 }
 .chart-wrap {
     position: relative;
