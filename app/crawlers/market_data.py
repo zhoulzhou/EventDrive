@@ -84,10 +84,26 @@ async def fetch_fred_prices() -> List[Dict[str, Any]]:
 
 
 def save_market_prices(items: List[Dict[str, Any]]) -> None:
-    """将抓取到的指标按 (symbol, date) 写入/更新 market_prices 表（同步函数，供 asyncio.to_thread 调用）。"""
+    """将抓取到的指标按 (symbol, date) 写入/更新 market_prices 表（同步函数，供 asyncio.to_thread 调用）。
+
+    去重逻辑：若库中该 symbol 的最新记录日期与本次抓取相同、且值也相同（如周末/非交易时间 FRED 未更新），
+    则跳过落库，仅当出现新日期或值发生变化时才写入。
+    """
     db = SessionLocal()
     try:
+        saved = 0
         for item in items:
+            latest = (
+                db.query(crud.models.MarketPrice)
+                .filter(crud.models.MarketPrice.symbol == item["symbol"])
+                .order_by(crud.models.MarketPrice.date.desc())
+                .first()
+            )
+            # 数据未更新：最新记录日期相同且值相同 → 跳过，避免周末/非交易时间重复落库
+            if latest and latest.date == item.get("date") and latest.value == item["value"]:
+                logger.info(f"  - {item['name']}: 数据无更新({latest.date})，跳过")
+                continue
+
             crud.upsert_market_price(db, schemas.MarketPriceCreate(
                 symbol=item["symbol"],
                 name=item["name"],
@@ -95,7 +111,8 @@ def save_market_prices(items: List[Dict[str, Any]]) -> None:
                 value=item["value"],
                 date=item.get("date"),
             ))
-        logger.info(f"市场行情数据已落库: {len(items)} 项指标")
+            saved += 1
+        logger.info(f"市场行情数据已落库: {saved} 项指标 (跳过 {len(items) - saved} 项无更新)")
     finally:
         db.close()
 
