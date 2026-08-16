@@ -5,12 +5,15 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
 from app import crud
-from app.crawlers.market_data import refresh_market_data, SERIES
+from app.crawlers.market_data import refresh_market_data
 from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 固定的卡片显示顺序，独立于抓取列表 SERIES；后续新增指数在此追加，不影响历史顺序
+DISPLAY_ORDER = ["NASDAQCOM", "VIXCLS", "DGS2", "DGS10"]
 
 
 def _to_item(latest: dict) -> dict:
@@ -50,8 +53,8 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         for sym, rows in latest.items():
             items.append(_to_item({"current": rows[0], "previous": rows[1] if len(rows) > 1 else None}))
 
-        # 按预定义顺序排序：纳斯达克、VIX、美债2年、美债10年
-        order = {s["symbol"]: i for i, s in enumerate(SERIES)}
+        # 按固定显示顺序排序，独立于抓取列表 SERIES
+        order = {sym: i for i, sym in enumerate(DISPLAY_ORDER)}
         items.sort(key=lambda it: order.get(it["symbol"], len(order)))
 
         return {
