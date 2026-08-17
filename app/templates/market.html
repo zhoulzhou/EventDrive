@@ -20,18 +20,20 @@
     <div class="chart-header">
         <h2>历史走势</h2>
     </div>
-    <div class="chart-wrap">
-        <canvas id="historyChart"></canvas>
-        <div id="chartEmpty" class="chart-empty">点击上方卡片切换历史走势</div>
-    </div>
+    <div id="historyGrid" class="history-grid"></div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
-let chart = null;
-let chartSymbol = null;
+const CHART_COLORS = {
+    NASDAQCOM: '#2563eb',
+    VIXCLS: '#ef4444',
+    DGS2: '#059669',
+    DGS10: '#f59e0b'
+};
+const charts = {};
 
 async function loadMarket() {
     const grid = document.getElementById('marketGrid');
@@ -50,11 +52,7 @@ async function loadMarket() {
         meta.textContent = `数据来源：${data.source} · 更新时间：${data.updated_at}`;
 
         grid.innerHTML = data.items.map(item => renderCard(item)).join('');
-        // 默认选中并加载第一张卡片的历史走势
-        if (data.items.length) {
-            selectCard(data.items[0].symbol);
-            loadHistory(data.items[0].symbol);
-        }
+        renderAllHistory(data.items);
     } catch (error) {
         grid.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
     }
@@ -75,7 +73,7 @@ function renderCard(item) {
     }
 
     return `
-        <div class="market-card" data-symbol="${escapeHtml(item.symbol)}" title="点击查看历史走势">
+        <div class="market-card">
             <div class="market-name">${escapeHtml(item.name)}</div>
             <div class="market-value">${value}<span class="market-unit">${item.unit}</span></div>
             ${changeHtml}
@@ -84,95 +82,76 @@ function renderCard(item) {
     `;
 }
 
-function selectCard(symbol) {
-    chartSymbol = symbol;
-    document.querySelectorAll('#marketGrid .market-card').forEach(card => {
-        card.classList.toggle('active', card.dataset.symbol === symbol);
-    });
+function renderAllHistory(items) {
+    const grid = document.getElementById('historyGrid');
+    grid.innerHTML = items.map(item => `
+        <div class="history-card">
+            <div class="history-title">${escapeHtml(item.name)}</div>
+            <div class="history-wrap">
+                <canvas id="chart-${escapeHtml(item.symbol)}"></canvas>
+                <div class="history-empty" id="empty-${escapeHtml(item.symbol)}">加载中...</div>
+            </div>
+        </div>
+    `).join('');
+
+    items.forEach(item => loadHistoryInto(item));
 }
 
-async function loadHistory(symbol) {
-    const empty = document.getElementById('chartEmpty');
-    if (!symbol) {
-        hideChart();
-        return;
-    }
+async function loadHistoryInto(item) {
+    const empty = document.getElementById('empty-' + item.symbol);
+    const canvas = document.getElementById('chart-' + item.symbol);
     try {
-        const response = await fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(symbol)}`);
+        const response = await fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(item.symbol)}`);
         const data = await response.json();
         if (data.status !== 'ok') {
-            showEmpty('加载失败：' + escapeHtml(data.message || ''));
+            empty.innerHTML = '加载失败：' + escapeHtml(data.message || '');
             return;
         }
         if (!data.points.length) {
-            showEmpty('暂无该指数历史数据');
+            empty.innerHTML = '暂无该指数历史数据';
             return;
         }
-        renderChart(data);
-    } catch (error) {
-        showEmpty('加载失败：' + escapeHtml(error.message || ''));
-    }
-}
+        empty.style.display = 'none';
+        const color = CHART_COLORS[item.symbol] || '#2563eb';
+        const unitSuffix = data.unit ? ` ${data.unit}` : '';
+        if (charts[item.symbol]) charts[item.symbol].destroy();
 
-function renderChart(data) {
-    const empty = document.getElementById('chartEmpty');
-    empty.style.display = 'none';
-    const canvas = document.getElementById('historyChart');
-    canvas.style.display = 'block';
-
-    const labels = data.points.map(p => p.date);
-    const values = data.points.map(p => p.value);
-    const unitSuffix = data.unit ? ` ${data.unit}` : '';
-
-    const color = '#2563eb';
-    if (chart) chart.destroy();
-
-    chart = new Chart(canvas.getContext('2d'), {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: data.name,
-                data: values,
-                borderColor: color,
-                backgroundColor: color + '22',
-                fill: true,
-                tension: 0.3,
-                pointRadius: 1,
-                pointHoverRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: {
-                tooltip: {
-                    callbacks: {
-                        label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}${unitSuffix}`
-                    }
-                }
+        charts[item.symbol] = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: data.points.map(p => p.date),
+                datasets: [{
+                    label: data.name,
+                    data: data.points.map(p => p.value),
+                    borderColor: color,
+                    backgroundColor: color + '22',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 1,
+                    pointHoverRadius: 4
+                }]
             },
-            scales: {
-                x: { ticks: { maxTicksLimit: 10 } },
-                y: { ticks: { callback: v => v + unitSuffix } }
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ` ${data.name}: ${ctx.parsed.y}${unitSuffix}`
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 5 } },
+                    y: { ticks: { callback: v => v + unitSuffix } }
+                }
             }
-        }
-    });
-}
-
-function hideChart() {
-    document.getElementById('chartEmpty').style.display = 'flex';
-    document.getElementById('chartEmpty').textContent = '点击上方卡片切换历史走势';
-    document.getElementById('historyChart').style.display = 'none';
-    if (chart) { chart.destroy(); chart = null; }
-}
-
-function showEmpty(msg) {
-    document.getElementById('chartEmpty').style.display = 'flex';
-    document.getElementById('chartEmpty').innerHTML = msg;
-    document.getElementById('historyChart').style.display = 'none';
-    if (chart) { chart.destroy(); chart = null; }
+        });
+    } catch (error) {
+        empty.innerHTML = '加载失败：' + escapeHtml(error.message || '');
+    }
 }
 
 function formatValue(num, isYield) {
@@ -186,14 +165,6 @@ function escapeHtml(text) {
 }
 
 document.getElementById('refreshBtn').addEventListener('click', loadMarket);
-document.getElementById('marketGrid').addEventListener('click', (e) => {
-    const card = e.target.closest('.market-card');
-    if (!card) return;
-    const symbol = card.dataset.symbol;
-    if (!symbol) return;
-    selectCard(symbol);
-    loadHistory(symbol);
-});
 loadMarket();
 </script>
 
@@ -209,14 +180,6 @@ loadMarket();
 .market-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-}
-.market-card.active {
-    border: 2px solid #2563eb;
-    box-shadow: 0 4px 16px rgba(37,99,235,0.15);
-    cursor: pointer;
-}
-.market-card[data-symbol] {
-    cursor: pointer;
 }
 .market-name {
     font-weight: 500;
@@ -253,34 +216,44 @@ loadMarket();
     padding: 1.5rem;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
-.chart-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-}
 .chart-header h2 {
     margin: 0;
     font-size: 1.1rem;
     color: #333;
 }
-.chart-wrap {
+.history-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.25rem;
+    margin-top: 1rem;
+}
+@media (max-width: 768px) {
+    .history-grid { grid-template-columns: 1fr; }
+}
+.history-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 0.75rem 1rem 1rem;
+}
+.history-title {
+    font-weight: 600;
+    color: #333;
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+}
+.history-wrap {
     position: relative;
-    height: 360px;
+    height: 210px;
     width: 100%;
 }
-.chart-empty {
+.history-empty {
     position: absolute;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #999;
-    font-size: 0.95rem;
-}
-#historyChart {
-    width: 100%;
-    height: 100%;
+    font-size: 0.9rem;
 }
 </style>
 {% endblock %}
