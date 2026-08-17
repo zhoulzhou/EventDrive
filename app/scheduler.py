@@ -20,7 +20,7 @@ from app.crawlers.market_data import refresh_market_data
 from app.utils.feishu_notifier import (
     dfcf_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
     doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify,
-    x_feishu_status_notify, x_feishu_notify
+    x_feishu_status_notify
 )
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.openrouter_analyzer import init_openrouter_analyzer, get_openrouter_analyzer
@@ -259,13 +259,10 @@ async def full_crawl():
         x_result = await asyncio.to_thread(fetch_tweets)
         x_msg = x_result.get("message", "")
         x_status = x_result.get("status", "error")
-        x_tweets = x_result.get("tweets", [])
         x_push = x_result.get("push_message")
         log_crawl(f"[X] {x_msg} (状态: {x_status})")
         if x_push:
             await x_feishu_status_notify(x_push)
-        if x_tweets:
-            await x_feishu_notify(x_tweets)
     else:
         log_crawl("X平台未配置，跳过")
 
