@@ -19,36 +19,27 @@
 <div class="chart-section">
     <div class="chart-header">
         <h2>历史走势</h2>
-        <span class="chart-sub">上下双面板共享 X 轴：上方纳斯达克原始点位，下方 VIX 与美债收益率</span>
+        <span class="chart-sub">X 轴统一时间 · Y 轴对齐 · 三面板联动</span>
     </div>
     <div id="historyEmpty" class="history-empty" style="position:static;display:none;">加载中...</div>
-    <div class="panel-top">
-        <div class="panel-title">纳斯达克指数（原始点位）</div>
-        <div class="history-wrap">
-            <canvas id="chartTop"></canvas>
+    <div class="panel-stack">
+        <div class="panel">
+            <div class="history-wrap"><canvas id="chartNasdaq"></canvas></div>
+        </div>
+        <div class="panel">
+            <div class="history-wrap"><canvas id="chartVix"></canvas></div>
+        </div>
+        <div class="panel">
+            <div class="history-wrap"><canvas id="chartBond"></canvas></div>
         </div>
     </div>
-    <div class="panel-bottom">
-        <div class="panel-title">VIX 恐慌指数 · 美债2年期 · 美债10年期收益率（%）</div>
-        <div class="history-wrap">
-            <canvas id="chartBottom"></canvas>
-        </div>
-    </div>
+    <div class="chart-legend" id="chartLegend"></div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
-const CHART_COLORS = {
-    NASDAQCOM: '#2563eb',
-    VIXCLS: '#ef4444',
-    DGS2: '#059669',
-    DGS10: '#f59e0b'
-};
-let chartTop = null;
-let chartBottom = null;
-
 async function loadMarket() {
     const grid = document.getElementById('marketGrid');
     grid.innerHTML = '<div class="loading">加载中...</div>';
@@ -96,9 +87,10 @@ function renderCard(item) {
     `;
 }
 
+const FIXED_Y_WIDTH = 84;
+
 async function renderAllHistory(items) {
     const empty = document.getElementById('historyEmpty');
-    // 拉取四个指数全部历史，构建上下双面板共享 X 轴
     const results = await Promise.all(items.map(item =>
         fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(item.symbol)}`).then(r => r.json())
     ).concat([Promise.resolve({ status: 'ok' })]));
@@ -110,92 +102,96 @@ async function renderAllHistory(items) {
     }
     empty.style.display = 'none';
     empty.textContent = '';
-    renderTopPanel(series);
-    renderBottomPanel(series);
+
+    // 统一时间轴：取所有指数日期并集并排序，缺值填 null，保证三面板 X 轴完全一致
+    const nameMap = {};
+    const valMap = {};
+    series.forEach(s => {
+        nameMap[s.symbol] = s.name;
+        valMap[s.symbol] = {};
+        s.points.forEach(p => valMap[s.symbol][p.date] = p.value);
+    });
+    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.date)))].sort();
+
+    const mk = (sym, color, fill) => ({
+        label: nameMap[sym] || sym,
+        color,
+        fill,
+        data: allDates.map(d => (valMap[sym] && valMap[sym][d] != null) ? valMap[sym][d] : null)
+    });
+
+    const nasdaq = mk('NASDAQCOM', '#2563eb', true);
+    const vix = mk('VIXCLS', '#ef4444', false);
+    const dgs2 = mk('DGS2', '#059669', false);
+    const dgs10 = mk('DGS10', '#f59e0b', false);
+
+    renderChart('chartNasdaq', allDates, [nasdaq], { showX: false, unit: '' });
+    renderChart('chartVix', allDates, [vix], { showX: false, unit: '' });
+    renderChart('chartBond', allDates, [dgs2, dgs10], { showX: true, unit: '%' });
+    buildLegend([nasdaq, vix, dgs2, dgs10]);
 }
 
-function renderTopPanel(series) {
-    // 面板1：纳斯达克原始点位
-    const url = series.find(s => s.symbol === 'NASDAQCOM');
-    if (!url) return;
-    if (chartTop) chartTop.destroy();
-    chartTop = new Chart(document.getElementById('chartTop').getContext('2d'), {
+function renderChart(canvasId, labels, datasets, opts) {
+    const canvas = document.getElementById(canvasId);
+    const existing = Chart.getChart(canvas);
+    if (existing) existing.destroy();
+
+    new Chart(canvas.getContext('2d'), {
         type: 'line',
         data: {
-            labels: url.points.map(p => p.date),
-            datasets: [{
-                label: url.name,
-                data: url.points.map(p => p.value),
-                borderColor: '#2563eb',
-                backgroundColor: '#2563eb22',
-                fill: true,
+            labels,
+            datasets: datasets.map(d => ({
+                label: d.label,
+                data: d.data,
+                borderColor: d.color,
+                backgroundColor: d.color + '22',
+                fill: d.fill,
                 tension: 0.3,
                 pointRadius: 0.5,
-                pointHoverRadius: 4
-            }]
+                pointHoverRadius: 4,
+                _unit: opts.unit
+            }))
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: { display: true, position: 'top' },
-                tooltip: {
-                    callbacks: {
-                        label: ctx => ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    }
-                }
-            },
-            scales: {
-                x: { ticks: { display: false } }, // 上方面板不显示 X 刻度，与下方共享
-                y: { title: { display: true, text: '点位' } }
-            }
-        }
-    });
-}
-
-function renderBottomPanel(series) {
-    // 面板2：VIX、2年期、10年期美债收益率，原始数值叠加（共用左轴）
-    const list = ['VIXCLS', 'DGS2', 'DGS10'].map(sym => series.find(s => s.symbol === sym)).filter(Boolean);
-    if (!list.length) return;
-    const labels = list[0].points.map(p => p.date);
-    const datasets = list.map(d => ({
-        label: d.name,
-        data: d.points.map(p => p.value),
-        borderColor: CHART_COLORS[d.symbol] || '#666',
-        backgroundColor: (CHART_COLORS[d.symbol] || '#666') + '22',
-        fill: false,
-        tension: 0.3,
-        pointRadius: 0.5,
-        pointHoverRadius: 4,
-        _unit: d.unit || ''
-    }));
-
-    if (chartBottom) chartBottom.destroy();
-    chartBottom = new Chart(document.getElementById('chartBottom').getContext('2d'), {
-        type: 'line',
-        data: { labels, datasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: {
-                legend: { position: 'top' },
+                legend: { display: false },
                 tooltip: {
                     callbacks: {
                         label: ctx => {
-                            const u = ctx.dataset._unit === '%' ? '' : '';
-                            return ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}${u}`;
+                            const v = ctx.parsed.y;
+                            const shown = opts.unit === '%'
+                                ? v.toFixed(2)
+                                : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            return ` ${ctx.dataset.label}: ${shown}`;
                         }
                     }
                 }
             },
             scales: {
-                x: { ticks: { maxTicksLimit: 6 } },
-                y: { title: { display: true, text: '数值' } }
+                x: {
+                    display: true,
+                    border: { display: false },
+                    grid: { color: '#eef1f4' }, // 始终显示垂直网格，使三面板连成一线
+                    ticks: opts.showX ? { maxTicksLimit: 8 } : { display: false }
+                },
+                y: {
+                    // 固定 Y 轴宽度，使三个面板绘图区左边界一致，实现 X 轴垂直对齐
+                    afterFit: axis => { axis.width = FIXED_Y_WIDTH; },
+                    grid: { color: '#ecf0f3' }
+                }
             }
         }
     });
+}
+
+function buildLegend(entries) {
+    const el = document.getElementById('chartLegend');
+    el.innerHTML = entries.map(e =>
+        `<span class="legend-item"><i class="legend-dot" style="background:${e.color}"></i>${escapeHtml(e.label)}</span>`
+    ).join('');
 }
 
 function formatValue(num, isYield) {
@@ -274,25 +270,43 @@ loadMarket();
     font-size: 0.85rem;
     color: #999;
 }
-.history-wrap {
+.panel-stack {
+    margin-top: 1rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+}
+.panel + .panel {
+    border-top: 1px dashed #dde1e6;
+}
+.panel .history-wrap {
     position: relative;
-    height: 250px;
+    height: 190px;
     width: 100%;
 }
-.panel-top {
-    margin-top: 1rem;
-    padding-bottom: 0.5rem;
+.panel-stack .panel:last-child .history-wrap {
+    height: 205px; /* 底部多留一点空位给 X 轴刻度 */
 }
-.panel-bottom {
-    margin-top: 1.25rem;
-    border-top: 1px dashed #e5e7eb;
-    padding-top: 0.5rem;
+.chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    margin-top: 0.75rem;
+    border-top: 1px solid #eef1f4;
+    padding-top: 0.75rem;
 }
-.panel-title {
-    font-weight: 600;
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.88rem;
     color: #555;
-    font-size: 0.9rem;
-    margin-bottom: 0.25rem;
+}
+.legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
 }
 .history-empty {
     display: flex;
