@@ -180,7 +180,8 @@ function renderChart(canvasId, labels, datasets, opts) {
                 y: {
                     // 固定 Y 轴宽度，使三个面板绘图区左边界一致，实现 X 轴垂直对齐
                     afterFit: axis => { axis.width = FIXED_Y_WIDTH; },
-                    grid: { color: '#ecf0f3' }
+                    grid: { color: '#ecf0f3' },
+                    ticks: { maxTicksLimit: 5 }
                 }
             }
         }
