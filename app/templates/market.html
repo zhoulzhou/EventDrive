@@ -19,8 +19,21 @@
 <div class="chart-section">
     <div class="chart-header">
         <h2>历史走势</h2>
+        <span class="chart-sub">上下双面板共享 X 轴：上方纳斯达克原始点位，下方 VIX 与美债收益率</span>
     </div>
-    <div id="historyGrid" class="history-grid"></div>
+    <div id="historyEmpty" class="history-empty" style="position:static;display:none;">加载中...</div>
+    <div class="panel-top">
+        <div class="panel-title">纳斯达克指数（原始点位）</div>
+        <div class="history-wrap">
+            <canvas id="chartTop"></canvas>
+        </div>
+    </div>
+    <div class="panel-bottom">
+        <div class="panel-title">VIX 恐慌指数 · 美债2年期 · 美债10年期收益率（%）</div>
+        <div class="history-wrap">
+            <canvas id="chartBottom"></canvas>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -33,7 +46,8 @@ const CHART_COLORS = {
     DGS2: '#059669',
     DGS10: '#f59e0b'
 };
-const charts = {};
+let chartTop = null;
+let chartBottom = null;
 
 async function loadMarket() {
     const grid = document.getElementById('marketGrid');
@@ -82,76 +96,106 @@ function renderCard(item) {
     `;
 }
 
-function renderAllHistory(items) {
-    const grid = document.getElementById('historyGrid');
-    grid.innerHTML = items.map(item => `
-        <div class="history-card">
-            <div class="history-title">${escapeHtml(item.name)}</div>
-            <div class="history-wrap">
-                <canvas id="chart-${escapeHtml(item.symbol)}"></canvas>
-                <div class="history-empty" id="empty-${escapeHtml(item.symbol)}">加载中...</div>
-            </div>
-        </div>
-    `).join('');
-
-    items.forEach(item => loadHistoryInto(item));
+async function renderAllHistory(items) {
+    const empty = document.getElementById('historyEmpty');
+    // 拉取四个指数全部历史，构建上下双面板共享 X 轴
+    const results = await Promise.all(items.map(item =>
+        fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(item.symbol)}`).then(r => r.json())
+    ).concat([Promise.resolve({ status: 'ok' })]));
+    const series = results.filter(d => d.status === 'ok' && d.points && d.points.length);
+    if (!series.length) {
+        empty.style.display = 'flex';
+        empty.textContent = '暂无历史数据';
+        return;
+    }
+    empty.style.display = 'none';
+    empty.textContent = '';
+    renderTopPanel(series);
+    renderBottomPanel(series);
 }
 
-async function loadHistoryInto(item) {
-    const empty = document.getElementById('empty-' + item.symbol);
-    const canvas = document.getElementById('chart-' + item.symbol);
-    try {
-        const response = await fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(item.symbol)}`);
-        const data = await response.json();
-        if (data.status !== 'ok') {
-            empty.innerHTML = '加载失败：' + escapeHtml(data.message || '');
-            return;
-        }
-        if (!data.points.length) {
-            empty.innerHTML = '暂无该指数历史数据';
-            return;
-        }
-        empty.style.display = 'none';
-        const color = CHART_COLORS[item.symbol] || '#2563eb';
-        const unitSuffix = data.unit ? ` ${data.unit}` : '';
-        if (charts[item.symbol]) charts[item.symbol].destroy();
-
-        charts[item.symbol] = new Chart(canvas.getContext('2d'), {
-            type: 'line',
-            data: {
-                labels: data.points.map(p => p.date),
-                datasets: [{
-                    label: data.name,
-                    data: data.points.map(p => p.value),
-                    borderColor: color,
-                    backgroundColor: color + '22',
-                    fill: true,
-                    tension: 0.3,
-                    pointRadius: 1,
-                    pointHoverRadius: 4
-                }]
+function renderTopPanel(series) {
+    // 面板1：纳斯达克原始点位
+    const url = series.find(s => s.symbol === 'NASDAQCOM');
+    if (!url) return;
+    if (chartTop) chartTop.destroy();
+    chartTop = new Chart(document.getElementById('chartTop').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: url.points.map(p => p.date),
+            datasets: [{
+                label: url.name,
+                data: url.points.map(p => p.value),
+                borderColor: '#2563eb',
+                backgroundColor: '#2563eb22',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 0.5,
+                pointHoverRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: true, position: 'top' },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    }
+                }
             },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label: ctx => ` ${data.name}: ${ctx.parsed.y}${unitSuffix}`
+            scales: {
+                x: { ticks: { display: false } }, // 上方面板不显示 X 刻度，与下方共享
+                y: { title: { display: true, text: '点位' } }
+            }
+        }
+    });
+}
+
+function renderBottomPanel(series) {
+    // 面板2：VIX、2年期、10年期美债收益率，原始数值叠加（共用左轴）
+    const list = ['VIXCLS', 'DGS2', 'DGS10'].map(sym => series.find(s => s.symbol === sym)).filter(Boolean);
+    if (!list.length) return;
+    const labels = list[0].points.map(p => p.date);
+    const datasets = list.map(d => ({
+        label: d.name,
+        data: d.points.map(p => p.value),
+        borderColor: CHART_COLORS[d.symbol] || '#666',
+        backgroundColor: (CHART_COLORS[d.symbol] || '#666') + '22',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0.5,
+        pointHoverRadius: 4,
+        _unit: d.unit || ''
+    }));
+
+    if (chartBottom) chartBottom.destroy();
+    chartBottom = new Chart(document.getElementById('chartBottom').getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'top' },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const u = ctx.dataset._unit === '%' ? '' : '';
+                            return ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}${u}`;
                         }
                     }
-                },
-                scales: {
-                    x: { ticks: { maxTicksLimit: 5 } },
-                    y: { ticks: { callback: v => v + unitSuffix } }
                 }
+            },
+            scales: {
+                x: { ticks: { maxTicksLimit: 6 } },
+                y: { title: { display: true, text: '数值' } }
             }
-        });
-    } catch (error) {
-        empty.innerHTML = '加载失败：' + escapeHtml(error.message || '');
-    }
+        }
+    });
 }
 
 function formatValue(num, isYield) {
@@ -221,34 +265,36 @@ loadMarket();
     font-size: 1.1rem;
     color: #333;
 }
-.history-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1.25rem;
-    margin-top: 1rem;
+.chart-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
 }
-@media (max-width: 768px) {
-    .history-grid { grid-template-columns: 1fr; }
-}
-.history-card {
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    padding: 0.75rem 1rem 1rem;
-}
-.history-title {
-    font-weight: 600;
-    color: #333;
-    font-size: 0.95rem;
-    margin-bottom: 0.5rem;
+.chart-sub {
+    font-size: 0.85rem;
+    color: #999;
 }
 .history-wrap {
     position: relative;
-    height: 210px;
+    height: 250px;
     width: 100%;
 }
+.panel-top {
+    margin-top: 1rem;
+    padding-bottom: 0.5rem;
+}
+.panel-bottom {
+    margin-top: 1.25rem;
+    border-top: 1px dashed #e5e7eb;
+    padding-top: 0.5rem;
+}
+.panel-title {
+    font-weight: 600;
+    color: #555;
+    font-size: 0.9rem;
+    margin-bottom: 0.25rem;
+}
 .history-empty {
-    position: absolute;
-    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
