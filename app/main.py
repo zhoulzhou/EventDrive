@@ -161,3 +161,10 @@ async def market_page(request: Request):
     if not is_logged_in(request):
         return RedirectResponse(url="/login")
     return render_template("market.html", {"request": request})
+
+
+@app.get("/index-alarm")
+async def index_alarm_page(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("index_alarm.html", {"request": request})

@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block title %}指数预警 - 新闻抓取应用{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>指数预警</h1>
+    <p class="form-hint">FRED 市场指标历史走势：纳斯达克综合指数 · VIX 恐慌指数 · 2/10 年期美债收益率</p>
+</div>
+
+<div class="filter-bar" style="margin-top: 1rem;margin-bottom:1rem;">
+    <button id="refreshBtn" class="btn btn-primary">🔄 刷新数据</button>
+</div>
+
+<div id="historyEmpty" class="history-empty" style="position:static;display:none;">加载中...</div>
+<div class="panel-stack">
+    <div class="panel">
+        <div class="history-wrap"><canvas id="chartNasdaq"></canvas></div>
+    </div>
+    <div class="panel">
+        <div class="history-wrap"><canvas id="chartVix"></canvas></div>
+    </div>
+    <div class="panel">
+        <div class="history-wrap"><canvas id="chartBond"></canvas></div>
+    </div>
+</div>
+<div class="chart-legend" id="chartLegend"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+const SERIES = ['NASDAQCOM', 'VIXCLS', 'DGS2', 'DGS10'];
+const FIXED_Y_WIDTH = 84;
+
+async function loadHistory() {
+    const empty = document.getElementById('historyEmpty');
+    const results = await Promise.all(SERIES.map(symbol =>
+        fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(symbol)}`).then(r => r.json())
+    ).concat([Promise.resolve({ status: 'ok' })]));
+    const series = results.filter(d => d.status === 'ok' && d.points && d.points.length);
+    if (!series.length) {
+        empty.style.display = 'flex';
+        empty.textContent = '暂无历史数据';
+        return;
+    }
+    empty.style.display = 'none';
+    empty.textContent = '';
+
+    const nameMap = {};
+    const valMap = {};
+    series.forEach(s => {
+        nameMap[s.symbol] = s.name;
+        valMap[s.symbol] = {};
+        s.points.forEach(p => valMap[s.symbol][p.date] = p.value);
+    });
+    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.date)))].sort();
+
+    const mk = (sym, color, fill) => ({
+        label: nameMap[sym] || sym,
+        color,
+        fill,
+        data: allDates.map(d => (valMap[sym] && valMap[sym][d] != null) ? valMap[sym][d] : null)
+    });
+
+    const nasdaq = mk('NASDAQCOM', '#2563eb', true);
+    const vix = mk('VIXCLS', '#ef4444', false);
+    const dgs2 = mk('DGS2', '#059669', false);
+    const dgs10 = mk('DGS10', '#f59e0b', false);
+
+    renderChart('chartNasdaq', allDates, [nasdaq], '');
+    renderChart('chartVix', allDates, [vix], '');
+    renderChart('chartBond', allDates, [dgs2, dgs10], '%');
+    buildLegend([nasdaq, vix, dgs2, dgs10]);
+}
+
+function renderChart(canvasId, labels, datasets, unit) {
+    const canvas = document.getElementById(canvasId);
+    const existing = Chart.getChart(canvas);
+    if (existing) existing.destroy();
+
+    new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: datasets.map(d => ({
+                label: d.label,
+                data: d.data,
+                borderColor: d.color,
+                backgroundColor: d.color + '22',
+                fill: d.fill,
+                tension: 0.3,
+                pointRadius: 0.5,
+                pointHoverRadius: 4,
+                _unit: unit
+            }))
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const v = ctx.parsed.y;
+                            const shown = unit === '%'
+                                ? v.toFixed(2)
+                                : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            return ` ${ctx.dataset.label}: ${shown}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    display: true,
+                    border: { display: false },
+                    grid: { color: '#eef1f4' },
+                    ticks: { maxTicksLimit: 8 }
+                },
+                y: {
+                    afterFit: axis => { axis.width = FIXED_Y_WIDTH; },
+                    grid: { color: '#ecf0f3' },
+                    ticks: { maxTicksLimit: 5 }
+                }
+            }
+        }
+    });
+}
+
+function buildLegend(entries) {
+    const el = document.getElementById('chartLegend');
+    el.innerHTML = entries.map(e =>
+        `<span class="legend-item"><i class="legend-dot" style="background:${e.color}"></i>${escapeHtml(e.label)}</span>`
+    ).join('');
+}
+
+document.getElementById('refreshBtn').addEventListener('click', loadHistory);
+loadHistory();
+</script>
+
+<style>
+.panel-stack {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+}
+.panel + .panel {
+    border-top: 1px dashed #dde1e6;
+}
+.panel .history-wrap {
+    position: relative;
+    height: 160px;
+    width: 100%;
+}
+.panel-stack .panel:last-child .history-wrap {
+    height: 180px; /* 底部多留一点空位给 X 轴刻度 */
+}
+.chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    margin-top: 0.75rem;
+    border-top: 1px solid #eef1f4;
+    padding-top: 0.75rem;
+}
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.88rem;
+    color: #555;
+}
+.legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.history-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 0.9rem;
+    padding: 1rem 0;
+}
+</style>
+{% endblock %}
