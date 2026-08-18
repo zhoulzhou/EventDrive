@@ -5,187 +5,177 @@
 {% block content %}
 <div class="page-header">
     <h1>指数预警</h1>
-    <p class="form-hint">FRED 市场指标历史走势：纳斯达克综合指数 · VIX 恐慌指数 · 2/10 年期美债收益率</p>
+    <p class="form-hint">FRED 市场指标对比曲线（2015 年至今） · 纳斯达克综合指数 · VIX 恐慌指数 · 2/10 年期美债收益率 · 数据源: FRED</p>
 </div>
 
-<div class="filter-bar" style="margin-top: 1rem;margin-bottom:1rem;">
-    <button id="refreshBtn" class="btn btn-primary">🔄 刷新数据</button>
-</div>
-
-<div id="historyEmpty" class="history-empty" style="position:static;display:none;">加载中...</div>
-<div class="panel-stack">
-    <div class="panel">
-        <div class="history-wrap"><canvas id="chartNasdaq"></canvas></div>
+<div class="index-chart-stack">
+    <div class="index-chart-card">
+        <div class="index-chart-title">纳斯达克综合指数（日收盘）</div>
+        <div id="ch_NASDAQCOM" class="index-chart"></div>
     </div>
-    <div class="panel">
-        <div class="history-wrap"><canvas id="chartVix"></canvas></div>
+    <div class="index-chart-card">
+        <div class="index-chart-title">四指标相对走势对比（归一化，2015-01 起点 = 100）</div>
+        <div id="main" class="index-chart"></div>
     </div>
-    <div class="panel">
-        <div class="history-wrap"><canvas id="chartBond"></canvas></div>
+    <div class="index-chart-card">
+        <div class="index-chart-title">三面板联动图（Y 轴对齐 · 统一 X 轴）</div>
+        <div id="three" class="index-chart" style="height:660px;"></div>
     </div>
 </div>
-<div class="chart-legend" id="chartLegend"></div>
+<div class="form-hint">提示：图表支持滚轮/拖拽缩放、图例开关、右上角下载图片。缺失数据以空值处理（虚线连接）。</div>
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <script>
-const SERIES = ['NASDAQCOM', 'VIXCLS', 'DGS2', 'DGS10'];
-const FIXED_Y_WIDTH = 84;
+const FILES = {
+    "NASDAQCOM": "/index/NASDAQCOM_2015.csv",
+    "VIXCLS": "/index/VIXCLS_2015.csv",
+    "DGS2": "/index/DGS2_2015.csv",
+    "DGS10": "/index/DGS10_2015.csv"
+};
+const META = {
+    "NASDAQCOM": {"name": "纳斯达克综合指数", "unit": "点", "color": "#5470c6"},
+    "VIXCLS": {"name": "VIX 恐慌指数", "unit": "点", "color": "#ee6666"},
+    "DGS2": {"name": "2年期美债收益率", "unit": "%", "color": "#91cc75"},
+    "DGS10": {"name": "10年期美债收益率", "unit": "%", "color": "#fac858"}
+};
+const SIDS = ["NASDAQCOM", "VIXCLS", "DGS2", "DGS10"];
+const RAW = {}, NORM = {};
 
-async function loadHistory() {
-    const empty = document.getElementById('historyEmpty');
-    const results = await Promise.all(SERIES.map(symbol =>
-        fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(symbol)}`).then(r => r.json())
-    ).concat([Promise.resolve({ status: 'ok' })]));
-    const series = results.filter(d => d.status === 'ok' && d.points && d.points.length);
-    if (!series.length) {
-        empty.style.display = 'flex';
-        empty.textContent = '暂无历史数据';
-        return;
+// 解析 index 下的 CSV（DATE,VALUE），空值跳过，产出 [Date, value] 序列
+async function loadCSV(sid) {
+    const resp = await fetch(FILES[sid]);
+    const text = await resp.text();
+    const rows = text.trim().split(/\r?\n/).slice(1);
+    const pts = [];
+    for (const line of rows) {
+        const idx = line.indexOf(",");
+        if (idx < 0) continue;
+        const date = line.slice(0, idx);
+        const val = parseFloat(line.slice(idx + 1));
+        if (!date || isNaN(val)) continue;
+        pts.push([date, val]);
     }
-    empty.style.display = 'none';
-    empty.textContent = '';
-
-    const nameMap = {};
-    const valMap = {};
-    series.forEach(s => {
-        nameMap[s.symbol] = s.name;
-        valMap[s.symbol] = {};
-        s.points.forEach(p => valMap[s.symbol][p.date] = p.value);
-    });
-    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.date)))].sort();
-
-    const mk = (sym, color, fill) => ({
-        label: nameMap[sym] || sym,
-        color,
-        fill,
-        data: allDates.map(d => (valMap[sym] && valMap[sym][d] != null) ? valMap[sym][d] : null)
-    });
-
-    const nasdaq = mk('NASDAQCOM', '#2563eb', true);
-    const vix = mk('VIXCLS', '#ef4444', false);
-    const dgs2 = mk('DGS2', '#059669', false);
-    const dgs10 = mk('DGS10', '#f59e0b', false);
-
-    renderChart('chartNasdaq', allDates, [nasdaq], '');
-    renderChart('chartVix', allDates, [vix], '');
-    renderChart('chartBond', allDates, [dgs2, dgs10], '%');
-    buildLegend([nasdaq, vix, dgs2, dgs10]);
+    RAW[sid] = pts;
+    // 归一化：以序列首个有效值为 100
+    const base = pts[0] ? pts[0][1] : 1;
+    NORM[sid] = pts.map(pt => (pt[1] / base) * 100);
 }
 
-function renderChart(canvasId, labels, datasets, unit) {
-    const canvas = document.getElementById(canvasId);
-    const existing = Chart.getChart(canvas);
-    if (existing) existing.destroy();
+const axisStyle = { axisLine: { lineStyle: { color: "#8b98a5" } }, axisLabel: { color: "#8b98a5" }, splitLine: { lineStyle: { color: "#e4e7eb" } } };
+const tooltipStyle = { trigger: "axis", backgroundColor: "#fff", borderColor: "#d6dbe2", textStyle: { color: "#333" } };
+const baseOpt = { backgroundColor: "transparent", textStyle: { color: "#666" }, tooltip: tooltipStyle };
 
-    new Chart(canvas.getContext('2d'), {
-        type: 'line',
-        data: {
-            labels,
-            datasets: datasets.map(d => ({
-                label: d.label,
-                data: d.data,
-                borderColor: d.color,
-                backgroundColor: d.color + '22',
-                fill: d.fill,
-                tension: 0.3,
-                pointRadius: 0.5,
-                pointHoverRadius: 4,
-                _unit: unit
-            }))
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        label: ctx => {
-                            const v = ctx.parsed.y;
-                            const shown = unit === '%'
-                                ? v.toFixed(2)
-                                : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                            return ` ${ctx.dataset.label}: ${shown}`;
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    display: true,
-                    border: { display: false },
-                    grid: { color: '#eef1f4' },
-                    ticks: { maxTicksLimit: 8 }
-                },
-                y: {
-                    afterFit: axis => { axis.width = FIXED_Y_WIDTH; },
-                    grid: { color: '#ecf0f3' },
-                    ticks: { maxTicksLimit: 5 }
-                }
-            }
-        }
-    });
+function makeLine(sid) {
+    return {
+        name: META[sid].name,
+        type: "line",
+        showSymbol: false,
+        connectNulls: true,
+        data: RAW[sid],
+        itemStyle: { color: META[sid].color },
+        lineStyle: { width: 1.5 },
+        emphasis: { focus: "series" }
+    };
 }
 
-function buildLegend(entries) {
-    const el = document.getElementById('chartLegend');
-    el.innerHTML = entries.map(e =>
-        `<span class="legend-item"><i class="legend-dot" style="background:${e.color}"></i>${escapeHtml(e.label)}</span>`
-    ).join('');
+async function renderAll() {
+    await Promise.all(SIDS.map(loadCSV));
+
+    // 1) 四指标归一化对比（起点 = 100）
+    const comp = echarts.init(document.getElementById("main"));
+    comp.setOption(Object.assign({}, baseOpt, {
+        legend: { top: 0, textStyle: { color: "#555" }, itemWidth: 18 },
+        grid: { left: 60, right: 20, top: 40, bottom: 80 },
+        xAxis: Object.assign({ type: "time", min: "dataMin" }, axisStyle),
+        yAxis: Object.assign({ type: "value", scale: true, name: "指数（起点=100）", nameTextStyle: { color: "#666" } }, axisStyle),
+        dataZoom: [
+            { type: "inside", xAxisIndex: 0 },
+            { type: "slider", xAxisIndex: 0, bottom: 10, height: 22, borderColor: "#d6dbe2", backgroundColor: "#f5f6f8", fillerColor: "rgba(84,160,255,0.15)", textStyle: { color: "#888" } }
+        ],
+        toolbox: { right: 10, feature: { saveAsImage: { title: "保存图片" } } },
+        series: SIDS.map(function (sid) {
+            return {
+                name: META[sid].name,
+                type: "line",
+                showSymbol: false,
+                connectNulls: true,
+                data: RAW[sid].map(function (pt, i) { return [pt[0], NORM[sid][i]]; }),
+                lineStyle: { width: 1.8 },
+                emphasis: { focus: "series" }
+            };
+        })
+    }));
+
+    // 2) 三面板联动图
+    const three = echarts.init(document.getElementById("three"));
+    const g3 = { left: 70, right: 28, width: "auto" };
+    const xAxisShared = { type: "time", min: "dataMin", axisLine: { lineStyle: { color: "#8b98a5" } }, axisLabel: { color: "#888" }, splitLine: { show: false } };
+    const yAxisShared = { type: "value", scale: true, axisLine: { show: false }, axisLabel: { color: "#888" }, splitLine: { lineStyle: { color: "#e4e7eb" } } };
+    three.setOption(Object.assign({}, baseOpt, {
+        legend: { top: 0, textStyle: { color: "#555" }, itemWidth: 18 },
+        tooltip: Object.assign({}, tooltipStyle, { axisPointer: { type: "cross", link: [{ xAxisIndex: "all" }], label: { backgroundColor: "#333" } } }),
+        axisPointer: { link: [{ xAxisIndex: "all" }] },
+        grid: [
+            Object.assign({ top: 36, height: "27%" }, g3),
+            Object.assign({ top: "37%", height: "27%" }, g3),
+            Object.assign({ top: "72%", height: "23%" }, g3)
+        ],
+        xAxis: [
+            Object.assign({}, xAxisShared, { gridIndex: 0, axisLabel: { show: false }, axisTick: { show: false } }),
+            Object.assign({}, xAxisShared, { gridIndex: 1, axisLabel: { show: false }, axisTick: { show: false } }),
+            Object.assign({}, xAxisShared, { gridIndex: 2 })
+        ],
+        yAxis: [
+            Object.assign({}, yAxisShared, { gridIndex: 0, name: "纳斯达克（点）", nameTextStyle: { color: "#5470c6" } }),
+            Object.assign({}, yAxisShared, { gridIndex: 1, name: "VIX（点）", nameTextStyle: { color: "#ee6666" } }),
+            Object.assign({}, yAxisShared, { gridIndex: 2, name: "收益率（%）", nameTextStyle: { color: "#666" } })
+        ],
+        dataZoom: [
+            { type: "inside", xAxisIndex: [0, 1, 2] },
+            { type: "slider", xAxisIndex: [0, 1, 2], bottom: 6, height: 20, borderColor: "#d6dbe2", backgroundColor: "#f5f6f8", fillerColor: "rgba(84,160,255,0.15)", textStyle: { color: "#888" } }
+        ],
+        graphic: [
+            { type: "text", left: 2, top: 12, style: { text: "纳斯达克综合指数（日收盘）", fill: "#5470c6", font: "600 13px sans-serif" } },
+            { type: "text", left: 2, top: "33%", style: { text: "VIX 恐慌指数", fill: "#ee6666", font: "600 13px sans-serif" } },
+            { type: "text", left: 2, top: "68%", style: { text: "美债收益率（2 年 / 10 年）", fill: "#333", font: "600 13px sans-serif" } }
+        ],
+        series: [
+            Object.assign({}, makeLine("NASDAQCOM"), { xAxisIndex: 0, yAxisIndex: 0, lineStyle: { width: 1.4, color: "#5470c6" } }),
+            Object.assign({}, makeLine("VIXCLS"), { xAxisIndex: 1, yAxisIndex: 1, lineStyle: { width: 1.4, color: "#ee6666" } }),
+            Object.assign({}, makeLine("DGS2"), { xAxisIndex: 2, yAxisIndex: 2, lineStyle: { width: 1.4, color: "#91cc75" } }),
+            Object.assign({}, makeLine("DGS10"), { xAxisIndex: 2, yAxisIndex: 2, lineStyle: { width: 1.4, color: "#fac858" } })
+        ]
+    }));
+
+    // 3) 单指标图（仅纳斯达克）
+    const nasdaqEl = document.getElementById("ch_NASDAQCOM");
+    const chart = echarts.init(nasdaqEl);
+    chart.setOption(Object.assign({}, baseOpt, {
+        legend: { top: 0, textStyle: { color: "#555" } },
+        grid: { left: 60, right: 20, top: 32, bottom: 60 },
+        xAxis: Object.assign({ type: "time", min: "dataMin" }, axisStyle),
+        yAxis: Object.assign({ type: "value", scale: true, name: "纳斯达克（点）", nameTextStyle: { color: "#666" } }, axisStyle),
+        dataZoom: [
+            { type: "inside", xAxisIndex: 0 },
+            { type: "slider", xAxisIndex: 0, bottom: 8, height: 18, borderColor: "#d6dbe2", backgroundColor: "#f5f6f8", fillerColor: "rgba(84,160,255,0.15)", textStyle: { color: "#888" } }
+        ],
+        toolbox: { right: 10, feature: { saveAsImage: { title: "保存图片" } } },
+        series: [makeLine("NASDAQCOM")]
+    }));
+
+    const onResize = function () { comp.resize(); three.resize(); chart.resize(); };
+    window.addEventListener("resize", onResize);
 }
 
-document.getElementById('refreshBtn').addEventListener('click', loadHistory);
-loadHistory();
+renderAll().catch(err => console.error("加载 CSV 失败:", err));
 </script>
 
 <style>
-.panel-stack {
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    overflow: hidden;
-}
-.panel + .panel {
-    border-top: 1px dashed #dde1e6;
-}
-.panel .history-wrap {
-    position: relative;
-    height: 160px;
-    width: 100%;
-}
-.panel-stack .panel:last-child .history-wrap {
-    height: 180px; /* 底部多留一点空位给 X 轴刻度 */
-}
-.chart-legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.25rem;
-    margin-top: 0.75rem;
-    border-top: 1px solid #eef1f4;
-    padding-top: 0.75rem;
-}
-.legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    font-size: 0.88rem;
-    color: #555;
-}
-.legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    display: inline-block;
-}
-.history-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #999;
-    font-size: 0.9rem;
-    padding: 1rem 0;
-}
+.index-chart-stack { display: flex; flex-direction: column; gap: 1.5rem; }
+.index-chart-card { background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.index-chart-title { font-size: 0.95rem; font-weight: 600; color: #333; margin-bottom: 0.75rem; }
+.index-chart { width: 100%; height: 460px; }
 </style>
 {% endblock %}
