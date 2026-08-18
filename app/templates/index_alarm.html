@@ -80,6 +80,42 @@ function makeLine(sid) {
     };
 }
 
+// 扫描序列追踪峰值：当价格相对峰值回撤达到 10%（threshold）时，记下峰值（peak）与触发点（trigger）
+function computeDrawdowns(sid, threshold) {
+    const pts = RAW[sid];
+    const marks = [];
+    if (!pts.length) return marks;
+    let peak = pts[0][1];
+    let peakDate = pts[0][0];
+    for (let i = 1; i < pts.length; i++) {
+        const v = pts[i][1];
+        if (v > peak) {
+            peak = v;
+            peakDate = pts[i][0];
+        } else if (v <= peak * (1 - threshold)) {
+            marks.push({ peak_date: peakDate, peak: peak, trigger_date: pts[i][0], trigger: v });
+            // 触发后以当前点作为新的参照基准，重新追踪峰值
+            peak = v;
+            peakDate = pts[i][0];
+        }
+    }
+    return marks;
+}
+
+// 构建回撤标记：从峰值的水平虚线 + 峰值三角点 + 触发点圆点
+function buildMarks(drawdowns) {
+    const lines = [], points = [];
+    drawdowns.forEach(function (rd) {
+        lines.push([{ coord: [rd.peak_date, rd.peak] }, { coord: [rd.trigger_date, rd.peak] }]);
+        points.push({ coord: [rd.peak_date, rd.peak], symbol: "triangle", symbolSize: 11, itemStyle: { color: "#9aa5b1" }, label: { show: true, formatter: rd.peak_date, position: "top", color: "#9aa5b1", fontSize: 10 } });
+        points.push({ coord: [rd.trigger_date, rd.trigger], symbol: "circle", symbolSize: 9, itemStyle: { color: "#ff4d4f" }, label: { show: true, formatter: rd.trigger_date, position: "bottom", color: "#ff6b6b", fontSize: 10 } });
+    });
+    return {
+        markLine: { silent: true, symbol: ["none", "none"], lineStyle: { type: "dashed", color: "#8b98a5", width: 1 }, label: { show: false }, data: lines },
+        markPoint: { silent: true, data: points }
+    };
+}
+
 async function renderAll() {
     await Promise.all(SIDS.map(loadCSV));
 
@@ -162,7 +198,7 @@ async function renderAll() {
             { type: "slider", xAxisIndex: 0, bottom: 8, height: 18, borderColor: "#d6dbe2", backgroundColor: "#f5f6f8", fillerColor: "rgba(84,160,255,0.15)", textStyle: { color: "#888" } }
         ],
         toolbox: { right: 10, feature: { saveAsImage: { title: "保存图片" } } },
-        series: [makeLine("NASDAQCOM")]
+        series: [Object.assign({}, makeLine("NASDAQCOM"), buildMarks(computeDrawdowns("NASDAQCOM", 0.10)))]
     }));
 
     const onResize = function () { comp.resize(); three.resize(); chart.resize(); };
