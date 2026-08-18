@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""市场数据抓取模块（海外数据源：美国圣路易斯联储 FRED）。
+"""市场数据抓取模块（海外权威数据源，均无需 API Key，适合日本服务器）。
 
-服务器位于日本，FRED 接口在海外可正常访问且无需 API Key。
-统一使用 FRED 获取纳斯达克指数、VIX、美债2年期/10年期收益率。
+数据源组合：
+- 纳斯达克指数      -> 美国圣路易斯联储 FRED（NASDAQCOM）
+- VIX 恐慌指数      -> CBOE 官方历史 CSV（换用 CBOE，时效好于 FRED）
+- 美债 2Y/10Y 收益率 -> 美国财政部官方每日收益率 CSV（换用 Treasury，时效好于 FRED）
 
 数据获取走「定时落库 + 页面读库」模式：
-- 调度器调用 refresh_market_data() 抓取 FRED 并写入 market_prices 表；
+- 调度器调用 refresh_market_data() 抓取并写入 market_prices 表；
 - 页面接口从数据库读取，不直接访问外部源。
 """
 import asyncio
@@ -22,31 +24,46 @@ from app import crud, schemas
 
 logger = logging.getLogger(__name__)
 
-_client = httpx.AsyncClient(timeout=15)
+_client = httpx.AsyncClient(timeout=20)
 
-# FRED 数据源：按 Series ID 下载 CSV
+# 各数据源端点
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+VIX_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+TREASURY_URL = (
+    "https://home.treasury.gov/resource-center/data-chart-center/"
+    "interest-rates/daily-treasury-rates.csv/{year}/all"
+    "?type=daily_treasury_yield_curve&field_tdr_date_value={year}&page&_format=csv"
+)
 
-# 指标定义：key/unit 用于前端展示（收益率用 %）
+# 指标定义：source 决定用哪个数据源，column 为财政部收益率 CSV 中的列名；unit 用于前端展示（收益率用 %）
 SERIES = [
-    {"key": "nasdaq", "name": "纳斯达克指数", "symbol": "NASDAQCOM", "unit": "", "describe": "NASDAQ Composite 综合指数"},
-    {"key": "vix", "name": "VIX恐慌指数", "symbol": "VIXCLS", "unit": "", "describe": "CBOE Volatility Index"},
-    {"key": "dgs2", "name": "美债2年期收益率", "symbol": "DGS2", "unit": "%", "describe": "2-Year Treasury Constant Maturity"},
-    {"key": "dgs10", "name": "美债10年期收益率", "symbol": "DGS10", "unit": "%", "describe": "10-Year Treasury Constant Maturity"},
+    {"key": "nasdaq", "name": "纳斯达克指数", "symbol": "NASDAQCOM", "unit": "", "source": "fred",
+     "column": None, "describe": "NASDAQ Composite 综合指数"},
+    {"key": "vix", "name": "VIX恐慌指数", "symbol": "VIXCLS", "unit": "", "source": "cboe",
+     "column": None, "describe": "CBOE Volatility Index"},
+    {"key": "dgs2", "name": "美债2年期收益率", "symbol": "DGS2", "unit": "%", "source": "treasury",
+     "column": "2 Yr", "describe": "U.S. Treasury 2-Year Yield"},
+    {"key": "dgs10", "name": "美债10年期收益率", "symbol": "DGS10", "unit": "%", "source": "treasury",
+     "column": "10 Yr", "describe": "U.S. Treasury 10-Year Yield"},
 ]
 
 
-async def _fetch_series(symbol: str) -> Dict[str, Any]:
-    """抓取单个 FRED 序列，返回最新值及其数据日期。"""
+def _parse_ymd(value: str) -> str:
+    """MM/DD/YYYY -> YYYY-MM-DD（与数据库 date 格式保持一致）。"""
+    m, d, y = value.split("/")
+    return f"{y}-{m}-{d}"
+
+
+async def _fetch_fred(symbol: str) -> Dict[str, Any]:
+    """抓取 FRED 序列，取 CSV 最后一行（最新日期），date 已是 YYYY-MM-DD。"""
     try:
         response = await _client.get(FRED_URL, params={"id": symbol})
         response.raise_for_status()
     except Exception as e:
         logger.error(f"获取 FRED 序列 {symbol} 失败: {e}", exc_info=True)
-        return {"value": None}
+        return {"value": None, "date": None}
 
     rows = list(csv.reader(io.StringIO(response.text)))
-    # 首行为表头 (observation_date,<symbol>)，跳过
     values = []
     for row in rows[1:]:
         if len(row) < 2:
@@ -60,15 +77,90 @@ async def _fetch_series(symbol: str) -> Dict[str, Any]:
             continue
 
     if not values:
-        return {"value": None}
-
+        return {"value": None, "date": None}
     date, value = values[-1]
     return {"value": value, "date": date}
 
 
+async def _fetch_vix() -> Dict[str, Any]:
+    """抓取 CBOE VIX 官方历史 CSV，取行尾（最新交易日）的 CLOSE 值。"""
+    try:
+        response = await _client.get(VIX_URL)
+        response.raise_for_status()
+    except Exception as e:
+        logger.error(f"获取 CBOE VIX 失败: {e}", exc_info=True)
+        return {"value": None, "date": None}
+
+    rows = list(csv.reader(io.StringIO(response.text)))
+    # 表头: DATE,OPEN,HIGH,LOW,CLOSE；取最后一行（最新交易日）的 CLOSE（下标 4）
+    latest = None
+    for row in rows[1:]:
+        if len(row) < 5 or not row[0].strip():
+            continue
+        close = row[4].strip()
+        if not close:
+            continue
+        try:
+            latest = (row[0].strip(), float(close))
+        except ValueError:
+            continue
+
+    if not latest:
+        return {"value": None, "date": None}
+    return {"value": latest[1], "date": _parse_ymd(latest[0])}
+
+
+async def _fetch_treasury(column: str) -> Dict[str, Any]:
+    """抓取美国财政部当年每日收益率 CSV，取首行（最新日期）对应列的值。"""
+    year = datetime.now().year
+    url = TREASURY_URL.format(year=year)
+    try:
+        response = await _client.get(url)
+        response.raise_for_status()
+    except Exception as e:
+        logger.error(f"获取 Treasury收益率 {column} 失败: {e}", exc_info=True)
+        return {"value": None, "date": None}
+
+    rows = list(csv.reader(io.StringIO(response.text)))
+    if not rows:
+        return {"value": None, "date": None}
+
+    header = [c.strip() for c in rows[0]]
+    if column not in header:
+        logger.error(f"Treasury CSV 未找到列 {column}, 表头: {header}")
+        return {"value": None, "date": None}
+
+    idx = header.index(column)
+    # 数据第一行即最新交易日（按日期倒序）
+    for row in rows[1:]:
+        if len(row) <= idx:
+            continue
+        date_raw, val_raw = row[0].strip(), row[idx].strip()
+        if not date_raw or not val_raw:
+            continue
+        try:
+            return {"value": float(val_raw), "date": _parse_ymd(date_raw)}
+        except ValueError:
+            continue
+    return {"value": None, "date": None}
+
+
+async def _fetch_series(series: Dict[str, Any]) -> Dict[str, Any]:
+    """按指标的 source 分发给对应的抓取函数。"""
+    source = series["source"]
+    if source == "fred":
+        return await _fetch_fred(series["symbol"])
+    if source == "cboe":
+        return await _fetch_vix()
+    if source == "treasury":
+        return await _fetch_treasury(series["column"])
+    logger.error(f"未知数据源 {source}，跳过指标 {series['name']}")
+    return {"value": None, "date": None}
+
+
 async def fetch_fred_prices() -> List[Dict[str, Any]]:
-    """并发抓取 FRED 全部指标，返回原始数据列表（不落库）。"""
-    raws = await asyncio.gather(*(_fetch_series(s["symbol"]) for s in SERIES))
+    """并发抓取全部指标，返回原始数据列表（不落库）。"""
+    raws = await asyncio.gather(*(_fetch_series(s) for s in SERIES))
     items = []
     for series, raw in zip(SERIES, raws):
         items.append({
@@ -86,7 +178,7 @@ async def fetch_fred_prices() -> List[Dict[str, Any]]:
 def save_market_prices(items: List[Dict[str, Any]]) -> None:
     """将抓取到的指标按 (symbol, date) 写入/更新 market_prices 表（同步函数，供 asyncio.to_thread 调用）。
 
-    去重逻辑：若库中该 symbol 的最新记录日期与本次抓取相同、且值也相同（如周末/非交易时间 FRED 未更新），
+    去重逻辑：若库中该 symbol 的最新记录日期与本次抓取相同、且值也相同（如周末/非交易时间未更新），
     则跳过落库，仅当出现新日期或值发生变化时才写入。
     """
     db = SessionLocal()
@@ -118,11 +210,11 @@ def save_market_prices(items: List[Dict[str, Any]]) -> None:
 
 
 async def refresh_market_data() -> Dict[str, Any]:
-    """抓取 FRED 全部指标并落库（按 symbol+date 累积历史），返回原始数据供日志使用。"""
+    """抓取全市场指标并落库（按 symbol+date 累积历史），返回原始数据供日志使用。"""
     items = await fetch_fred_prices()
     await asyncio.to_thread(save_market_prices, items)
     return {
         "items": items,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "source": "FRED (St. Louis Fed)",
+        "source": "FRED + CBOE + U.S. Treasury",
     }
