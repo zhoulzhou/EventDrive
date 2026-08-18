@@ -40,7 +40,8 @@ const RAW = {}, NORM = {};
 
 // 从数据库 API 获取全部历史，按列构建 [Date, value] 序列，并做起点=100 归一化
 async function loadFromDB() {
-    const data = await fetchWithAuth("/api/index-alarm");
+    const response = await fetchWithAuth("/api/index-alarm");
+    const data = await response.json();
     if (data.status !== "ok") throw new Error(data.message || "获取指数数据失败");
     SIDS.forEach(function (sid) {
         const col = API_COL[sid];
