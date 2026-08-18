@@ -54,15 +54,27 @@ def _import_index_csv(db: Session):
         logger.warning("指数预警 CSV 数据为空，未导入任何记录")
 
 
-@router.get("/index-alarm")
-async def get_index_alarm_data(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    """返回指数预警全部历史数据（从数据库读取，宽表形式 date -> 各列值）。"""
+def ensure_index_data_loaded() -> bool:
+    """应用启动时调用:仅当 index_history 表为空时,从 index/ CSV 一次性导入。"""
+    from app.database import SessionLocal
+    db = SessionLocal()
     try:
-        # 首次访问且数据库尚无数据时，从 index/ CSV 惰性导入一次
         if crud.get_index_history_count(db) == 0:
             _import_index_csv(db)
             db.expire_all()
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"指数预警 CSV 导入失败: {e}", exc_info=True)
+        return False
+    finally:
+        db.close()
 
+
+@router.get("/index-alarm")
+async def get_index_alarm_data(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
+    """返回指数预警全部历史数据(从数据库读取,宽表形式 date -> 各列值)。"""
+    try:
         rows = crud.get_index_history_all(db)
         points = []
         for row in rows:
