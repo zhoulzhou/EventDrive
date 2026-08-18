@@ -225,3 +225,47 @@ def get_market_history(db: Session, symbol: str) -> List[models.MarketPrice]:
         .order_by(models.MarketPrice.date.asc())
         .all()
     )
+
+
+# index/ 下的 CSV 文件名 -> IndexHistory 表列名（列名取 CSV 文件名，与市场行情字段分离）
+INDEX_CSV_COLUMNS = {
+    "NASDAQCOM_2015.csv": "NASDAQCOM_2015",
+    "VIXCLS_2015.csv": "VIXCLS_2015",
+    "DGS2_2015.csv": "DGS2_2015",
+    "DGS10_2015.csv": "DGS10_2015",
+}
+INDEX_COLUMN_NAMES = [
+    "NASDAQCOM_2015",
+    "VIXCLS_2015",
+    "DGS2_2015",
+    "DGS10_2015",
+]
+
+
+def get_index_history_all(db: Session) -> List[models.IndexHistory]:
+    """返回指数预警全部历史记录（按日期升序）。"""
+    return (
+        db.query(models.IndexHistory)
+        .order_by(models.IndexHistory.date.asc())
+        .all()
+    )
+
+
+def get_index_history_count(db: Session) -> int:
+    return db.query(models.IndexHistory).count()
+
+
+def upsert_index_history_rows(db: Session, rows: List[dict]) -> int:
+    """按 date 更新或插入多条指数预警历史记录。rows 形如 [{date, column, value}]。"""
+    seen: Dict[str, models.IndexHistory] = {}
+    for row in rows:
+        rec = seen.get(row["date"])
+        if rec is None:
+            rec = db.query(models.IndexHistory).filter(models.IndexHistory.date == row["date"]).first()
+            if rec is None:
+                rec = models.IndexHistory(date=row["date"])
+                db.add(rec)
+            seen[row["date"]] = rec
+        setattr(rec, row["column"], row["value"])
+    db.commit()
+    return len(seen)

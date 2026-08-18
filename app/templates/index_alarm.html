@@ -28,39 +28,31 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <script>
-const FILES = {
-    "NASDAQCOM": "/index/NASDAQCOM_2015.csv",
-    "VIXCLS": "/index/VIXCLS_2015.csv",
-    "DGS2": "/index/DGS2_2015.csv",
-    "DGS10": "/index/DGS10_2015.csv"
-};
 const META = {
     "NASDAQCOM": {"name": "纳斯达克综合指数", "unit": "点", "color": "#5470c6"},
     "VIXCLS": {"name": "VIX 恐慌指数", "unit": "点", "color": "#ee6666"},
     "DGS2": {"name": "2年期美债收益率", "unit": "%", "color": "#91cc75"},
     "DGS10": {"name": "10年期美债收益率", "unit": "%", "color": "#fac858"}
 };
+const API_COL = { "NASDAQCOM": "NASDAQCOM_2015", "VIXCLS": "VIXCLS_2015", "DGS2": "DGS2_2015", "DGS10": "DGS10_2015" };
 const SIDS = ["NASDAQCOM", "VIXCLS", "DGS2", "DGS10"];
 const RAW = {}, NORM = {};
 
-// 解析 index 下的 CSV（DATE,VALUE），空值跳过，产出 [Date, value] 序列
-async function loadCSV(sid) {
-    const resp = await fetch(FILES[sid]);
-    const text = await resp.text();
-    const rows = text.trim().split(/\r?\n/).slice(1);
-    const pts = [];
-    for (const line of rows) {
-        const idx = line.indexOf(",");
-        if (idx < 0) continue;
-        const date = line.slice(0, idx);
-        const val = parseFloat(line.slice(idx + 1));
-        if (!date || isNaN(val)) continue;
-        pts.push([date, val]);
-    }
-    RAW[sid] = pts;
-    // 归一化：以序列首个有效值为 100
-    const base = pts[0] ? pts[0][1] : 1;
-    NORM[sid] = pts.map(pt => (pt[1] / base) * 100);
+// 从数据库 API 获取全部历史，按列构建 [Date, value] 序列，并做起点=100 归一化
+async function loadFromDB() {
+    const data = await fetchWithAuth("/api/index-alarm");
+    if (data.status !== "ok") throw new Error(data.message || "获取指数数据失败");
+    SIDS.forEach(function (sid) {
+        const col = API_COL[sid];
+        const pts = [];
+        for (const point of data.points) {
+            const val = point[col];
+            if (point.date && val !== undefined && val !== null) pts.push([point.date, val]);
+        }
+        RAW[sid] = pts;
+        const base = pts.length ? pts[0][1] : 1;
+        NORM[sid] = pts.map(pt => (pt[1] / base) * 100);
+    });
 }
 
 const axisStyle = { axisLine: { lineStyle: { color: "#8b98a5" } }, axisLabel: { color: "#8b98a5" }, splitLine: { lineStyle: { color: "#e4e7eb" } } };
@@ -117,7 +109,7 @@ function buildMarks(drawdowns) {
 }
 
 async function renderAll() {
-    await Promise.all(SIDS.map(loadCSV));
+    await loadFromDB();
 
     // 1) 四指标归一化对比（起点 = 100）
     const comp = echarts.init(document.getElementById("main"));
@@ -205,7 +197,7 @@ async function renderAll() {
     window.addEventListener("resize", onResize);
 }
 
-renderAll().catch(err => console.error("加载 CSV 失败:", err));
+renderAll().catch(err => console.error("加载指数数据失败:", err));
 </script>
 
 <style>

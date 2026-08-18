@@ -54,3 +54,18 @@ class MarketPrice(Base):
     date = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class IndexHistory(Base):
+    """指数预警历史宽表：一行一个日期，每列对应 index/ 下一个 CSV 文件（列名取 CSV 文件名）。"""
+    __tablename__ = "index_history"
+    __table_args__ = (UniqueConstraint("date", name="uq_index_history_date"),)
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    date = Column(Text, nullable=False, index=True)
+    NASDAQCOM_2015 = Column(Float, nullable=True)
+    VIXCLS_2015 = Column(Float, nullable=True)
+    DGS2_2015 = Column(Float, nullable=True)
+    DGS10_2015 = Column(Float, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
