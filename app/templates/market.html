@@ -120,7 +120,7 @@ async function renderAllHistory(items) {
         data: allDates.map(d => (valMap[sym] && valMap[sym][d] != null) ? valMap[sym][d] : null)
     });
 
-    const nasdaq = mk('NASDAQCOM', '#2563eb', true);
+    const nasdaq = mk('NASDAQ100', '#2563eb', true);
     const vix = mk('VIXCLS', '#ef4444', false);
     const dgs2 = mk('DGS2', '#059669', false);
     const dgs10 = mk('DGS10', '#f59e0b', false);

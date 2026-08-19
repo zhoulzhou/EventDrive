@@ -53,9 +53,10 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         for sym, rows in latest.items():
             items.append(_to_item({"current": rows[0], "previous": rows[1] if len(rows) > 1 else None}))
 
-        # 按固定显示顺序排序，独立于抓取列表 SERIES
+        # 仅展示 DISPLAY_ORDER 中的指标（过滤历史残留 symbol），并按固定顺序排序
         order = {sym: i for i, sym in enumerate(DISPLAY_ORDER)}
-        items.sort(key=lambda it: order.get(it["symbol"], len(order)))
+        items = [it for it in items if it["symbol"] in order]
+        items.sort(key=lambda it: order[it["symbol"]])
 
         return {
             "status": "ok",

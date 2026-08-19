@@ -37,8 +37,8 @@ TREASURY_URL = (
 
 # 指标定义：source 决定用哪个数据源，column 为财政部收益率 CSV 中的列名；unit 用于前端展示（收益率用 %）
 SERIES = [
-    {"key": "nasdaq", "name": "纳斯达克指数", "symbol": "NASDAQCOM", "unit": "", "source": "fred",
-     "column": None, "describe": "NASDAQ Composite 综合指数"},
+    {"key": "nasdaq", "name": "纳斯达克100指数", "symbol": "NASDAQ100", "unit": "", "source": "fred",
+     "column": None, "describe": "NASDAQ-100 Index"},
     {"key": "vix", "name": "VIX恐慌指数", "symbol": "VIXCLS", "unit": "", "source": "cboe",
      "column": None, "describe": "CBOE Volatility Index"},
     {"key": "dgs2", "name": "美债2年期收益率", "symbol": "DGS2", "unit": "%", "source": "treasury",
