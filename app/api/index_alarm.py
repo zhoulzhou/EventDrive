@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.config import BASE_DIR
@@ -71,21 +71,29 @@ def ensure_index_data_loaded() -> bool:
         db.close()
 
 
-@router.get("/index-alarm")
-async def get_index_alarm_data(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    """返回指数预警全部历史数据(从数据库读取,宽表形式 date -> 各列值)。"""
-    try:
-        rows = crud.get_index_history_all(db)
-        points = []
-        for row in rows:
-            point = {"date": row.date}
-            for col in crud.INDEX_COLUMN_NAMES:
-                val = getattr(row, col)
-                if val is not None:
-                    point[col] = val
-            points.append(point)
+# 数据静态（仅启动时导入一次），模块级内存缓存，首次请求构建后复用
+_cache = None
 
-        return {"status": "ok", "columns": crud.INDEX_COLUMN_NAMES, "points": points}
+
+@router.get("/index-alarm")
+async def get_index_alarm_data(response: Response, db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
+    """返回指数预警全部历史数据(从数据库读取,宽表形式 date -> 各列值)。"""
+    global _cache
+    try:
+        if _cache is None:
+            rows = crud.get_index_history_all(db)
+            points = []
+            for row in rows:
+                point = {"date": row.date}
+                for col in crud.INDEX_COLUMN_NAMES:
+                    val = getattr(row, col)
+                    if val is not None:
+                        point[col] = val
+                points.append(point)
+            _cache = {"status": "ok", "columns": crud.INDEX_COLUMN_NAMES, "points": points}
+        # 数据为静态历史数据，允许私有缓存 24h
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        return _cache
     except Exception as e:
         logger.error(f"获取指数预警数据失败: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}

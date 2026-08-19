@@ -39,10 +39,10 @@ const SIDS = ["NASDAQCOM", "VIXCLS", "DGS2", "DGS10"];
 const RAW = {}, NORM = {};
 
 // 从数据库 API 获取全部历史，按列构建 [Date, value] 序列，并做起点=100 归一化
-async function loadFromDB() {
-    const response = await fetchWithAuth("/api/index-alarm");
-    const data = await response.json();
-    if (data.status !== "ok") throw new Error(data.message || "获取指数数据失败");
+const CACHE_KEY = "index_alarm_data_v1";
+const CACHE_TTL = 24 * 3600 * 1000; // 24h
+
+function buildSeries(data) {
     SIDS.forEach(function (sid) {
         const col = API_COL[sid];
         const pts = [];
@@ -54,6 +54,28 @@ async function loadFromDB() {
         const base = pts.length ? pts[0][1] : 1;
         NORM[sid] = pts.map(pt => (pt[1] / base) * 100);
     });
+}
+
+async function loadFromDB() {
+    // 数据静态且 24h 有效，优先读本地缓存，刷新时不再重拉全量
+    try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+            const { ts, data } = JSON.parse(cached);
+            if (Date.now() - ts < CACHE_TTL && data && data.status === "ok") {
+                buildSeries(data);
+                return;
+            }
+        }
+    } catch (e) { /* 缓存损坏则忽略，走网络 */ }
+
+    const response = await fetchWithAuth("/api/index-alarm");
+    const data = await response.json();
+    if (data.status !== "ok") throw new Error(data.message || "获取指数数据失败");
+    buildSeries(data);
+    try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+    } catch (e) { /* 存储满时忽略 */ }
 }
 
 const axisStyle = { axisLine: { lineStyle: { color: "#8b98a5" } }, axisLabel: { color: "#8b98a5" }, splitLine: { lineStyle: { color: "#e4e7eb" } } };
