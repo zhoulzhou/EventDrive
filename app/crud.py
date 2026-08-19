@@ -227,6 +227,16 @@ def get_market_history(db: Session, symbol: str) -> List[models.MarketPrice]:
     )
 
 
+def get_market_peak(db: Session, symbol: str) -> Optional[models.MarketPrice]:
+    """返回某 symbol 历史最大值记录（作为峰值，用于回撤预警）。"""
+    return (
+        db.query(models.MarketPrice)
+        .filter(models.MarketPrice.symbol == symbol)
+        .order_by(models.MarketPrice.value.desc())
+        .first()
+    )
+
+
 # index/ 下的 CSV 文件名 -> IndexHistory 表列名（列名取 CSV 文件名，与市场行情字段分离）
 INDEX_CSV_COLUMNS = {
     "NASDAQCOM_2015.csv": "NASDAQCOM_2015",

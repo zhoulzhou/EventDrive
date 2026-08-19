@@ -71,7 +71,7 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
 
 @router.get("/market/history")
 async def get_market_history(
-    symbol: str = Query(..., description="FRED Series ID，如 NASDAQCOM/VIXCLS/DGS2/DGS10"),
+    symbol: str = Query(..., description="FRED Series ID，如 NASDAQ100/VIXCLS/DGS2/DGS10"),
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
 ):

@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
     <h1>市场行情</h1>
-    <p class="form-hint" id="metaInfo">数据来源：FRED（美国圣路易斯联储）</p>
+    <p class="form-hint" id="metaInfo"></p>
 </div>
 
 <div id="marketGrid" class="sources-grid">
@@ -205,7 +205,6 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-document.getElementById('refreshBtn').addEventListener('click', loadMarket);
 loadMarket();
 </script>
 
