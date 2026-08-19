@@ -58,7 +58,7 @@ async function loadFromDB() {
 
 const axisStyle = { axisLine: { lineStyle: { color: "#8b98a5" } }, axisLabel: { color: "#8b98a5" }, splitLine: { lineStyle: { color: "#e4e7eb" } } };
 const tooltipStyle = { trigger: "axis", backgroundColor: "#fff", borderColor: "#d6dbe2", textStyle: { color: "#333" } };
-const baseOpt = { backgroundColor: "transparent", textStyle: { color: "#666" }, tooltip: tooltipStyle };
+const baseOpt = { backgroundColor: "transparent", textStyle: { color: "#666" }, tooltip: tooltipStyle, animation: false };
 
 function makeLine(sid) {
     return {
@@ -109,11 +109,43 @@ function buildMarks(drawdowns) {
     };
 }
 
+// 已初始化的图表实例（resize 时统一刷新）
+const charts = [];
+function registerChart(inst) { charts.push(inst); return inst; }
+
+// 懒加载:滚入视口才初始化，rootMargin 提前 200px 预加载
+function lazyInit(elId, renderFn) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+                io.disconnect();
+                renderFn();
+            }
+        });
+    }, { rootMargin: "200px" });
+    io.observe(el);
+}
+
 async function renderAll() {
     await loadFromDB();
 
-    // 1) 四指标归一化对比（起点 = 100）
-    const comp = echarts.init(document.getElementById("main"));
+    // 首屏立即渲染:纳斯达克单图（含峰值回撤 10% 标记）
+    renderNasdaq();
+
+    // 其余图表滚入视口才初始化
+    lazyInit("main", renderCompare);
+    lazyInit("three", renderThree);
+
+    window.addEventListener("resize", function () {
+        charts.forEach(function (c) { c.resize(); });
+    });
+}
+
+// 四指标归一化对比（起点 = 100）
+function renderCompare() {
+    const comp = registerChart(echarts.init(document.getElementById("main")));
     comp.setOption(Object.assign({}, baseOpt, {
         legend: { top: 0, textStyle: { color: "#555" }, itemWidth: 18 },
         grid: { left: 60, right: 20, top: 40, bottom: 80 },
@@ -136,9 +168,11 @@ async function renderAll() {
             };
         })
     }));
+}
 
-    // 2) 三面板联动图
-    const three = echarts.init(document.getElementById("three"));
+// 三面板联动图
+function renderThree() {
+    const three = registerChart(echarts.init(document.getElementById("three")));
     const g3 = { left: 70, right: 28, width: "auto" };
     const xAxisShared = { type: "time", min: "dataMin", axisLine: { lineStyle: { color: "#8b98a5" } }, axisLabel: { color: "#888" }, splitLine: { show: false } };
     const yAxisShared = { type: "value", scale: true, axisLine: { show: false }, axisLabel: { color: "#888" }, splitLine: { lineStyle: { color: "#e4e7eb" } } };
@@ -177,10 +211,11 @@ async function renderAll() {
             Object.assign({}, makeLine("DGS10"), { xAxisIndex: 2, yAxisIndex: 2, lineStyle: { width: 1.4, color: "#fac858" } })
         ]
     }));
+}
 
-    // 3) 单指标图（仅纳斯达克）
-    const nasdaqEl = document.getElementById("ch_NASDAQCOM");
-    const chart = echarts.init(nasdaqEl);
+// 单指标图（仅纳斯达克，含峰值回撤标记）
+function renderNasdaq() {
+    const chart = registerChart(echarts.init(document.getElementById("ch_NASDAQCOM")));
     chart.setOption(Object.assign({}, baseOpt, {
         legend: { top: 0, textStyle: { color: "#555" } },
         grid: { left: 60, right: 20, top: 32, bottom: 60 },
@@ -193,9 +228,6 @@ async function renderAll() {
         toolbox: { right: 10, feature: { saveAsImage: { title: "保存图片" } } },
         series: [Object.assign({}, makeLine("NASDAQCOM"), buildMarks(computeDrawdowns("NASDAQCOM", 0.10)))]
     }));
-
-    const onResize = function () { comp.resize(); three.resize(); chart.resize(); };
-    window.addEventListener("resize", onResize);
 }
 
 renderAll().catch(err => console.error("加载指数数据失败:", err));
