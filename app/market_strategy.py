@@ -91,8 +91,10 @@ def advance(db: Session, symbol: str, value: float, date: str) -> bool:
     """在数据落库后推进峰值状态。
 
     算法（动态追踪）：新高上移 / 回撤达 red_pct 重置 / 否则不变。
-    若策略配置了 fixed_peak_value，则改用固定峰值模式：峰值固定不随行情
-    上移或重置，仅当回撤达 red_pct 时记录 drawdown_date（触发日红色预警）。
+    若策略配置了 fixed_peak_value / fixed_peak_date，则先以其作为「当前峰值」
+    播种（仅当状态缺失、或状态峰值日期早于配置日期、或同日但值不同时生效，
+    用于把当前峰值调整为用户指定的值）；播种后继续走动态策略：后续创新高仍
+    会上移峰值，回撤达 red_pct 仍会重置开启新一轮。
 
     Args:
         db: 数据库会话（已由调用方管理）。
@@ -110,28 +112,24 @@ def advance(db: Session, symbol: str, value: float, date: str) -> bool:
     state = crud.get_market_strategy_state(db, symbol)
     red_pct = strategy["red_pct"] / 100.0  # 转为小数
 
-    # 固定峰值模式：峰值固定为配置值，永不随行情上移/重置
+    # 固定峰值播种：把「当前峰值」调整为配置值（一次性），之后交给动态策略演进
+    seeded = False
     fixed = _fixed_peak(strategy)
     if fixed is not None:
         fixed_peak, fixed_date = fixed
-        fixed_date = fixed_date or date
-        changed = False
-        # 保证持久化状态中的峰值即为固定值
-        if state is None or state.peak_value != fixed_peak or state.peak_date != fixed_date:
-            crud.save_market_strategy_state(db, symbol, fixed_peak, fixed_date, drawdown_date=None)
-            logger.info(f"[{symbol}] 固定峰值生效: 峰值={fixed_peak}, 日期={fixed_date}")
+        stale = (
+            state is None
+            or (fixed_date and state.peak_date < fixed_date)
+            or (fixed_date and state.peak_date == fixed_date and state.peak_value != fixed_peak)
+        )
+        if stale:
+            seed_date = fixed_date or (state.peak_date if state else date)
+            crud.save_market_strategy_state(db, symbol, fixed_peak, seed_date, drawdown_date=None)
+            logger.info(f"[{symbol}] 固定峰值播种: 峰值={fixed_peak}, 日期={seed_date}")
             state = crud.get_market_strategy_state(db, symbol)
-            changed = True
-        # 回撤达阈值 → 记录触发日；恢复后清空
-        drawdown_date = date if value <= fixed_peak * (1 - red_pct) else None
-        if (state.drawdown_date or None) != drawdown_date:
-            crud.save_market_strategy_state(db, symbol, fixed_peak, fixed_date, drawdown_date=drawdown_date)
-            if drawdown_date:
-                logger.info(f"[{symbol}] 固定峰值回撤 {red_pct*100:.0f}% 触发预警 (日期 {date})")
-            changed = True
-        return changed
+            seeded = True
 
-    # 首次初始化：以当前值为峰值
+    # 首次初始化（未配置固定峰值）：以当前值为峰值
     if state is None:
         crud.save_market_strategy_state(db, symbol, value, date)
         logger.info(f"[{symbol}] 策略初始化: 峰值={value}, 日期={date}")
@@ -152,7 +150,8 @@ def advance(db: Session, symbol: str, value: float, date: str) -> bool:
         logger.info(f"[{symbol}] 回撤 {red_pct*100:.0f}% 触发预警, 重置峰值: {peak}→{value} (日期 {date})")
         return True
 
-    return False
+    # 未触发新高/回撤：若本次发生了播种则视为状态已更新
+    return seeded
 
 
 def compute_drawdown(
@@ -184,17 +183,15 @@ def compute_drawdown(
     if strategy is None:
         return result
 
-    # 固定峰值模式：峰值取配置值（可无状态）；否则取持久化状态中的峰值
-    fixed = _fixed_peak(strategy)
-    if fixed is not None:
-        peak, peak_date = fixed
-        if peak_date is None and state is not None:
-            peak_date = state.peak_date
-    else:
-        if state is None:
-            return result
+    # 峰值以持久化状态为准（动态策略演进后的真实峰值）；无状态时退回固定峰值配置
+    if state is not None:
         peak = state.peak_value
         peak_date = state.peak_date
+    else:
+        fixed = _fixed_peak(strategy)
+        if fixed is None:
+            return result
+        peak, peak_date = fixed
 
     result["peak_value"] = peak
     result["peak_date"] = peak_date
