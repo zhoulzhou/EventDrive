@@ -257,3 +257,28 @@ def compute_drawdown_events(points: List[Dict[str, Any]], red_pct: float) -> Lis
             running_peak = value
             running_peak_date = date
     return events
+
+
+def compute_level(value: Optional[float], thresholds: List[float]) -> Dict[str, Any]:
+    """按绝对数值分级（用于 VIX 等按绝对值染色的指标）。
+
+    value < thresholds[0] → ok（绿）；thresholds[0] <= value < thresholds[1] → warn（黄）；
+    value >= thresholds[1] → danger（红）。复用 drawdown_level 字段名，前端无需改动即可着色。
+
+    Args:
+        value: 当前最新值。
+        thresholds: 两个升序阈值，如 [20, 30] 表示 <20 绿 / 20~30 黄 / >=30 红。
+
+    Returns:
+        含 drawdown_level 的字典。
+    """
+    result: Dict[str, Any] = {"drawdown_level": "normal"}
+    if value is None or len(thresholds) < 2:
+        return result
+    if value < thresholds[0]:
+        result["drawdown_level"] = "ok"
+    elif value < thresholds[1]:
+        result["drawdown_level"] = "warn"
+    else:
+        result["drawdown_level"] = "danger"
+    return result

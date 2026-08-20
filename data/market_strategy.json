@@ -5,5 +5,9 @@
     "enabled": true,
     "fixed_peak_value": 29426.02,
     "fixed_peak_date": "2026-08-20"
+  },
+  "VIXCLS": {
+    "enabled": true,
+    "thresholds": [20, 30]
   }
 }

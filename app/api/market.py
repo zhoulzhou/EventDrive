@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, SessionLocal
 from app import crud
 from app.crawlers.market_data import refresh_market_data
-from app.market_strategy import compute_drawdown, compute_drawdown_events, get_strategy
+from app.market_strategy import compute_drawdown, compute_drawdown_events, compute_level, get_strategy
 from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
@@ -59,13 +59,18 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         items = [it for it in items if it["symbol"] in order]
         items.sort(key=lambda it: order[it["symbol"]])
 
-        # 峰值回撤策略（数据在 market_strategy.json 配置、状态持久化在表）：按回撤幅度分级，附峰值信息
+        # 分级着色：VIX 按绝对值分级（<20 绿 / 20~30 黄 / >=30 红），其余指标按回撤幅度分级（附峰值信息）
         for it in items:
             if it["value"] is None:
                 it["drawdown_level"] = "normal"
                 continue
-            state = crud.get_market_strategy_state(db, it["symbol"])
-            info = compute_drawdown(it["symbol"], it["value"], state, current_date=it["date"])
+            if it["symbol"] == "VIXCLS":
+                strategy = get_strategy(it["symbol"])
+                thresholds = strategy.get("thresholds", [20, 30]) if strategy else [20, 30]
+                info = compute_level(it["value"], thresholds)
+            else:
+                state = crud.get_market_strategy_state(db, it["symbol"])
+                info = compute_drawdown(it["symbol"], it["value"], state, current_date=it["date"])
             it.update(info)
 
         return {
