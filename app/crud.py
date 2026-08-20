@@ -237,6 +237,34 @@ def get_market_peak(db: Session, symbol: str) -> Optional[models.MarketPrice]:
     )
 
 
+def get_market_strategy_state(db: Session, symbol: str) -> Optional[models.MarketStrategyState]:
+    """读取某 symbol 的峰值回撤策略状态（当前峰值/峰值日期/最近回撤触发日）。"""
+    return (
+        db.query(models.MarketStrategyState)
+        .filter(models.MarketStrategyState.symbol == symbol)
+        .first()
+    )
+
+
+def save_market_strategy_state(
+    db: Session, symbol: str, peak_value: float, peak_date: str, drawdown_date: Optional[str] = None
+) -> models.MarketStrategyState:
+    """写入（新增或更新）某 symbol 的峰值回撤策略状态。"""
+    state = get_market_strategy_state(db, symbol)
+    if state:
+        state.peak_value = peak_value
+        state.peak_date = peak_date
+        state.drawdown_date = drawdown_date
+    else:
+        state = models.MarketStrategyState(
+            symbol=symbol, peak_value=peak_value, peak_date=peak_date, drawdown_date=drawdown_date
+        )
+        db.add(state)
+    db.commit()
+    db.refresh(state)
+    return state
+
+
 # index/ 下的 CSV 文件名 -> IndexHistory 表列名（列名取 CSV 文件名，与市场行情字段分离）
 INDEX_CSV_COLUMNS = {
     "NASDAQCOM_2015.csv": "NASDAQCOM_2015",

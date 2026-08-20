@@ -1,0 +1,7 @@
+{
+  "NASDAQ100": {
+    "green_pct": 5,
+    "red_pct": 10,
+    "enabled": true
+  }
+}

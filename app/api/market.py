@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, SessionLocal
 from app import crud
 from app.crawlers.market_data import refresh_market_data
+from app.market_strategy import compute_drawdown
 from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
@@ -14,12 +15,6 @@ router = APIRouter()
 
 # 固定的卡片显示顺序，独立于抓取列表 SERIES；后续新增指数在此追加，不影响历史顺序
 DISPLAY_ORDER = ["NASDAQ100", "VIXCLS", "DGS2", "DGS10"]
-
-# 纳斯达克100峰值回撤预警：以 2026-08-14 的 30050 为当前峰值基准
-NASDAQ100_PEAK = {"value": 30050.0, "date": "2026-08-14"}
-# 卡片颜色分级：较峰值回撤 <5% 绿色 / 5%~10% 黄色 / >=10% 红色
-DRAWDOWN_GREEN = 0.05
-DRAWDOWN_RED = 0.10
 
 
 def _to_item(latest: dict) -> dict:
@@ -64,22 +59,14 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         items = [it for it in items if it["symbol"] in order]
         items.sort(key=lambda it: order[it["symbol"]])
 
-        # 纳斯达克100峰值回撤预警：附带峰值信息，并按回撤幅度分级 ok/警告/红色
+        # 峰值回撤策略（数据在 market_strategy.json 配置、状态持久化在表）：按回撤幅度分级，附峰值信息
         for it in items:
-            if it["symbol"] == "NASDAQ100" and it["value"] is not None:
-                peak = NASDAQ100_PEAK["value"]
-                it["peak_value"] = peak
-                it["peak_date"] = NASDAQ100_PEAK["date"]
-                it["peak_change_percent"] = round((it["value"] - peak) / peak * 100, 2)
-                drawdown = max(0.0, (peak - it["value"]) / peak)  # 较峰值回撤幅度 0~1
-                if drawdown < DRAWDOWN_GREEN:
-                    it["drawdown_level"] = "ok"
-                elif drawdown < DRAWDOWN_RED:
-                    it["drawdown_level"] = "warn"
-                else:
-                    it["drawdown_level"] = "danger"
-            else:
+            if it["value"] is None:
                 it["drawdown_level"] = "normal"
+                continue
+            state = crud.get_market_strategy_state(db, it["symbol"])
+            info = compute_drawdown(it["symbol"], it["value"], state, current_date=it["date"])
+            it.update(info)
 
         return {
             "status": "ok",

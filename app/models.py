@@ -56,6 +56,23 @@ class MarketPrice(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class MarketStrategyState(Base):
+    """市场行情峰值回撤策略状态：持久化每个指标的当前峰值，跨天/跨重启生效。
+
+    - peak_value / peak_date: 当前追踪峰值（新高自动上移，回撤达阈值时重置为当前值）
+    - drawdown_date: 最近一次触发回撤预警（-red_pct%）的日期，用于该日显示红色预警
+    """
+    __tablename__ = "market_strategy_state"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    symbol = Column(Text, nullable=False, unique=True, index=True)
+    peak_value = Column(Float, nullable=False)
+    peak_date = Column(Text, nullable=False)
+    drawdown_date = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class IndexHistory(Base):
     """指数预警历史宽表：一行一个日期，每列对应 index/ 下一个 CSV 文件（列名取 CSV 文件名）。"""
     __tablename__ = "index_history"

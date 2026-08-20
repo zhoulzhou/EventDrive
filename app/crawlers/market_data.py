@@ -21,6 +21,7 @@ import httpx
 
 from app.database import SessionLocal
 from app import crud, schemas
+from app.market_strategy import advance
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,9 @@ def save_market_prices(items: List[Dict[str, Any]]) -> None:
                 date=item.get("date"),
             ))
             saved += 1
+            # 落库成功后推进峰值回撤策略状态（新高上移 / 回撤达阈值重置）
+            if item.get("value") is not None and item.get("date"):
+                advance(db, item["symbol"], item["value"], item["date"])
         logger.info(f"市场行情数据已落库: {saved} 项指标 (跳过 {len(items) - saved} 项无更新)")
     finally:
         db.close()
