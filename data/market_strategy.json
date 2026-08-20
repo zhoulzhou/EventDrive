@@ -2,6 +2,8 @@
   "NASDAQ100": {
     "green_pct": 5,
     "red_pct": 10,
-    "enabled": true
+    "enabled": true,
+    "fixed_peak_value": 29426.02,
+    "fixed_peak_date": "2026-08-20"
   }
 }

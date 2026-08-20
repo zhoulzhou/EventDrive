@@ -12,7 +12,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -75,10 +75,24 @@ def _get_strategy(symbol: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def get_strategy(symbol: str) -> Optional[Dict[str, Any]]:
+    """公开接口：获取某指标的策略配置（供 API 层判断是否启用回撤事件等），未配置或未启用返回 None。"""
+    return _get_strategy(symbol)
+
+
+def _fixed_peak(strategy: Dict[str, Any]) -> Optional[Tuple[float, Optional[str]]]:
+    """若策略配置了固定峰值则返回 (value, date)，否则返回 None。"""
+    if "fixed_peak_value" in strategy:
+        return float(strategy["fixed_peak_value"]), strategy.get("fixed_peak_date")
+    return None
+
+
 def advance(db: Session, symbol: str, value: float, date: str) -> bool:
     """在数据落库后推进峰值状态。
-    
-    算法：新高上移 / 回撤达 red_pct 重置 / 否则不变。
+
+    算法（动态追踪）：新高上移 / 回撤达 red_pct 重置 / 否则不变。
+    若策略配置了 fixed_peak_value，则改用固定峰值模式：峰值固定不随行情
+    上移或重置，仅当回撤达 red_pct 时记录 drawdown_date（触发日红色预警）。
 
     Args:
         db: 数据库会话（已由调用方管理）。
@@ -87,7 +101,7 @@ def advance(db: Session, symbol: str, value: float, date: str) -> bool:
         date: 当前日期（YYYY-MM-DD）。
 
     Returns:
-        True 表示状态已更新（新高或重置），False 表示无变化。
+        True 表示状态已更新，False 表示无变化。
     """
     strategy = _get_strategy(symbol)
     if strategy is None:
@@ -95,6 +109,27 @@ def advance(db: Session, symbol: str, value: float, date: str) -> bool:
 
     state = crud.get_market_strategy_state(db, symbol)
     red_pct = strategy["red_pct"] / 100.0  # 转为小数
+
+    # 固定峰值模式：峰值固定为配置值，永不随行情上移/重置
+    fixed = _fixed_peak(strategy)
+    if fixed is not None:
+        fixed_peak, fixed_date = fixed
+        fixed_date = fixed_date or date
+        changed = False
+        # 保证持久化状态中的峰值即为固定值
+        if state is None or state.peak_value != fixed_peak or state.peak_date != fixed_date:
+            crud.save_market_strategy_state(db, symbol, fixed_peak, fixed_date, drawdown_date=None)
+            logger.info(f"[{symbol}] 固定峰值生效: 峰值={fixed_peak}, 日期={fixed_date}")
+            state = crud.get_market_strategy_state(db, symbol)
+            changed = True
+        # 回撤达阈值 → 记录触发日；恢复后清空
+        drawdown_date = date if value <= fixed_peak * (1 - red_pct) else None
+        if (state.drawdown_date or None) != drawdown_date:
+            crud.save_market_strategy_state(db, symbol, fixed_peak, fixed_date, drawdown_date=drawdown_date)
+            if drawdown_date:
+                logger.info(f"[{symbol}] 固定峰值回撤 {red_pct*100:.0f}% 触发预警 (日期 {date})")
+            changed = True
+        return changed
 
     # 首次初始化：以当前值为峰值
     if state is None:
@@ -142,22 +177,31 @@ def compute_drawdown(
         "drawdown_level": "normal",
     }
 
-    if current_value is None or state is None:
+    if current_value is None:
         return result
 
     strategy = _get_strategy(symbol)
     if strategy is None:
         return result
 
-    peak = state.peak_value
-    peak_date = state.peak_date
+    # 固定峰值模式：峰值取配置值（可无状态）；否则取持久化状态中的峰值
+    fixed = _fixed_peak(strategy)
+    if fixed is not None:
+        peak, peak_date = fixed
+        if peak_date is None and state is not None:
+            peak_date = state.peak_date
+    else:
+        if state is None:
+            return result
+        peak = state.peak_value
+        peak_date = state.peak_date
 
     result["peak_value"] = peak
     result["peak_date"] = peak_date
     result["peak_change_percent"] = round((current_value - peak) / peak * 100, 2)
 
     # 触发回撤预警当天（重置刚发生）强制红色，之后进入新一轮按正常回撤分级
-    if current_date and state.drawdown_date and current_date == state.drawdown_date:
+    if current_date and state and state.drawdown_date and current_date == state.drawdown_date:
         result["drawdown_level"] = "danger"
         return result
 
@@ -173,3 +217,46 @@ def compute_drawdown(
         result["drawdown_level"] = "danger"
 
     return result
+
+
+def compute_drawdown_events(points: List[Dict[str, Any]], red_pct: float) -> List[Dict[str, Any]]:
+    """扫描历史序列，用运行峰值检测回撤 >= red_pct% 的事件（峰值日期/值 + 低点日期/值）。
+
+    算法与 advance() 的动态追踪一致：出现新高则运行峰值上移；当值相对运行
+    峰值回撤达 red_pct% 时记录一个回撤事件，并以当前值开启新一轮追踪。
+
+    Args:
+        points: 按日期升序的历史点列表，每项含 date / value（None 会跳过）。
+        red_pct: 回撤阈值（百分数，如 10 表示 -10%）。
+
+    Returns:
+        事件列表，每项含 peak_date / peak_value / low_date / low_value。
+    """
+    events: List[Dict[str, Any]] = []
+    running_peak: Optional[float] = None
+    running_peak_date: Optional[str] = None
+    threshold_ratio = 1.0 - red_pct / 100.0
+
+    for p in points:
+        value = p.get("value")
+        date = p.get("date")
+        if value is None or date is None:
+            continue
+        if running_peak is None:
+            running_peak = value
+            running_peak_date = date
+            continue
+        if value > running_peak:
+            running_peak = value
+            running_peak_date = date
+        elif value <= running_peak * threshold_ratio:
+            events.append({
+                "peak_date": running_peak_date,
+                "peak_value": running_peak,
+                "low_date": date,
+                "low_value": value,
+            })
+            # 回撤后开启新一轮：以当前低值为新基准
+            running_peak = value
+            running_peak_date = date
+    return events

@@ -99,6 +99,11 @@ async function renderAllHistory(items) {
         fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(item.symbol)}`).then(r => r.json())
     ).concat([Promise.resolve({ status: 'ok' })]));
     const series = results.filter(d => d.status === 'ok' && d.points && d.points.length);
+    // 各 symbol 的 10% 回撤事件（峰值日期/值 + 低点日期/值），供图表标记
+    const eventsMap = {};
+    results.forEach(r => {
+        if (r.status === 'ok' && r.symbol && r.drawdown_events) eventsMap[r.symbol] = r.drawdown_events;
+    });
     if (!series.length) {
         empty.style.display = 'flex';
         empty.textContent = '暂无历史数据';
@@ -129,13 +134,60 @@ async function renderAllHistory(items) {
     const dgs2 = mk('DGS2', '#059669', false);
     const dgs10 = mk('DGS10', '#f59e0b', false);
 
-    renderChart('chartNasdaq', allDates, [nasdaq], { showX: false, unit: '' });
+    renderChart('chartNasdaq', allDates, [nasdaq], { showX: false, unit: '' },
+        [drawdownEventsPlugin], { drawdownEvents: { events: eventsMap['NASDAQ100'] || [] } });
     renderChart('chartVix', allDates, [vix], { showX: false, unit: '' });
     renderChart('chartBond', allDates, [dgs2, dgs10], { showX: true, unit: '%' });
     buildLegend([nasdaq, vix, dgs2, dgs10]);
 }
 
-function renderChart(canvasId, labels, datasets, opts) {
+// 回撤事件标记插件：在纳斯达克图表中标出 10% 回撤事件的峰值（绿三角+日期）与低点（红圆+日期）
+const drawdownEventsPlugin = {
+    id: 'drawdownEvents',
+    afterDatasetsDraw(chart, args, opts) {
+        const events = (opts && opts.events) || [];
+        if (!events.length) return;
+        const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data || !meta.data.length) return;
+        const ctx = chart.ctx;
+        const xScale = chart.scales.x;
+        const yScale = chart.scales.y;
+        ctx.save();
+        events.forEach(ev => {
+            const iPeak = chart.data.labels.indexOf(ev.peak_date);
+            const iLow = chart.data.labels.indexOf(ev.low_date);
+            if (iPeak < 0 || iLow < 0) return;
+            const pxPeak = xScale.getPixelForValue(iPeak);
+            const pyPeak = yScale.getPixelForValue(ev.peak_value);
+            const pxLow = xScale.getPixelForValue(iLow);
+            const pyLow = yScale.getPixelForValue(ev.low_value);
+
+            // 峰值：绿色倒三角 + 日期
+            ctx.fillStyle = '#16a34a';
+            ctx.beginPath();
+            ctx.moveTo(pxPeak, pyPeak - 6);
+            ctx.lineTo(pxPeak - 5, pyPeak + 2);
+            ctx.lineTo(pxPeak + 5, pyPeak + 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.font = 'bold 9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#15803d';
+            ctx.fillText(ev.peak_date, pxPeak, pyPeak - 8);
+
+            // 低点：红色实心圆 + 日期
+            ctx.fillStyle = '#dc2626';
+            ctx.beginPath();
+            ctx.arc(pxLow, pyLow, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.font = 'bold 9px sans-serif';
+            ctx.fillText(ev.low_date, pxLow, pyLow + 16);
+        });
+        ctx.restore();
+    }
+};
+
+function renderChart(canvasId, labels, datasets, opts, chartPlugins = [], pluginOptions = {}) {
     const canvas = document.getElementById(canvasId);
     const existing = Chart.getChart(canvas);
     if (existing) existing.destroy();
@@ -172,7 +224,8 @@ function renderChart(canvasId, labels, datasets, opts) {
                             return ` ${ctx.dataset.label}: ${shown}`;
                         }
                     }
-                }
+                },
+                drawdownEvents: pluginOptions.drawdownEvents || { events: [] }
             },
             scales: {
                 x: {
@@ -188,7 +241,8 @@ function renderChart(canvasId, labels, datasets, opts) {
                     ticks: { maxTicksLimit: 5 }
                 }
             }
-        }
+        },
+        plugins: chartPlugins
     });
 }
 

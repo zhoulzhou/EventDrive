@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, SessionLocal
 from app import crud
 from app.crawlers.market_data import refresh_market_data
-from app.market_strategy import compute_drawdown
+from app.market_strategy import compute_drawdown, compute_drawdown_events, get_strategy
 from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
@@ -85,17 +85,30 @@ async def get_market_history(
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
 ):
-    """返回某个指数/收益率的历史序列（按日期升序），用于绘制曲线图。"""
+    """返回某个指数/收益率的历史序列（按日期升序），用于绘制曲线图。
+
+    若该 symbol 配置了峰值回撤策略，则同时返回 drawdown_events（10% 回撤事件的
+    峰值日期/值与低点日期/值），供前端在图表中标记。
+    """
     try:
         rows = crud.get_market_history(db, symbol)
         if not rows:
-            return {"status": "ok", "symbol": symbol, "name": symbol, "unit": "", "points": []}
+            return {"status": "ok", "symbol": symbol, "name": symbol, "unit": "", "points": [],
+                    "drawdown_events": []}
+        points = [{"date": r.date, "value": r.value} for r in rows]
+
+        drawdown_events = []
+        strategy = get_strategy(symbol)
+        if strategy is not None:
+            drawdown_events = compute_drawdown_events(points, strategy["red_pct"])
+
         return {
             "status": "ok",
             "symbol": symbol,
             "name": rows[0].name,
             "unit": rows[0].unit or "",
-            "points": [{"date": r.date, "value": r.value} for r in rows],
+            "points": points,
+            "drawdown_events": drawdown_events,
         }
     except Exception as e:
         logger.error(f"获取历史数据失败: {e}", exc_info=True)
