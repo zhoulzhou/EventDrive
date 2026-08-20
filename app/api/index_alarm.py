@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.config import BASE_DIR
@@ -76,14 +76,12 @@ def reload_index_data() -> bool:
 
     用于 index/ 下 CSV 文件更新后,通过环境变量 RELOAD_INDEX_DATA=1 在启动时触发。
     """
-    global _cache
     from app.database import SessionLocal
     db = SessionLocal()
     try:
         deleted = crud.delete_all_index_history(db)
         _import_index_csv(db)
         db.expire_all()
-        _cache = None  # 重置内存缓存,后续请求重新构建
         logger.info(f"指数预警 CSV 已强制重导,清空 {deleted} 条旧记录")
         return True
     except Exception as e:
@@ -93,29 +91,21 @@ def reload_index_data() -> bool:
         db.close()
 
 
-# 数据静态（仅启动时导入一次），模块级内存缓存，首次请求构建后复用
-_cache = None
-
-
 @router.get("/index-alarm")
-async def get_index_alarm_data(response: Response, db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
+async def get_index_alarm_data(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     """返回指数预警全部历史数据(从数据库读取,宽表形式 date -> 各列值)。"""
-    global _cache
     try:
-        if _cache is None:
-            rows = crud.get_index_history_all(db)
-            points = []
-            for row in rows:
-                point = {"date": row.date}
-                for col in crud.INDEX_COLUMN_NAMES:
-                    val = getattr(row, col)
-                    if val is not None:
-                        point[col] = val
-                points.append(point)
-            _cache = {"status": "ok", "columns": crud.INDEX_COLUMN_NAMES, "points": points}
-        # 数据为静态历史数据，允许私有缓存 24h
-        response.headers["Cache-Control"] = "private, max-age=86400"
-        return _cache
+        rows = crud.get_index_history_all(db)
+        points = []
+        for row in rows:
+            point = {"date": row.date}
+            for col in crud.INDEX_COLUMN_NAMES:
+                val = getattr(row, col)
+                if val is not None:
+                    point[col] = val
+            points.append(point)
+
+        return {"status": "ok", "columns": crud.INDEX_COLUMN_NAMES, "points": points}
     except Exception as e:
         logger.error(f"获取指数预警数据失败: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
