@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 固定的卡片显示顺序，独立于抓取列表 SERIES；后续新增指数在此追加，不影响历史顺序
-DISPLAY_ORDER = ["NASDAQCOM", "VIXCLS", "DGS2", "DGS10"]
+DISPLAY_ORDER = ["NASDAQ100", "VIXCLS", "DGS2", "DGS10"]
 
 
 def _to_item(latest: dict) -> dict:
