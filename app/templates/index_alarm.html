@@ -5,12 +5,12 @@
 {% block content %}
 <div class="page-header">
     <h1>指数预警</h1>
-    <p class="form-hint">FRED 市场指标对比曲线（2015 年至今） · 纳斯达克综合指数 · VIX 恐慌指数 · 2/10 年期美债收益率 · 数据源: FRED</p>
+    <p class="form-hint">FRED 市场指标对比曲线（2015 年至今） · 纳斯达克100指数 · VIX 恐慌指数 · 2/10 年期美债收益率 · 数据源: FRED</p>
 </div>
 
 <div class="index-chart-stack">
     <div class="index-chart-card">
-        <div class="index-chart-title">纳斯达克综合指数（日收盘）</div>
+        <div class="index-chart-title">纳斯达克100指数（日收盘）</div>
         <div id="ch_NASDAQCOM" class="index-chart"></div>
     </div>
     <div class="index-chart-card">
@@ -29,7 +29,7 @@
 <script src="/static/js/echarts.min.js"></script>
 <script>
 const META = {
-    "NASDAQCOM": {"name": "纳斯达克综合指数", "unit": "点", "color": "#5470c6"},
+    "NASDAQCOM": {"name": "纳斯达克100指数", "unit": "点", "color": "#5470c6"},
     "VIXCLS": {"name": "VIX 恐慌指数", "unit": "点", "color": "#ee6666"},
     "DGS2": {"name": "2年期美债收益率", "unit": "%", "color": "#91cc75"},
     "DGS10": {"name": "10年期美债收益率", "unit": "%", "color": "#fac858"}
@@ -204,7 +204,7 @@ function renderThree() {
             { type: "slider", xAxisIndex: [0, 1, 2], bottom: 6, height: 20, borderColor: "#d6dbe2", backgroundColor: "#f5f6f8", fillerColor: "rgba(84,160,255,0.15)", textStyle: { color: "#888" } }
         ],
         graphic: [
-            { type: "text", left: 2, top: 12, style: { text: "纳斯达克综合指数（日收盘）", fill: "#5470c6", font: "600 13px sans-serif" } },
+            { type: "text", left: 2, top: 12, style: { text: "纳斯达克100指数（日收盘）", fill: "#5470c6", font: "600 13px sans-serif" } },
             { type: "text", left: 2, top: "33%", style: { text: "VIX 恐慌指数", fill: "#ee6666", font: "600 13px sans-serif" } },
             { type: "text", left: 2, top: "68%", style: { text: "美债收益率（2 年 / 10 年）", fill: "#333", font: "600 13px sans-serif" } }
         ],
