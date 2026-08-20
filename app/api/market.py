@@ -15,6 +15,10 @@ router = APIRouter()
 # 固定的卡片显示顺序，独立于抓取列表 SERIES；后续新增指数在此追加，不影响历史顺序
 DISPLAY_ORDER = ["NASDAQ100", "VIXCLS", "DGS2", "DGS10"]
 
+# 纳斯达克100峰值回撤预警：以 2026-08-14 的 30050 为当前峰值基准
+NASDAQ100_PEAK = {"value": 30050.0, "date": "2026-08-14"}
+DRAWDOWN_THRESHOLD = 0.10  # 当前值较峰值回撤 >= 10% 时卡片变红
+
 
 def _to_item(latest: dict) -> dict:
     """由最新两条历史记录构造带涨跌幅的展示项。"""
@@ -57,6 +61,17 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         order = {sym: i for i, sym in enumerate(DISPLAY_ORDER)}
         items = [it for it in items if it["symbol"] in order]
         items.sort(key=lambda it: order[it["symbol"]])
+
+        # 纳斯达克100峰值回撤预警：附带峰值信息，供前端显示峰值与回撤百分比、触发红色预警
+        for it in items:
+            if it["symbol"] == "NASDAQ100" and it["value"] is not None:
+                peak = NASDAQ100_PEAK["value"]
+                it["peak_value"] = peak
+                it["peak_date"] = NASDAQ100_PEAK["date"]
+                it["peak_change_percent"] = round((it["value"] - peak) / peak * 100, 2)
+                it["drawdown_alarm"] = it["value"] <= peak * (1 - DRAWDOWN_THRESHOLD)
+            else:
+                it["drawdown_alarm"] = False
 
         return {
             "status": "ok",

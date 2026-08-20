@@ -73,11 +73,19 @@ function renderCard(item) {
         changeHtml = `<div class="market-change ${cls}">${changeText}${pct}</div>`;
     }
 
+    // 纳斯达克100峰值回撤预警行：当前峰值、峰值日期、较峰值涨跌百分比
+    let peakHtml = '';
+    if (item.peak_value != null) {
+        const sign = item.peak_change_percent >= 0 ? '+' : '';
+        peakHtml = `<div class="market-peak">当前峰值 ${formatValue(item.peak_value, false)}（${item.peak_date}） · 较峰值 ${sign}${item.peak_change_percent.toFixed(2)}%</div>`;
+    }
+
     return `
-        <div class="market-card">
+        <div class="market-card${item.drawdown_alarm ? ' alarm' : ''}">
             <div class="market-name">${escapeHtml(item.name)}</div>
             <div class="market-value">${value}<span class="market-unit">${item.unit}</span></div>
             ${changeHtml}
+            ${peakHtml}
             <div class="market-date">${date}</div>
         </div>
     `;
@@ -240,6 +248,17 @@ loadMarket();
 }
 .market-change.up { color: #28a745; }
 .market-change.down { color: #dc3545; }
+.market-peak {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: #888;
+}
+.market-card.alarm {
+    border: 2px solid #dc3545;
+    background: #fff5f5;
+}
+.market-card.alarm .market-value { color: #dc3545; }
+.market-card.alarm .market-peak { color: #dc3545; }
 .market-date {
     margin-top: 0.75rem;
     font-size: 0.85rem;
