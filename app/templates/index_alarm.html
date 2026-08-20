@@ -166,7 +166,7 @@ function renderCompare() {
                 type: "line",
                 showSymbol: false,
                 connectNulls: true,
-                data: RAW[sid].map(function (pt, i) { return [pt[0], NORM[sid][i]]; }),
+                data: RAW[sid].map(function (pt, i) { return [pt[0], Math.round(NORM[sid][i])]; }),
                 lineStyle: { width: 1.8 },
                 emphasis: { focus: "series" }
             };
