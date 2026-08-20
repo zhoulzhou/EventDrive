@@ -29,8 +29,13 @@ ensure_schema_compatibility(engine)
 Base.metadata.create_all(bind=engine)
 print("✅ 数据库表初始化完成")
 
-# 指数预警:仅首次(表为空)从 index/ CSV 导入一次,之后全部直接查库
-if index_alarm.ensure_index_data_loaded():
+# 指数预警:CSV 更新后置 RELOAD_INDEX_DATA=1 强制重导;否则仅在表为空时导入一次,之后直接查库
+if settings.RELOAD_INDEX_DATA:
+    if index_alarm.reload_index_data():
+        print("✅ 指数预警 CSV 数据已强制重新导入数据库")
+    else:
+        print("❌ 指数预警 CSV 强制重导失败")
+elif index_alarm.ensure_index_data_loaded():
     print("✅ 指数预警 CSV 数据已一次性导入数据库")
 else:
     print("✅ 指数预警数据已存在,直接使用数据库缓存")

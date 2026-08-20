@@ -71,6 +71,28 @@ def ensure_index_data_loaded() -> bool:
         db.close()
 
 
+def reload_index_data() -> bool:
+    """强制重导:清空 index_history 表后从 index/ CSV 重新导入,并重置内存缓存。
+
+    用于 index/ 下 CSV 文件更新后,通过环境变量 RELOAD_INDEX_DATA=1 在启动时触发。
+    """
+    global _cache
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        deleted = crud.delete_all_index_history(db)
+        _import_index_csv(db)
+        db.expire_all()
+        _cache = None  # 重置内存缓存,后续请求重新构建
+        logger.info(f"指数预警 CSV 已强制重导,清空 {deleted} 条旧记录")
+        return True
+    except Exception as e:
+        logger.error(f"指数预警 CSV 强制重导失败: {e}", exc_info=True)
+        return False
+    finally:
+        db.close()
+
+
 # 数据静态（仅启动时导入一次），模块级内存缓存，首次请求构建后复用
 _cache = None
 

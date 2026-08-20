@@ -265,6 +265,13 @@ def get_index_history_count(db: Session) -> int:
     return db.query(models.IndexHistory).count()
 
 
+def delete_all_index_history(db: Session) -> int:
+    """清空指数预警历史表（CSV 更新后强制重导时使用）。"""
+    deleted = db.query(models.IndexHistory).delete()
+    db.commit()
+    return deleted
+
+
 def upsert_index_history_rows(db: Session, rows: List[dict]) -> int:
     """按 date 更新或插入多条指数预警历史记录。rows 形如 [{date, column, value}]。"""
     seen: Dict[str, models.IndexHistory] = {}

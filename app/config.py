@@ -75,6 +75,8 @@ class Settings:
     X_LIST_ID: str = os.getenv("X_LIST_ID", "")
 
     START_SCHEDULER: bool = _get_bool("START_SCHEDULER", False)
+    # CSV 更新后置 1 可强制重导 index_history 表
+    RELOAD_INDEX_DATA: bool = _get_bool("RELOAD_INDEX_DATA", False)
 
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
