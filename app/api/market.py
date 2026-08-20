@@ -17,7 +17,9 @@ DISPLAY_ORDER = ["NASDAQ100", "VIXCLS", "DGS2", "DGS10"]
 
 # 纳斯达克100峰值回撤预警：以 2026-08-14 的 30050 为当前峰值基准
 NASDAQ100_PEAK = {"value": 30050.0, "date": "2026-08-14"}
-DRAWDOWN_THRESHOLD = 0.10  # 当前值较峰值回撤 >= 10% 时卡片变红
+# 卡片颜色分级：较峰值回撤 <5% 绿色 / 5%~10% 黄色 / >=10% 红色
+DRAWDOWN_GREEN = 0.05
+DRAWDOWN_RED = 0.10
 
 
 def _to_item(latest: dict) -> dict:
@@ -62,16 +64,22 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         items = [it for it in items if it["symbol"] in order]
         items.sort(key=lambda it: order[it["symbol"]])
 
-        # 纳斯达克100峰值回撤预警：附带峰值信息，供前端显示峰值与回撤百分比、触发红色预警
+        # 纳斯达克100峰值回撤预警：附带峰值信息，并按回撤幅度分级 ok/警告/红色
         for it in items:
             if it["symbol"] == "NASDAQ100" and it["value"] is not None:
                 peak = NASDAQ100_PEAK["value"]
                 it["peak_value"] = peak
                 it["peak_date"] = NASDAQ100_PEAK["date"]
                 it["peak_change_percent"] = round((it["value"] - peak) / peak * 100, 2)
-                it["drawdown_alarm"] = it["value"] <= peak * (1 - DRAWDOWN_THRESHOLD)
+                drawdown = max(0.0, (peak - it["value"]) / peak)  # 较峰值回撤幅度 0~1
+                if drawdown < DRAWDOWN_GREEN:
+                    it["drawdown_level"] = "ok"
+                elif drawdown < DRAWDOWN_RED:
+                    it["drawdown_level"] = "warn"
+                else:
+                    it["drawdown_level"] = "danger"
             else:
-                it["drawdown_alarm"] = False
+                it["drawdown_level"] = "normal"
 
         return {
             "status": "ok",
