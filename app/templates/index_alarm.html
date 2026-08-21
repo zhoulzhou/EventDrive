@@ -22,7 +22,7 @@
         <div id="three" class="index-chart" style="height:660px;"></div>
     </div>
 </div>
-<div class="form-hint">提示：图表支持滚轮/拖拽缩放、图例开关、右上角下载图片。缺失数据以空值处理（虚线连接）。</div>
+<div class="form-hint">提示：图表支持滚轮/拖拽缩放、图例开关、右上角下载图片。缺失数据以空值处理（虚线连接）。纳斯达克图中红色竖线 = 加息周期节点，绿色虚线 = 降息周期节点。</div>
 {% endblock %}
 
 {% block scripts %}
@@ -111,6 +111,37 @@ function buildMarks(drawdowns) {
         markLine: { silent: true, symbol: ["none", "none"], lineStyle: { type: "dashed", color: "#8b98a5", width: 1 }, label: { show: false }, data: lines },
         markPoint: { silent: true, data: points }
     };
+}
+
+// 美联储政策时间点：加息（红实线）/ 降息（绿虚线）。仅标出加息和降息阶段节点。
+const POLICY_POINTS = [
+    { date: "2015-12-01", type: "hike" },
+    { date: "2018-12-01", type: "hike" },
+    { date: "2022-10-01", type: "hike" },
+    { date: "2023-07-01", type: "hike" },
+    { date: "2019-10-01", type: "cut" },
+    { date: "2020-03-01", type: "cut" },
+    { date: "2024-09-01", type: "cut" },
+    { date: "2025-12-01", type: "cut" }
+];
+const HIKE_COLOR = "#ff4d4f", CUT_COLOR = "#52c41a";
+
+// 生成加息/降息政策竖线的 markLine 数据项（覆盖在回撤标记之上，独立配色）
+function policyMarkLines() {
+    return POLICY_POINTS.map(function (p) {
+        const isHike = p.type === "hike";
+        return {
+            xAxis: p.date,
+            lineStyle: { color: isHike ? HIKE_COLOR : CUT_COLOR, width: 1.5, type: isHike ? "solid" : "dashed" },
+            label: {
+                show: true,
+                formatter: (isHike ? "加息 " : "降息 ") + p.date.slice(0, 7),
+                position: "insideEndTop",
+                color: isHike ? HIKE_COLOR : CUT_COLOR,
+                fontSize: 10
+            }
+        };
+    });
 }
 
 // 已初始化的图表实例（resize 时统一刷新）
@@ -220,6 +251,11 @@ function renderThree() {
 // 单指标图（仅纳斯达克，含峰值回撤标记）
 function renderNasdaq() {
     const chart = registerChart(echarts.init(document.getElementById("ch_NASDAQCOM")));
+    // 峰值回撤 10% 标记 + 加息/降息政策竖线（合并到同一 markLine）
+    const drawdownMarks = buildMarks(computeDrawdowns("NASDAQCOM", 0.10));
+    const mergedMarks = Object.assign({}, drawdownMarks, {
+        markLine: Object.assign({}, drawdownMarks.markLine, { data: drawdownMarks.markLine.data.concat(policyMarkLines()) })
+    });
     chart.setOption(Object.assign({}, baseOpt, {
         legend: { top: 0, textStyle: { color: "#555" } },
         grid: { left: 60, right: 20, top: 32, bottom: 60 },
@@ -230,7 +266,7 @@ function renderNasdaq() {
             { type: "slider", xAxisIndex: 0, bottom: 8, height: 18, borderColor: "#d6dbe2", backgroundColor: "#f5f6f8", fillerColor: "rgba(84,160,255,0.15)", textStyle: { color: "#888" } }
         ],
         toolbox: { right: 10, feature: { saveAsImage: { title: "保存图片" } } },
-        series: [Object.assign({}, makeLine("NASDAQCOM"), buildMarks(computeDrawdowns("NASDAQCOM", 0.10)))]
+        series: [Object.assign({}, makeLine("NASDAQCOM"), mergedMarks)]
     }));
 }
 
