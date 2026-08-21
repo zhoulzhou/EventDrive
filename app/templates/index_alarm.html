@@ -243,7 +243,7 @@ function renderThree() {
             Object.assign({}, makeLine("NASDAQCOM"), { xAxisIndex: 0, yAxisIndex: 0, lineStyle: { width: 1.4, color: "#5470c6" } }),
             Object.assign({}, makeLine("VIXCLS"), { xAxisIndex: 1, yAxisIndex: 1, lineStyle: { width: 1.4, color: "#ee6666" } }),
             Object.assign({}, makeLine("DGS2"), { xAxisIndex: 2, yAxisIndex: 2, lineStyle: { width: 1.4, color: "#91cc75" } }),
-            Object.assign({}, makeLine("DGS10"), { xAxisIndex: 2, yAxisIndex: 2, lineStyle: { width: 1.4, color: "#fac858" } })
+            Object.assign({}, makeLine("DGS10"), { xAxisIndex: 2, yAxisIndex: 2, lineStyle: { width: 1.4, color: "#fac858" }, markLine: { silent: true, symbol: ["none", "none"], data: policyMarkLines() } })
         ]
     }));
 }
