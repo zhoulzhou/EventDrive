@@ -2,7 +2,7 @@
 """市场数据抓取模块（海外权威数据源，均无需 API Key，适合日本服务器）。
 
 数据源组合：
-- 纳斯达克指数      -> 美国圣路易斯联储 FRED（NASDAQ100），抓取失败时备用源为纳斯达克官方实时报价（api.nasdaq.com）
+- 纳斯达克指数      -> 纳斯达克官方实时报价（api.nasdaq.com，当日收盘即更新），抓取失败时备用源为 FRED（NASDAQ100）
 - VIX 恐慌指数      -> CBOE 官方历史 CSV（换用 CBOE，时效好于 FRED）
 - 美债 2Y/10Y 收益率 -> 美国财政部官方每日收益率 CSV（换用 Treasury，时效好于 FRED）
 
@@ -48,8 +48,8 @@ NASDAQ_HEADERS = {
 
 # 指标定义：source 决定用哪个数据源，column 为财政部收益率 CSV 中的列名；unit 用于前端展示（收益率用 %）
 SERIES = [
-    {"key": "nasdaq", "name": "纳斯达克100指数", "symbol": "NASDAQ100", "unit": "", "source": "fred",
-     "column": None, "describe": "NASDAQ-100 Index", "backup": "nasdaq"},
+    {"key": "nasdaq", "name": "纳斯达克100指数", "symbol": "NASDAQ100", "unit": "", "source": "nasdaq",
+     "column": None, "describe": "NASDAQ-100 Index", "backup": "fred"},
     {"key": "vix", "name": "VIX恐慌指数", "symbol": "VIXCLS", "unit": "", "source": "cboe",
      "column": None, "describe": "CBOE Volatility Index"},
     {"key": "dgs2", "name": "美债2年期收益率", "symbol": "DGS2", "unit": "%", "source": "treasury",
@@ -204,7 +204,9 @@ async def _fetch_treasury(column: str) -> Dict[str, Any]:
 async def _fetch_series(series: Dict[str, Any]) -> Dict[str, Any]:
     """按指标的 source 分发给对应的抓取函数；主源无有效值时回退到备用源。"""
     source = series["source"]
-    if source == "fred":
+    if source == "nasdaq":
+        result = await _fetch_nasdaq()
+    elif source == "fred":
         result = await _fetch_fred(series["symbol"])
     elif source == "cboe":
         result = await _fetch_vix()
@@ -218,8 +220,8 @@ async def _fetch_series(series: Dict[str, Any]) -> Dict[str, Any]:
     backup = series.get("backup")
     if result.get("value") is None and backup:
         logger.info(f"{series['name']}: 主源 {source} 无可解析数据，回退到备用源 {backup}")
-        if backup == "nasdaq":
-            result = await _fetch_nasdaq()
+        if backup == "fred":
+            result = await _fetch_fred(series["symbol"])
         else:
             logger.error(f"{series['name']}: 未知备用源 {backup}")
     return result
