@@ -86,6 +86,15 @@ def _growth_margin(cur: Optional[float], base: Optional[float]):
     return round(cur - base, 1), None
 
 
+def _sum_series(*series_list):
+    """对多个序列按行求和；某行全部为 None 时为 None，部分为 None 时按 0 参与求和。"""
+    out = []
+    for values in zip(*series_list):
+        nums = [v for v in values if v is not None]
+        out.append(sum(nums) if nums else None)
+    return out
+
+
 def compute_indicators(records, start: Optional[str] = None, end: Optional[str] = None) -> dict:
     """计算全部指标系列。
 
@@ -126,10 +135,9 @@ def compute_indicators(records, start: Optional[str] = None, end: Optional[str] 
     def point_series(attr: str) -> List[Optional[float]]:
         return [_value(r, attr) for r in records]
 
-    cash_pt = [
-        (a + b) if (a is not None and b is not None) else None
-        for a, b in zip(point_series("cash"), point_series("short_term_investment"))
-    ]  # 现金总额 = 货币资金 + 短期理财（交易性金融资产）
+    cash_pt = _sum_series(
+        point_series("cash"), point_series("short_term_investment")
+    )  # 现金总额 = 货币资金 + 短期理财（交易性金融资产），缺项按 0 计
     inventory_pt = point_series("inventory")
     receivables_pt = point_series("accounts_receivable")
     contract_pt = point_series("contract_liabilities")
@@ -138,7 +146,8 @@ def compute_indicators(records, start: Optional[str] = None, end: Optional[str] 
     ib_debt_pt = []
     for i in range(n):
         parts = [_value(records[i], f) for f in INTEREST_DEBT_FIELDS]
-        ib_debt_pt.append(None if any(p is None for p in parts) else sum(parts))
+        nums = [p for p in parts if p is not None]
+        ib_debt_pt.append(sum(nums) if nums else None)
 
     # ---- 比率 ----
     def ratio_series(numer: List[Optional[float]], denom: List[Optional[float]]) -> List[Optional[float]]:
