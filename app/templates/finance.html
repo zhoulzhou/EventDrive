@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
     <h1>财务指标</h1>
-    <p class="form-hint">输入股票名称，查询已入库的财务数据（数据需先在「抓取控制」页面抓取入库，指标图表将在后续更新中展示）</p>
+    <p class="form-hint">输入股票名称，展示已入库财务指标的数值（柱形图）与同比/环比增速（折线）（数据需先在「抓取控制」页面抓取入库）</p>
 </div>
 
 <div class="finance-query">
@@ -13,21 +13,45 @@
         <label for="stockName">股票名称</label>
         <input id="stockName" type="text" placeholder="如 贵州茅台" value="贵州茅台">
     </div>
-    <button id="queryBtn" class="btn btn-primary">查询</button>
+    <button id="queryBtn" class="btn btn-primary">查询并展示图表</button>
 </div>
 
 <div id="financeResult">
-    <div class="finance-empty">请输入股票名称，点击「查询」查看已入库的财务数据。</div>
+    <div class="finance-empty">请输入股票名称，点击「查询并展示图表」查看已入库的财务指标图表。</div>
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/echarts.min.js"></script>
 <script>
+let charts = [];
+
+function disposeCharts() {
+    charts.forEach(function (c) { try { c.dispose(); } catch (e) {} });
+    charts = [];
+}
+
+// 懒加载:滚入视口才初始化图表
+function lazyInit(elId, renderFn) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+                io.disconnect();
+                renderFn();
+            }
+        });
+    }, { rootMargin: "200px" });
+    io.observe(el);
+}
+
 async function runQuery() {
     const name = document.getElementById('stockName').value.trim();
     if (!name) { alert('请输入股票名称'); return; }
     const box = document.getElementById('financeResult');
-    box.innerHTML = '<div class="loading">正在查询数据库...</div>';
+    box.innerHTML = '<div class="loading">正在计算指标图表...</div>';
+    disposeCharts();
     try {
         const url = `/api/finance/query?name=${encodeURIComponent(name)}`;
         const response = await fetchWithAuth(url);
@@ -36,18 +60,120 @@ async function runQuery() {
             box.innerHTML = `<div class="error-state"><h2>请求失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
             return;
         }
-        const records = data.records || [];
-        box.innerHTML = `
-            <div class="finance-empty">
-                已查询到「${escapeHtml(data.name || name)}」共 ${records.length} 期财务数据。<br>
-                新的指标图表将在后续更新中展示。
-            </div>`;
+        renderIndicators(data);
     } catch (error) {
         box.innerHTML = `<div class="error-state"><h2>查询失败</h2><p>${escapeHtml(error.message)}</p></div>`;
     }
 }
 
+function renderIndicators(data) {
+    const box = document.getElementById('financeResult');
+    const inds = data.indicators || [];
+    const periods = data.periods || [];
+    if (!inds.length || !periods.length) {
+        box.innerHTML = `<div class="finance-empty">未查询到「${escapeHtml(data.name || '')}」的财务数据，请先在「抓取控制」页面抓取入库。</div>`;
+        return;
+    }
+    box.innerHTML = `
+        <div class="indicator-head">
+            <h2>${escapeHtml(data.name || '')} 财务指标</h2>
+            <span class="indicator-sub">${periods.length} 期 · 货币单位：亿元</span>
+        </div>
+        <div class="indicator-grid">
+            ${inds.map(function (ind, i) {
+                return `<div class="indicator-card">
+                    <div class="indicator-title">
+                        ${escapeHtml(ind.name)}
+                        <span class="indicator-tag">${escapeHtml(ind.growth_name)}</span>
+                    </div>
+                    <div class="indicator-chart" id="chart_${i}"></div>
+                </div>`;
+            }).join('')}
+        </div>`;
+    inds.forEach(function (ind, i) {
+        lazyInit('chart_' + i, function () { renderIndicatorChart('chart_' + i, ind, periods); });
+    });
+}
+
+function renderIndicatorChart(elId, ind, periods) {
+    const chart = echarts.init(document.getElementById(elId));
+    charts.push(chart);
+    const unitSuffix = ind.unit === '%' ? '%' : (ind.unit === '天' ? '天' : '亿元');
+    const rightAxisName = ind.unit === '%' ? '同比(百分点)' : '增速%';
+    const valueFmt = function (v) { return v == null ? '—' : v.toFixed(1); };
+    const growthData = ind.growth.map(function (g) { return g == null ? null : g; });
+
+    chart.setOption({
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: function (params) {
+                const idx = params[0].dataIndex;
+                let html = `<div style="font-weight:600">${escapeHtml(periods[idx])}</div>`;
+                params.forEach(function (param) {
+                    const marker = param.marker || '';
+                    if (param.seriesType === 'line') {
+                        const lab = ind.labels[idx];
+                        const text = lab ? lab : valueFmt(param.value);
+                        html += `<div>${marker}${escapeHtml(param.seriesName)}：<b>${text}</b></div>`;
+                    } else {
+                        html += `<div>${marker}${escapeHtml(param.seriesName)}：<b>${valueFmt(param.value)}</b></div>`;
+                    }
+                });
+                return html;
+            }
+        },
+        legend: { top: 0, textStyle: { color: '#555', fontSize: 11 }, itemWidth: 16 },
+        grid: { left: 10, right: 10, top: 36, bottom: 6, containLabel: true },
+        xAxis: {
+            type: 'category',
+            data: periods,
+            axisLabel: { color: '#888', fontSize: 10, rotate: 45 },
+            axisLine: { lineStyle: { color: '#d6dbe2' } }
+        },
+        yAxis: [
+            {
+                type: 'value',
+                name: unitSuffix,
+                nameTextStyle: { color: '#666', fontSize: 10 },
+                axisLabel: { color: '#888', fontSize: 10 },
+                splitLine: { lineStyle: { color: '#eef0f3' } }
+            },
+            {
+                type: 'value',
+                name: rightAxisName,
+                nameTextStyle: { color: '#666', fontSize: 10 },
+                axisLabel: { color: '#888', fontSize: 10 },
+                splitLine: { show: false }
+            }
+        ],
+        series: [
+            {
+                name: `${ind.name}（${unitSuffix}）`,
+                type: 'bar',
+                data: ind.values,
+                barMaxWidth: 24,
+                itemStyle: { color: '#5470c6', borderRadius: [2, 2, 0, 0] }
+            },
+            {
+                name: ind.growth_name,
+                type: 'line',
+                yAxisIndex: 1,
+                data: growthData,
+                connectNulls: false,
+                symbolSize: 5,
+                lineStyle: { color: '#ee6666', width: 1.6 },
+                itemStyle: { color: '#ee6666' }
+            }
+        ]
+    });
+}
+
 document.getElementById('queryBtn').addEventListener('click', runQuery);
+
+window.addEventListener('resize', function () {
+    charts.forEach(function (c) { try { c.resize(); } catch (e) {} });
+});
 </script>
 
 <style>
@@ -108,5 +234,48 @@ document.getElementById('queryBtn').addEventListener('click', runQuery);
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 .error-state h2 { font-size: 1rem; margin-bottom: 0.5rem; }
+.indicator-head {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.indicator-head h2 { font-size: 1.3rem; color: #333; }
+.indicator-sub { color: #999; font-size: 0.85rem; }
+.indicator-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(520px, 1fr));
+    gap: 1rem;
+}
+.indicator-card {
+    background: white;
+    border-radius: 12px;
+    padding: 0.9rem 1rem 0.6rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.indicator-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+.indicator-tag {
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: #667eea;
+    background: rgba(102,126,234,0.1);
+    padding: 0.1rem 0.45rem;
+    border-radius: 10px;
+}
+.indicator-chart {
+    width: 100%;
+    height: 260px;
+}
+@media (max-width: 900px) {
+    .indicator-grid { grid-template-columns: 1fr; }
+}
 </style>
 {% endblock %}

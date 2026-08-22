@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import crud
 from app.api.login import require_auth
+from app.utils.finance_indicators import compute_indicators
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +53,29 @@ async def query_finance(
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
 ):
-    """查询已入库的财务指标（不重新抓取）。支持按股票代码或股票名称查询，至少提供一个。"""
+    """查询已入库的财务指标（不重新抓取）。支持按股票代码或股票名称查询，至少提供一个。
+
+    返回原始记录（表格展示）及计算后的指标系列（数值 + 同比/环比增速，供图表展示）。
+    start/end 仅截取展示区间，指标计算基于全量记录以保证单季还原 / 平均余额连续。
+    """
     try:
         if not code and not name:
             raise HTTPException(status_code=400, detail="请提供股票代码或股票名称")
         _validate_period(start, end)
-        records = crud.get_financial_reports(
-            db, stock_code=code, stock_name=name, start=start, end=end
-        )
+        records_all = crud.get_financial_reports(db, stock_code=code, stock_name=name)
+        indicators = compute_indicators(records_all, start=start, end=end)
+        records = [
+            r for r in records_all
+            if (not start or r.report_date >= start) and (not end or r.report_date <= end)
+        ]
         return {
             "status": "ok",
             "code": code,
-            "name": name or _latest_name(records),
+            "name": name or _latest_name(records_all),
             "fields": list(FIELD_COLUMNS.keys()),
             "records": _serialize(records),
+            "periods": indicators["periods"],
+            "indicators": indicators["indicators"],
         }
     except HTTPException:
         raise
