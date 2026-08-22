@@ -5,19 +5,19 @@
 {% block content %}
 <div class="page-header">
     <h1>财务指标</h1>
-    <p class="form-hint">输入股票代码，展示已入库财务指标的趋势图表（数据需先在「抓取控制」页面抓取入库）</p>
+    <p class="form-hint">输入股票名称，展示已入库财务指标的趋势图表（数据需先在「抓取控制」页面抓取入库）</p>
 </div>
 
 <div class="finance-query">
     <div class="finance-field">
-        <label for="stockCode">股票代码</label>
-        <input id="stockCode" type="text" placeholder="如 600519" value="600519">
+        <label for="stockName">股票名称</label>
+        <input id="stockName" type="text" placeholder="如 贵州茅台" value="贵州茅台">
     </div>
     <button id="queryBtn" class="btn btn-primary">查询并展示图表</button>
 </div>
 
 <div id="financeResult">
-    <div class="finance-empty">请输入股票代码，点击「查询并展示图表」查看已入库的财务指标趋势。</div>
+    <div class="finance-empty">请输入股票名称，点击「查询并展示图表」查看已入库的财务指标趋势。</div>
 </div>
 {% endblock %}
 
@@ -56,7 +56,7 @@ function renderCharts(data) {
 
     box.innerHTML = `
         <div class="chart-head">
-            <h2>${escapeHtml(data.code)} 财务指标趋势</h2>
+            <h2>${escapeHtml(data.name || data.code)} 财务指标趋势</h2>
             <span class="chart-sub">${records.length} 期 · 金额单位：元</span>
         </div>
         <div class="chart-grid">${cards}</div>`;
@@ -91,12 +91,12 @@ function renderCharts(data) {
 }
 
 async function runQuery() {
-    const code = document.getElementById('stockCode').value.trim();
-    if (!code) { alert('请输入股票代码'); return; }
+    const name = document.getElementById('stockName').value.trim();
+    if (!name) { alert('请输入股票名称'); return; }
     const box = document.getElementById('financeResult');
     box.innerHTML = '<div class="loading">正在查询数据库...</div>';
     try {
-        const url = `/api/finance/query?code=${encodeURIComponent(code)}`;
+        const url = `/api/finance/query?name=${encodeURIComponent(name)}`;
         const response = await fetchWithAuth(url);
         const data = await response.json();
         renderCharts(data);

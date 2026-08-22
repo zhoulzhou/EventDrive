@@ -45,20 +45,25 @@ def _validate_period(start: Optional[str], end: Optional[str]):
 
 @router.get("/finance/query")
 async def query_finance(
-    code: str = Query(..., description="股票代码，如 600519"),
+    code: Optional[str] = Query(None, description="股票代码，如 600519"),
+    name: Optional[str] = Query(None, description="股票名称，如 贵州茅台"),
     start: Optional[str] = Query(None, description="起始报告期 YYYY-MM-DD（季度末）"),
     end: Optional[str] = Query(None, description="结束报告期 YYYY-MM-DD（季度末）"),
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
 ):
-    """查询已入库的财务指标（不重新抓取）。"""
+    """查询已入库的财务指标（不重新抓取）。支持按股票代码或股票名称查询，至少提供一个。"""
     try:
+        if not code and not name:
+            raise HTTPException(status_code=400, detail="请提供股票代码或股票名称")
         _validate_period(start, end)
-        records = crud.get_financial_reports(db, code, start=start, end=end)
+        records = crud.get_financial_reports(
+            db, stock_code=code, stock_name=name, start=start, end=end
+        )
         return {
             "status": "ok",
             "code": code,
-            "name": _latest_name(records),
+            "name": name or _latest_name(records),
             "fields": list(FIELD_COLUMNS.keys()),
             "records": _serialize(records),
         }

@@ -336,12 +336,20 @@ def upsert_financial_reports(
 
 def get_financial_reports(
     db: Session,
-    stock_code: str,
+    stock_code: Optional[str] = None,
+    stock_name: Optional[str] = None,
     start: Optional[str] = None,
     end: Optional[str] = None,
 ) -> List[models.FinancialReport]:
-    """查询某股票在 [start, end] 报告期范围内的财务指标记录（按报告期升序）。"""
-    query = db.query(models.FinancialReport).filter(models.FinancialReport.stock_code == stock_code)
+    """查询财务指标记录（按报告期升序）。
+
+    stock_code / stock_name 至少提供一个作为过滤条件；start/end 为报告期范围。
+    """
+    query = db.query(models.FinancialReport)
+    if stock_code:
+        query = query.filter(models.FinancialReport.stock_code == stock_code)
+    if stock_name:
+        query = query.filter(models.FinancialReport.stock_name == stock_name)
     if start:
         query = query.filter(models.FinancialReport.report_date >= start)
     if end:
