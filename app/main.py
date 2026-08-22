@@ -9,7 +9,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, filter, logs, feishu, login, market, index_alarm
+from app.api import news, crawl, logs, feishu, login, market, index_alarm, finance
 from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
@@ -98,12 +98,12 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(crawl.router, prefix="/api", tags=["crawl"])
-app.include_router(filter.router, prefix="/api", tags=["filter"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
 app.include_router(feishu.router, prefix="/api", tags=["feishu"])
 app.include_router(login.router, prefix="/api", tags=["login"])
 app.include_router(market.router, prefix="/api", tags=["market"])
 app.include_router(index_alarm.router, prefix="/api", tags=["index-alarm"])
+app.include_router(finance.router, prefix="/api", tags=["finance"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:
@@ -152,13 +152,6 @@ async def crawl_control(request: Request):
     if not is_logged_in(request):
         return RedirectResponse(url="/login")
     return render_template("crawl_control.html", {"request": request})
-
-
-@app.get("/filter")
-async def filter_rules(request: Request):
-    if not is_logged_in(request):
-        return RedirectResponse(url="/login")
-    return render_template("filter_rules.html", {"request": request})
 
 
 @app.get("/logs")

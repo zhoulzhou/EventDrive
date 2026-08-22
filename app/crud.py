@@ -86,42 +86,6 @@ def delete_news(db: Session, news_id: int) -> bool:
     return False
 
 
-def get_filter_rule(db: Session, rule_id: int) -> Optional[models.FilterRule]:
-    return db.query(models.FilterRule).filter(models.FilterRule.id == rule_id).first()
-
-
-def get_latest_filter_rule(db: Session) -> Optional[models.FilterRule]:
-    return db.query(models.FilterRule).order_by(desc(models.FilterRule.id)).first()
-
-
-def create_filter_rule(db: Session, rule: schemas.FilterRuleCreate) -> models.FilterRule:
-    db_rule = models.FilterRule(**rule.model_dump())
-    db.add(db_rule)
-    db.commit()
-    db.refresh(db_rule)
-    return db_rule
-
-
-def update_filter_rule(db: Session, rule_id: int, rule: schemas.FilterRuleUpdate) -> Optional[models.FilterRule]:
-    db_rule = get_filter_rule(db, rule_id)
-    if db_rule:
-        update_data = rule.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            setattr(db_rule, key, value)
-        db.commit()
-        db.refresh(db_rule)
-    return db_rule
-
-
-def delete_filter_rule(db: Session, rule_id: int) -> bool:
-    db_rule = get_filter_rule(db, rule_id)
-    if db_rule:
-        db.delete(db_rule)
-        db.commit()
-        return True
-    return False
-
-
 def get_crawl_log(db: Session, log_id: int) -> Optional[models.CrawlLog]:
     return db.query(models.CrawlLog).filter(models.CrawlLog.id == log_id).first()
 

@@ -33,6 +33,48 @@
     </div>
 </div>
 
+<div class="finance-crawl">
+    <h2>财务指标抓取</h2>
+    <p class="form-hint">输入股票代码与起止季度，抓取公司三大报表关键科目入库（新浪财报 · 金额单位：元）</p>
+    <div class="finance-form">
+        <div class="finance-field">
+            <label for="finStockCode">股票代码</label>
+            <input id="finStockCode" type="text" placeholder="如 600519" value="600519">
+        </div>
+        <div class="finance-field">
+            <label>起始季度</label>
+            <div class="finance-period">
+                <select id="finStartYear"></select>
+                <select id="finStartQuarter">
+                    <option value="1">Q1</option>
+                    <option value="2">Q2</option>
+                    <option value="3">Q3</option>
+                    <option value="4">Q4</option>
+                </select>
+            </div>
+        </div>
+        <div class="finance-field">
+            <label>结束季度</label>
+            <div class="finance-period">
+                <select id="finEndYear"></select>
+                <select id="finEndQuarter">
+                    <option value="1">Q1</option>
+                    <option value="2">Q2</option>
+                    <option value="3">Q3</option>
+                    <option value="4">Q4</option>
+                </select>
+            </div>
+        </div>
+        <div class="finance-actions">
+            <button id="finFetchBtn" class="btn btn-primary">抓取并入库</button>
+            <button id="finQueryBtn" class="btn btn-secondary">查询数据库</button>
+        </div>
+    </div>
+    <div id="finResult">
+        <div class="finance-empty">输入股票代码与季度范围，点击「抓取并入库」从新浪财经获取财务数据，或「查询数据库」读取已入库数据。</div>
+    </div>
+</div>
+
 <div class="crawl-logs-section">
     <h2>抓取日志</h2>
     <div id="crawlLogs" class="crawl-logs">
@@ -99,6 +141,118 @@
 .log-warning { color: #dcdcaa; }
 .log-error { color: #f14c4c; }
 .log-running { color: #c586c0; }
+
+.finance-crawl {
+    margin-top: 20px;
+    background: #fff;
+    border-radius: 8px;
+    padding: 15px;
+}
+.finance-crawl h2 {
+    font-size: 16px;
+    margin-bottom: 6px;
+}
+.form-hint {
+    color: #888;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+.finance-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 1.25rem;
+    background: #fafbfc;
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
+    margin-bottom: 1.25rem;
+}
+.finance-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.finance-field label {
+    font-size: 0.85rem;
+    color: #666;
+    font-weight: 500;
+}
+.finance-field input,
+.finance-field select {
+    padding: 0.5rem 0.6rem;
+    border: 1px solid #d6dbe2;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    color: #333;
+    background: #fff;
+}
+.finance-field input { width: 160px; }
+.finance-period { display: flex; gap: 0.5rem; }
+.finance-period select { width: 96px; }
+.finance-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-left: auto;
+}
+.finance-card {
+    background: #fafbfc;
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+}
+.finance-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.finance-head h2 { margin: 0; font-size: 1.05rem; color: #333; }
+.finance-sub { font-size: 0.85rem; color: #999; }
+.finance-table-wrap { overflow-x: auto; }
+.finance-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    white-space: nowrap;
+}
+.finance-table th, .finance-table td {
+    border: 1px solid #eef1f4;
+    padding: 0.45rem 0.7rem;
+    text-align: right;
+    color: #333;
+}
+.finance-table thead th {
+    background: #f0f3f7;
+    font-weight: 600;
+    color: #555;
+}
+.finance-table .finance-label {
+    text-align: left;
+    background: #fafbfc;
+    font-weight: 500;
+    color: #555;
+    position: sticky;
+    left: 0;
+}
+.finance-empty {
+    text-align: center;
+    color: #999;
+    font-size: 0.9rem;
+    padding: 1.5rem 1rem;
+    background: #fafbfc;
+    border-radius: 10px;
+}
+.loading {
+    text-align: center;
+    color: #667eea;
+    font-size: 0.95rem;
+    padding: 1.5rem;
+}
+.error-state {
+    text-align: center;
+    color: #f14c4c;
+    padding: 1.5rem;
+}
+.error-state h2 { font-size: 1rem; margin-bottom: 0.5rem; }
 </style>
 <script>
 let isCrawling = false;
@@ -243,5 +397,108 @@ function formatTime(timeStr) {
 document.getElementById('startCrawlBtn').addEventListener('click', startCrawl);
 
 loadStatus();
+
+// ===== 财务指标抓取/查询 =====
+const FIN_QUARTER_END = { 1: '03-31', 2: '06-30', 3: '09-30', 4: '12-31' };
+
+function finPopulateYears() {
+    const now = new Date().getFullYear();
+    for (let y = now; y >= 1990; y--) {
+        ['finStartYear', 'finEndYear'].forEach(id => {
+            const sel = document.getElementById(id);
+            const opt = document.createElement('option');
+            opt.value = String(y);
+            opt.textContent = `${y}年`;
+            sel.appendChild(opt);
+        });
+    }
+    document.getElementById('finStartYear').value = String(now - 2);
+    document.getElementById('finEndYear').value = String(now);
+}
+
+function finQuarterEnd() {
+    const startYear = document.getElementById('finStartYear').value;
+    const startQ = document.getElementById('finStartQuarter').value;
+    const endYear = document.getElementById('finEndYear').value;
+    const endQ = document.getElementById('finEndQuarter').value;
+    return {
+        start: `${startYear}-${FIN_QUARTER_END[startQ]}`,
+        end: `${endYear}-${FIN_QUARTER_END[endQ]}`
+    };
+}
+
+function formatMoney(v) {
+    if (v === null || v === undefined || v === '') return '--';
+    return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderFinanceTable(data) {
+    const box = document.getElementById('finResult');
+    if (data.status !== 'ok') {
+        box.innerHTML = `<div class="error-state"><h2>请求失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
+        return;
+    }
+    const records = data.records || [];
+    if (!records.length) {
+        box.innerHTML = `<div class="finance-empty">该股票在此日期范围内暂无财务数据${data.saved != null ? '（已抓取到 0 期）' : ''}。</div>`;
+        return;
+    }
+
+    const header = records.map(r => `<th>${escapeHtml(r['报告期'])}</th>`).join('');
+    const rows = data.fields.map(field => {
+        const cells = records.map(r => `<td>${formatMoney(r[field])}</td>`).join('');
+        return `<tr><td class="finance-label">${escapeHtml(field)}</td>${cells}</tr>`;
+    }).join('');
+
+    box.innerHTML = `
+        <div class="finance-card">
+            <div class="finance-head">
+                <h2>${escapeHtml(data.code)} 财务指标</h2>
+                <span class="finance-sub">${records.length} 期 · 金额单位：元</span>
+            </div>
+            <div class="finance-table-wrap">
+                <table class="finance-table">
+                    <thead><tr><th class="finance-label">财务指标</th>${header}</tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        </div>`;
+}
+
+async function runFinanceFetch() {
+    const code = document.getElementById('finStockCode').value.trim();
+    if (!code) { alert('请输入股票代码'); return; }
+    const { start, end } = finQuarterEnd();
+    const box = document.getElementById('finResult');
+    box.innerHTML = '<div class="loading">正在从新浪财经抓取并入库，请稍候...</div>';
+    try {
+        const url = `/api/finance/fetch?code=${encodeURIComponent(code)}&start=${start}&end=${end}`;
+        const response = await fetchWithAuth(url, { method: 'POST' });
+        const data = await response.json();
+        renderFinanceTable(data);
+    } catch (error) {
+        box.innerHTML = `<div class="error-state"><h2>抓取失败</h2><p>${escapeHtml(error.message)}</p></div>`;
+    }
+}
+
+async function runFinanceQuery() {
+    const code = document.getElementById('finStockCode').value.trim();
+    if (!code) { alert('请输入股票代码'); return; }
+    const { start, end } = finQuarterEnd();
+    const box = document.getElementById('finResult');
+    box.innerHTML = '<div class="loading">查询数据库中...</div>';
+    try {
+        const url = `/api/finance/query?code=${encodeURIComponent(code)}&start=${start}&end=${end}`;
+        const response = await fetchWithAuth(url);
+        const data = await response.json();
+        renderFinanceTable(data);
+    } catch (error) {
+        box.innerHTML = `<div class="error-state"><h2>查询失败</h2><p>${escapeHtml(error.message)}</p></div>`;
+    }
+}
+
+document.getElementById('finFetchBtn').addEventListener('click', runFinanceFetch);
+document.getElementById('finQueryBtn').addEventListener('click', runFinanceQuery);
+finPopulateYears();
 </script>
 {% endblock %}

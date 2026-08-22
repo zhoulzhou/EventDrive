@@ -37,27 +37,6 @@ class News(NewsBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class FilterRuleBase(BaseModel):
-    include_keywords: Optional[str] = None
-    exclude_keywords: Optional[str] = None
-
-
-class FilterRuleCreate(FilterRuleBase):
-    pass
-
-
-class FilterRuleUpdate(FilterRuleBase):
-    pass
-
-
-class FilterRule(FilterRuleBase):
-    id: int
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class CrawlLogBase(BaseModel):
     source: str
     news_count: int

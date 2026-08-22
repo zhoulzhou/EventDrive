@@ -5,156 +5,112 @@
 {% block content %}
 <div class="page-header">
     <h1>财务指标</h1>
-    <p class="form-hint">输入股票代码与起止季度，抓取公司三大报表关键科目（新浪财报 · 金额单位：元）</p>
+    <p class="form-hint">输入股票代码，展示已入库财务指标的趋势图表（数据需先在「抓取控制」页面抓取入库）</p>
 </div>
 
-<div class="finance-form">
+<div class="finance-query">
     <div class="finance-field">
         <label for="stockCode">股票代码</label>
         <input id="stockCode" type="text" placeholder="如 600519" value="600519">
     </div>
-    <div class="finance-field">
-        <label>起始季度</label>
-        <div class="finance-period">
-            <select id="startYear"></select>
-            <select id="startQuarter">
-                <option value="1">Q1</option>
-                <option value="2">Q2</option>
-                <option value="3">Q3</option>
-                <option value="4">Q4</option>
-            </select>
-        </div>
-    </div>
-    <div class="finance-field">
-        <label>结束季度</label>
-        <div class="finance-period">
-            <select id="endYear"></select>
-            <select id="endQuarter">
-                <option value="1">Q1</option>
-                <option value="2">Q2</option>
-                <option value="3">Q3</option>
-                <option value="4">Q4</option>
-            </select>
-        </div>
-    </div>
-    <div class="finance-actions">
-        <button id="fetchBtn" class="btn btn-primary">抓取并入库</button>
-        <button id="queryBtn" class="btn btn-secondary">查询数据库</button>
-    </div>
+    <button id="queryBtn" class="btn btn-primary">查询并展示图表</button>
 </div>
 
 <div id="financeResult">
-    <div class="finance-empty">请选择股票代码与日期范围，点击「抓取并入库」获取财务数据，或「查询数据库」读取已入库数据。</div>
+    <div class="finance-empty">请输入股票代码，点击「查询并展示图表」查看已入库的财务指标趋势。</div>
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/echarts.min.js"></script>
 <script>
-const QUARTER_END = { 1: '03-31', 2: '06-30', 3: '09-30', 4: '12-31' };
+const charts = [];
 
-function populateYears() {
-    const now = new Date().getFullYear();
-    for (let y = now; y >= 1990; y--) {
-        ['startYear', 'endYear'].forEach(id => {
-            const sel = document.getElementById(id);
-            const opt = document.createElement('option');
-            opt.value = String(y);
-            opt.textContent = `${y}年`;
-            sel.appendChild(opt);
-        });
-    }
-    document.getElementById('startYear').value = String(now - 2);
-    document.getElementById('endYear').value = String(now);
+function toNumber(v) {
+    if (v === null || v === undefined || v === '') return null;
+    return Number(v);
 }
 
-function quarterEnd() {
-    const startYear = document.getElementById('startYear').value;
-    const startQ = document.getElementById('startQuarter').value;
-    const endYear = document.getElementById('endYear').value;
-    const endQ = document.getElementById('endQuarter').value;
-    return {
-        start: `${startYear}-${QUARTER_END[startQ]}`,
-        end: `${endYear}-${QUARTER_END[endQ]}`
-    };
-}
-
-function formatMoney(v) {
-    if (v === null || v === undefined || v === '') return '--';
-    return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function renderTable(data) {
+function renderCharts(data) {
     const box = document.getElementById('financeResult');
+    charts.forEach(c => c.dispose());
+    charts.length = 0;
+
     if (data.status !== 'ok') {
         box.innerHTML = `<div class="error-state"><h2>请求失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
         return;
     }
     const records = data.records || [];
     if (!records.length) {
-        box.innerHTML = `<div class="finance-empty">该股票在此日期范围内暂无财务数据${data.saved != null ? '（已抓取到 0 期）' : ''}。</div>`;
+        box.innerHTML = `<div class="finance-empty">该股票暂无已入库的财务数据，请先在「抓取控制」页面抓取。</div>`;
         return;
     }
 
-    const header = records.map(r => `<th>${escapeHtml(r['报告期'])}</th>`).join('');
-    const rows = data.fields.map(field => {
-        const cells = records.map(r => `<td>${formatMoney(r[field])}</td>`).join('');
-        return `<tr><td class="finance-label">${escapeHtml(field)}</td>${cells}</tr>`;
-    }).join('');
+    const periods = records.map(r => r['报告期']);
+    const cards = data.fields.map((field, i) => `
+        <div class="chart-card">
+            <div class="chart-title">${escapeHtml(field)}</div>
+            <div class="chart-box" id="chart_${i}"></div>
+        </div>
+    `).join('');
 
     box.innerHTML = `
-        <div class="finance-card">
-            <div class="finance-head">
-                <h2>${escapeHtml(data.code)} 财务指标</h2>
-                <span class="finance-sub">${records.length} 期 · 金额单位：元</span>
-            </div>
-            <div class="finance-table-wrap">
-                <table class="finance-table">
-                    <thead><tr><th class="finance-label">财务指标</th>${header}</tr></thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            </div>
-        </div>`;
-}
+        <div class="chart-head">
+            <h2>${escapeHtml(data.code)} 财务指标趋势</h2>
+            <span class="chart-sub">${records.length} 期 · 金额单位：元</span>
+        </div>
+        <div class="chart-grid">${cards}</div>`;
 
-async function runFetch() {
-    const code = document.getElementById('stockCode').value.trim();
-    if (!code) { alert('请输入股票代码'); return; }
-    const { start, end } = quarterEnd();
-    const box = document.getElementById('financeResult');
-    box.innerHTML = '<div class="loading">正在从新浪财经抓取并入库，请稍候...</div>';
-    try {
-        const url = `/api/finance/fetch?code=${encodeURIComponent(code)}&start=${start}&end=${end}`;
-        const response = await fetchWithAuth(url, { method: 'POST' });
-        const data = await response.json();
-        renderTable(data);
-    } catch (error) {
-        box.innerHTML = `<div class="error-state"><h2>抓取失败</h2><p>${escapeHtml(error.message)}</p></div>`;
-    }
+    data.fields.forEach((field, i) => {
+        const values = records.map(r => toNumber(r[field]));
+        const chart = echarts.init(document.getElementById(`chart_${i}`));
+        chart.setOption({
+            tooltip: { trigger: 'axis' },
+            grid: { left: 80, right: 24, top: 30, bottom: 44 },
+            xAxis: {
+                type: 'category',
+                data: periods,
+                axisLabel: { rotate: 45 }
+            },
+            yAxis: {
+                type: 'value',
+                scale: true
+            },
+            series: [{
+                name: field,
+                type: 'line',
+                smooth: true,
+                data: values,
+                connectNulls: true,
+                lineStyle: { width: 2 },
+                itemStyle: { color: '#667eea' }
+            }]
+        });
+        charts.push(chart);
+    });
 }
 
 async function runQuery() {
     const code = document.getElementById('stockCode').value.trim();
     if (!code) { alert('请输入股票代码'); return; }
-    const { start, end } = quarterEnd();
     const box = document.getElementById('financeResult');
-    box.innerHTML = '<div class="loading">查询数据库中...</div>';
+    box.innerHTML = '<div class="loading">正在查询数据库...</div>';
     try {
-        const url = `/api/finance/query?code=${encodeURIComponent(code)}&start=${start}&end=${end}`;
+        const url = `/api/finance/query?code=${encodeURIComponent(code)}`;
         const response = await fetchWithAuth(url);
         const data = await response.json();
-        renderTable(data);
+        renderCharts(data);
     } catch (error) {
         box.innerHTML = `<div class="error-state"><h2>查询失败</h2><p>${escapeHtml(error.message)}</p></div>`;
     }
 }
 
-document.getElementById('fetchBtn').addEventListener('click', runFetch);
 document.getElementById('queryBtn').addEventListener('click', runQuery);
-populateYears();
+window.addEventListener('resize', () => charts.forEach(c => c.resize()));
 </script>
 
 <style>
-.finance-form {
+.finance-query {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
@@ -175,63 +131,41 @@ populateYears();
     color: #666;
     font-weight: 500;
 }
-.finance-field input,
-.finance-field select {
+.finance-field input {
     padding: 0.5rem 0.6rem;
     border: 1px solid #d6dbe2;
     border-radius: 8px;
     font-size: 0.95rem;
     color: #333;
     background: #fff;
+    width: 160px;
 }
-.finance-field input { width: 160px; }
-.finance-period { display: flex; gap: 0.5rem; }
-.finance-period select { width: 96px; }
-.finance-actions {
-    display: flex;
-    gap: 0.75rem;
-    margin-left: auto;
-}
-.finance-card {
-    background: white;
-    border-radius: 12px;
-    padding: 1.25rem 1.5rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-}
-.finance-head {
+.chart-head {
     display: flex;
     align-items: baseline;
     gap: 0.75rem;
     margin-bottom: 1rem;
 }
-.finance-head h2 { margin: 0; font-size: 1.1rem; color: #333; }
-.finance-sub { font-size: 0.85rem; color: #999; }
-.finance-table-wrap { overflow-x: auto; }
-.finance-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.88rem;
-    white-space: nowrap;
+.chart-head h2 { margin: 0; font-size: 1.1rem; color: #333; }
+.chart-sub { font-size: 0.85rem; color: #999; }
+.chart-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1.25rem;
 }
-.finance-table th, .finance-table td {
-    border: 1px solid #eef1f4;
-    padding: 0.5rem 0.75rem;
-    text-align: right;
-    color: #333;
+.chart-card {
+    background: white;
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
-.finance-table thead th {
-    background: #f7f9fb;
+.chart-title {
+    font-size: 0.95rem;
     font-weight: 600;
     color: #555;
+    margin-bottom: 0.5rem;
 }
-.finance-table .finance-label {
-    text-align: left;
-    background: #fafbfc;
-    font-weight: 500;
-    color: #555;
-    position: sticky;
-    left: 0;
-}
+.chart-box { width: 100%; height: 280px; }
 .finance-empty {
     text-align: center;
     color: #999;
@@ -241,5 +175,23 @@ populateYears();
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
+.loading {
+    text-align: center;
+    color: #667eea;
+    font-size: 0.95rem;
+    padding: 2.5rem;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.error-state {
+    text-align: center;
+    color: #f14c4c;
+    padding: 2.5rem;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.error-state h2 { font-size: 1rem; margin-bottom: 0.5rem; }
 </style>
 {% endblock %}

@@ -20,16 +20,6 @@ class News(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
-class FilterRule(Base):
-    __tablename__ = "filter_rules"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    include_keywords = Column(Text, nullable=True)
-    exclude_keywords = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
-
-
 class CrawlLog(Base):
     __tablename__ = "crawl_logs"
 
