@@ -90,11 +90,11 @@ function renderIndicators(data) {
                 </div>`;
             }).join('')}
         </div>`;
-    // 营收/现金相关指标共享「营业收入」量级的数值 Y 轴，便于横向对比（增速轴仍各自独立）
-    const ALIGNED_KEYS = ['revenue', 'operating_cost', 'gross_profit', 'net_profit', 'operating_cash_flow', 'total_cash'];
+    // 亿元单位指标（营收/现金/资产负债/负债类）共享「营业收入」量级的数值 Y 轴，便于横向对比
+    // （%/天类指标不同单位保持各自自适应，增速轴独立）
     let axisMin = null, axisMax = null;
     inds.forEach(function (ind) {
-        if (ALIGNED_KEYS.indexOf(ind.key) === -1) return;
+        if (ind.unit !== '亿') return;
         ind.values.forEach(function (v) {
             if (v == null) return;
             if (axisMin === null || v < axisMin) axisMin = v;
@@ -107,7 +107,7 @@ function renderIndicators(data) {
     })();
 
     inds.forEach(function (ind, i) {
-        const aligned = sharedRange && ALIGNED_KEYS.indexOf(ind.key) !== -1 ? sharedRange : null;
+        const aligned = sharedRange && ind.unit === '亿' ? sharedRange : null;
         lazyInit('chart_' + i, function () { renderIndicatorChart('chart_' + i, ind, periods, aligned); });
     });
 }
