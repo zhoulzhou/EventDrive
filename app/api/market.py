@@ -104,7 +104,9 @@ async def get_market_history(
 
         drawdown_events = []
         strategy = get_strategy(symbol)
-        if strategy is not None:
+        # 仅当配置了峰值回撤策略（red_pct）时才计算回撤事件；
+        # 仅做分级的指标（如 VIXCLS 只有 thresholds）不参与，避免 KeyError 及误标事件
+        if strategy is not None and strategy.get("red_pct") is not None:
             drawdown_events = compute_drawdown_events(points, strategy["red_pct"])
 
         return {
