@@ -300,7 +300,12 @@ FINANCIAL_FIELD_COLUMNS = {
 }
 
 
-def upsert_financial_reports(db: Session, stock_code: str, records: List[dict]) -> int:
+def upsert_financial_reports(
+    db: Session,
+    stock_code: str,
+    records: List[dict],
+    stock_name: Optional[str] = None,
+) -> int:
     """按 (stock_code, report_date) 更新或插入多条财务指标记录。
 
     records 形如 [{"报告期": "2024-06-30", "营业收入": 123.0, ...}]，值需为 float/None。
@@ -320,6 +325,8 @@ def upsert_financial_reports(db: Session, stock_code: str, records: List[dict]) 
                 stock_code=stock_code, report_date=rec["报告期"]
             )
             db.add(db_record)
+        if stock_name:
+            db_record.stock_name = stock_name
         for display_name, column in FINANCIAL_FIELD_COLUMNS.items():
             setattr(db_record, column, rec.get(display_name))
         count += 1

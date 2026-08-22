@@ -39,20 +39,27 @@ def get_db():
 
 
 def ensure_schema_compatibility(engine=engine):
-    """检测并重建结构已变更的 market_prices 表。
+    """检测并修复与当前模型不兼容的既有表结构。
 
-    旧版表结构为「每个 symbol 仅一条最新记录」并含 previous_value 列；
-    新版改为「按 symbol + date 存储历史记录」。两者结构不兼容，检测到旧
-    结构时直接删除重建（行情为日频数据，丢失后可由调度器重新抓取）。
+    - market_prices: 旧版表结构为「每个 symbol 仅一条最新记录」并含 previous_value 列；
+      新版改为「按 symbol + date 存储历史记录」，检测到旧结构直接删除重建
+      （行情为日频数据，丢失后可由调度器重新抓取）。
+    - financial_reports: 为既有表补充 stock_name 列（ALTER TABLE 增列，不删除数据）。
     """
     try:
         inspector = inspect(engine)
-        if not inspector.has_table("market_prices"):
-            return
-        columns = {col["name"] for col in inspector.get_columns("market_prices")}
-        if "previous_value" in columns:
-            with engine.begin() as conn:
-                conn.execute(text("DROP TABLE market_prices"))
-            print("[database] 检测到旧版 market_prices 表，已重建以支持历史数据")
+        if inspector.has_table("market_prices"):
+            columns = {col["name"] for col in inspector.get_columns("market_prices")}
+            if "previous_value" in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("DROP TABLE market_prices"))
+                print("[database] 检测到旧版 market_prices 表，已重建以支持历史数据")
+
+        if inspector.has_table("financial_reports"):
+            columns = {col["name"] for col in inspector.get_columns("financial_reports")}
+            if "stock_name" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE financial_reports ADD COLUMN stock_name TEXT"))
+                print("[database] financial_reports 表已补充 stock_name 列")
     except Exception as e:
         print(f"[database] 表结构检测失败: {e}")

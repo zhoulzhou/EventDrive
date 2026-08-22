@@ -89,6 +89,7 @@ class FinancialReport(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     stock_code = Column(Text, nullable=False, index=True)
+    stock_name = Column(Text, nullable=True)  # 股票名称
     report_date = Column(Text, nullable=False)  # 报告期 YYYY-MM-DD
     # 利润表
     revenue = Column(Float, nullable=True)  # 营业收入

@@ -42,6 +42,10 @@
             <input id="finStockCode" type="text" placeholder="如 600519" value="600519">
         </div>
         <div class="finance-field">
+            <label for="finStockName">股票名称</label>
+            <input id="finStockName" type="text" placeholder="如 贵州茅台">
+        </div>
+        <div class="finance-field">
             <label>起始季度</label>
             <div class="finance-period">
                 <select id="finStartYear"></select>
@@ -453,7 +457,7 @@ function renderFinanceTable(data) {
     box.innerHTML = `
         <div class="finance-card">
             <div class="finance-head">
-                <h2>${escapeHtml(data.code)} 财务指标</h2>
+                <h2>${escapeHtml(data.name ? data.name + ' ' : '')}${escapeHtml(data.code)} 财务指标</h2>
                 <span class="finance-sub">${records.length} 期 · 金额单位：元</span>
             </div>
             <div class="finance-table-wrap">
@@ -468,11 +472,12 @@ function renderFinanceTable(data) {
 async function runFinanceFetch() {
     const code = document.getElementById('finStockCode').value.trim();
     if (!code) { alert('请输入股票代码'); return; }
+    const name = document.getElementById('finStockName').value.trim();
     const { start, end } = finQuarterEnd();
     const box = document.getElementById('finResult');
     box.innerHTML = '<div class="loading">正在从新浪财经抓取并入库，请稍候...</div>';
     try {
-        const url = `/api/finance/fetch?code=${encodeURIComponent(code)}&start=${start}&end=${end}`;
+        const url = `/api/finance/fetch?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}&start=${start}&end=${end}`;
         const response = await fetchWithAuth(url, { method: 'POST' });
         const data = await response.json();
         renderFinanceTable(data);

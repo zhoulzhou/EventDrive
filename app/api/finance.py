@@ -26,6 +26,14 @@ def _serialize(records) -> list:
     return rows
 
 
+def _latest_name(records) -> Optional[str]:
+    """取记录中最新的非空股票名称（记录按报告期升序，倒序遍历）。"""
+    for rec in reversed(records):
+        if getattr(rec, "stock_name", None):
+            return rec.stock_name
+    return None
+
+
 def _validate_period(start: Optional[str], end: Optional[str]):
     for label, value in (("start", start), ("end", end)):
         if value is None:
@@ -50,6 +58,7 @@ async def query_finance(
         return {
             "status": "ok",
             "code": code,
+            "name": _latest_name(records),
             "fields": list(FIELD_COLUMNS.keys()),
             "records": _serialize(records),
         }
@@ -63,6 +72,7 @@ async def query_finance(
 @router.post("/finance/fetch")
 def fetch_finance(
     code: str = Query(..., description="股票代码，如 600519"),
+    name: Optional[str] = Query(None, description="股票名称，如 贵州茅台"),
     start: Optional[str] = Query(None, description="起始报告期 YYYY-MM-DD（季度末）"),
     end: Optional[str] = Query(None, description="结束报告期 YYYY-MM-DD（季度末）"),
     db: Session = Depends(get_db),
@@ -83,11 +93,12 @@ def fetch_finance(
                 r for r in records
                 if (not start or r["报告期"] >= start) and (not end or r["报告期"] <= end)
             ]
-        saved = crud.upsert_financial_reports(db, code, records)
-        logger.info(f"股票 {code} 财务指标抓取入库 {saved} 期")
+        saved = crud.upsert_financial_reports(db, code, records, stock_name=name)
+        logger.info(f"股票 {code}({name or '-'}) 财务指标抓取入库 {saved} 期")
         return {
             "status": "ok",
             "code": code,
+            "name": name,
             "saved": saved,
             "fields": list(FIELD_COLUMNS.keys()),
             "records": records,
