@@ -18,3 +18,4 @@ starlette>=0.41.0
 volcengine-python-sdk[ark]>=5.0.0
 tweepy>=4.15.0
 requests_oauthlib>=2.0.0
+akshare>=1.18.60

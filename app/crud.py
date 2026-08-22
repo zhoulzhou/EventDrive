@@ -314,3 +314,65 @@ def upsert_index_history_rows(db: Session, rows: List[dict]) -> int:
         setattr(rec, row["column"], row["value"])
     db.commit()
     return len(seen)
+
+
+# 财务指标 显示名 -> FinancialReport 表列名（顺序即展示顺序）
+FINANCIAL_FIELD_COLUMNS = {
+    "营业收入": "revenue",
+    "营业成本": "operating_cost",
+    "归母净利润": "net_profit",
+    "存货": "inventory",
+    "应收账款": "accounts_receivable",
+    "货币资金": "cash",
+    "短期理财": "short_term_investment",
+    "合同负债": "contract_liabilities",
+    "股东权益": "shareholders_equity",
+    "经营活动现金流净额": "operating_cash_flow",
+    "短期借款": "short_term_borrowing",
+    "一年内到期的非流动负债": "non_current_liab_due_1y",
+    "长期借款": "long_term_borrowing",
+    "应付债券": "bonds_payable",
+    "利息支出": "interest_expense",
+}
+
+
+def upsert_financial_reports(db: Session, stock_code: str, records: List[dict]) -> int:
+    """按 (stock_code, report_date) 更新或插入多条财务指标记录。
+
+    records 形如 [{"报告期": "2024-06-30", "营业收入": 123.0, ...}]，值需为 float/None。
+    """
+    count = 0
+    for rec in records:
+        db_record = (
+            db.query(models.FinancialReport)
+            .filter(
+                models.FinancialReport.stock_code == stock_code,
+                models.FinancialReport.report_date == rec["报告期"],
+            )
+            .first()
+        )
+        if db_record is None:
+            db_record = models.FinancialReport(
+                stock_code=stock_code, report_date=rec["报告期"]
+            )
+            db.add(db_record)
+        for display_name, column in FINANCIAL_FIELD_COLUMNS.items():
+            setattr(db_record, column, rec.get(display_name))
+        count += 1
+    db.commit()
+    return count
+
+
+def get_financial_reports(
+    db: Session,
+    stock_code: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> List[models.FinancialReport]:
+    """查询某股票在 [start, end] 报告期范围内的财务指标记录（按报告期升序）。"""
+    query = db.query(models.FinancialReport).filter(models.FinancialReport.stock_code == stock_code)
+    if start:
+        query = query.filter(models.FinancialReport.report_date >= start)
+    if end:
+        query = query.filter(models.FinancialReport.report_date <= end)
+    return query.order_by(models.FinancialReport.report_date.asc()).all()

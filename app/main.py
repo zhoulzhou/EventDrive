@@ -180,3 +180,10 @@ async def index_alarm_page(request: Request):
     if not is_logged_in(request):
         return RedirectResponse(url="/login")
     return render_template("index_alarm.html", {"request": request})
+
+
+@app.get("/finance")
+async def finance_page(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("finance.html", {"request": request})

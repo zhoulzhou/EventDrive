@@ -86,3 +86,37 @@ class IndexHistory(Base):
     DGS10_2015 = Column(Float, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class FinancialReport(Base):
+    """财务指标：按 股票代码 + 报告期 存储公司三大报表关键科目（金额单位：元）。
+
+    数据来源: 新浪财报（akshare.stock_financial_report_sina），由财务指标页面抓取入库。
+    以股票代码为查询主键，同一股票可有多期记录（报告期 YYYY-MM-DD）。
+    """
+    __tablename__ = "financial_reports"
+    __table_args__ = (UniqueConstraint("stock_code", "report_date", name="uq_financial_stock_date"),)
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    stock_code = Column(Text, nullable=False, index=True)
+    report_date = Column(Text, nullable=False)  # 报告期 YYYY-MM-DD
+    # 利润表
+    revenue = Column(Float, nullable=True)  # 营业收入
+    operating_cost = Column(Float, nullable=True)  # 营业成本
+    net_profit = Column(Float, nullable=True)  # 归母净利润
+    # 资产负债表
+    inventory = Column(Float, nullable=True)  # 存货
+    accounts_receivable = Column(Float, nullable=True)  # 应收账款
+    cash = Column(Float, nullable=True)  # 货币资金
+    short_term_investment = Column(Float, nullable=True)  # 短期理财
+    contract_liabilities = Column(Float, nullable=True)  # 合同负债
+    shareholders_equity = Column(Float, nullable=True)  # 股东权益
+    # 现金流量表
+    operating_cash_flow = Column(Float, nullable=True)  # 经营活动现金流净额
+    short_term_borrowing = Column(Float, nullable=True)  # 短期借款
+    non_current_liab_due_1y = Column(Float, nullable=True)  # 一年内到期的非流动负债
+    long_term_borrowing = Column(Float, nullable=True)  # 长期借款
+    bonds_payable = Column(Float, nullable=True)  # 应付债券
+    interest_expense = Column(Float, nullable=True)  # 利息支出
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
