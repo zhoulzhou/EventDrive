@@ -90,18 +90,47 @@ function renderIndicators(data) {
                 </div>`;
             }).join('')}
         </div>`;
+    // 营收/现金相关指标共享「营业收入」量级的数值 Y 轴，便于横向对比（增速轴仍各自独立）
+    const ALIGNED_KEYS = ['revenue', 'operating_cost', 'gross_profit', 'net_profit', 'operating_cash_flow', 'total_cash'];
+    let axisMin = null, axisMax = null;
+    inds.forEach(function (ind) {
+        if (ALIGNED_KEYS.indexOf(ind.key) === -1) return;
+        ind.values.forEach(function (v) {
+            if (v == null) return;
+            if (axisMin === null || v < axisMin) axisMin = v;
+            if (axisMax === null || v > axisMax) axisMax = v;
+        });
+    });
+    const sharedRange = (axisMin === null || axisMax === null) ? null : (function () {
+        const pad = (axisMax - axisMin) * 0.08 || (Math.abs(axisMax) * 0.08) || 1;
+        return { min: axisMin >= 0 ? 0 : axisMin - pad, max: axisMax + pad };
+    })();
+
     inds.forEach(function (ind, i) {
-        lazyInit('chart_' + i, function () { renderIndicatorChart('chart_' + i, ind, periods); });
+        const aligned = sharedRange && ALIGNED_KEYS.indexOf(ind.key) !== -1 ? sharedRange : null;
+        lazyInit('chart_' + i, function () { renderIndicatorChart('chart_' + i, ind, periods, aligned); });
     });
 }
 
-function renderIndicatorChart(elId, ind, periods) {
+function renderIndicatorChart(elId, ind, periods, sharedRange) {
     const chart = echarts.init(document.getElementById(elId));
     charts.push(chart);
     const unitSuffix = ind.unit === '%' ? '%' : (ind.unit === '天' ? '天' : '亿元');
     const rightAxisName = ind.unit === '%' ? '同比(百分点)' : '增速%';
     const valueFmt = function (v) { return v == null ? '—' : v.toFixed(1); };
     const growthData = ind.growth.map(function (g) { return g == null ? null : g; });
+
+    const leftYAxis = {
+        type: 'value',
+        name: unitSuffix,
+        nameTextStyle: { color: '#666', fontSize: 10 },
+        axisLabel: { color: '#888', fontSize: 10 },
+        splitLine: { lineStyle: { color: '#eef0f3' } }
+    };
+    if (sharedRange) {
+        leftYAxis.min = sharedRange.min;
+        leftYAxis.max = sharedRange.max;
+    }
 
     chart.setOption({
         tooltip: {
@@ -132,13 +161,7 @@ function renderIndicatorChart(elId, ind, periods) {
             axisLine: { lineStyle: { color: '#d6dbe2' } }
         },
         yAxis: [
-            {
-                type: 'value',
-                name: unitSuffix,
-                nameTextStyle: { color: '#666', fontSize: 10 },
-                axisLabel: { color: '#888', fontSize: 10 },
-                splitLine: { lineStyle: { color: '#eef0f3' } }
-            },
+            leftYAxis,
             {
                 type: 'value',
                 name: rightAxisName,
