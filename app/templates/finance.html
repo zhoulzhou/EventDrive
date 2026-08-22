@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
     <h1>财务指标</h1>
-    <p class="form-hint">输入股票名称，展示已入库财务指标的趋势图表（数据需先在「抓取控制」页面抓取入库）</p>
+    <p class="form-hint">输入股票名称，查询已入库的财务数据（数据需先在「抓取控制」页面抓取入库，指标图表将在后续更新中展示）</p>
 </div>
 
 <div class="finance-query">
@@ -13,83 +13,16 @@
         <label for="stockName">股票名称</label>
         <input id="stockName" type="text" placeholder="如 贵州茅台" value="贵州茅台">
     </div>
-    <button id="queryBtn" class="btn btn-primary">查询并展示图表</button>
+    <button id="queryBtn" class="btn btn-primary">查询</button>
 </div>
 
 <div id="financeResult">
-    <div class="finance-empty">请输入股票名称，点击「查询并展示图表」查看已入库的财务指标趋势。</div>
+    <div class="finance-empty">请输入股票名称，点击「查询」查看已入库的财务数据。</div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/echarts.min.js"></script>
 <script>
-const charts = [];
-
-function toNumber(v) {
-    if (v === null || v === undefined || v === '') return null;
-    return Number(v);
-}
-
-function renderCharts(data) {
-    const box = document.getElementById('financeResult');
-    charts.forEach(c => c.dispose());
-    charts.length = 0;
-
-    if (data.status !== 'ok') {
-        box.innerHTML = `<div class="error-state"><h2>请求失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
-        return;
-    }
-    const records = data.records || [];
-    if (!records.length) {
-        box.innerHTML = `<div class="finance-empty">该股票暂无已入库的财务数据，请先在「抓取控制」页面抓取。</div>`;
-        return;
-    }
-
-    const periods = records.map(r => r['报告期']);
-    const cards = data.fields.map((field, i) => `
-        <div class="chart-card">
-            <div class="chart-title">${escapeHtml(field)}</div>
-            <div class="chart-box" id="chart_${i}"></div>
-        </div>
-    `).join('');
-
-    box.innerHTML = `
-        <div class="chart-head">
-            <h2>${escapeHtml(data.name || data.code)} 财务指标趋势</h2>
-            <span class="chart-sub">${records.length} 期 · 金额单位：元</span>
-        </div>
-        <div class="chart-grid">${cards}</div>`;
-
-    data.fields.forEach((field, i) => {
-        const values = records.map(r => toNumber(r[field]));
-        const chart = echarts.init(document.getElementById(`chart_${i}`));
-        chart.setOption({
-            tooltip: { trigger: 'axis' },
-            grid: { left: 80, right: 24, top: 30, bottom: 44 },
-            xAxis: {
-                type: 'category',
-                data: periods,
-                axisLabel: { rotate: 45 }
-            },
-            yAxis: {
-                type: 'value',
-                scale: true
-            },
-            series: [{
-                name: field,
-                type: 'line',
-                smooth: true,
-                data: values,
-                connectNulls: true,
-                lineStyle: { width: 2 },
-                itemStyle: { color: '#667eea' }
-            }]
-        });
-        charts.push(chart);
-    });
-}
-
 async function runQuery() {
     const name = document.getElementById('stockName').value.trim();
     if (!name) { alert('请输入股票名称'); return; }
@@ -99,14 +32,22 @@ async function runQuery() {
         const url = `/api/finance/query?name=${encodeURIComponent(name)}`;
         const response = await fetchWithAuth(url);
         const data = await response.json();
-        renderCharts(data);
+        if (data.status !== 'ok') {
+            box.innerHTML = `<div class="error-state"><h2>请求失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
+            return;
+        }
+        const records = data.records || [];
+        box.innerHTML = `
+            <div class="finance-empty">
+                已查询到「${escapeHtml(data.name || name)}」共 ${records.length} 期财务数据。<br>
+                新的指标图表将在后续更新中展示。
+            </div>`;
     } catch (error) {
         box.innerHTML = `<div class="error-state"><h2>查询失败</h2><p>${escapeHtml(error.message)}</p></div>`;
     }
 }
 
 document.getElementById('queryBtn').addEventListener('click', runQuery);
-window.addEventListener('resize', () => charts.forEach(c => c.resize()));
 </script>
 
 <style>
@@ -138,34 +79,8 @@ window.addEventListener('resize', () => charts.forEach(c => c.resize()));
     font-size: 0.95rem;
     color: #333;
     background: #fff;
-    width: 160px;
+    width: 180px;
 }
-.chart-head {
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-}
-.chart-head h2 { margin: 0; font-size: 1.1rem; color: #333; }
-.chart-sub { font-size: 0.85rem; color: #999; }
-.chart-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 1.25rem;
-}
-.chart-card {
-    background: white;
-    border-radius: 12px;
-    padding: 1rem 1.25rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-}
-.chart-title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #555;
-    margin-bottom: 0.5rem;
-}
-.chart-box { width: 100%; height: 280px; }
 .finance-empty {
     text-align: center;
     color: #999;
