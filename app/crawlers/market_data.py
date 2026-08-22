@@ -2,7 +2,7 @@
 """市场数据抓取模块（海外权威数据源，均无需 API Key，适合日本服务器）。
 
 数据源组合：
-- 纳斯达克指数      -> 美国圣路易斯联储 FRED（NASDAQCOM）
+- 纳斯达克指数      -> 美国圣路易斯联储 FRED（NASDAQ100），抓取失败时备用源为纳斯达克官方实时报价（api.nasdaq.com）
 - VIX 恐慌指数      -> CBOE 官方历史 CSV（换用 CBOE，时效好于 FRED）
 - 美债 2Y/10Y 收益率 -> 美国财政部官方每日收益率 CSV（换用 Treasury，时效好于 FRED）
 
@@ -35,11 +35,21 @@ TREASURY_URL = (
     "interest-rates/daily-treasury-rates.csv/{year}/all"
     "?type=daily_treasury_yield_curve&field_tdr_date_value={year}&page&_format=csv"
 )
+# 纳斯达克100备用源：官方实时报价（当日收盘即更新，需浏览器 UA，免 Key）
+NASDAQ_URL = "https://api.nasdaq.com/api/quote/NDX/info?assetclass=index"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+)
+NASDAQ_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 # 指标定义：source 决定用哪个数据源，column 为财政部收益率 CSV 中的列名；unit 用于前端展示（收益率用 %）
 SERIES = [
     {"key": "nasdaq", "name": "纳斯达克100指数", "symbol": "NASDAQ100", "unit": "", "source": "fred",
-     "column": None, "describe": "NASDAQ-100 Index"},
+     "column": None, "describe": "NASDAQ-100 Index", "backup": "nasdaq"},
     {"key": "vix", "name": "VIX恐慌指数", "symbol": "VIXCLS", "unit": "", "source": "cboe",
      "column": None, "describe": "CBOE Volatility Index"},
     {"key": "dgs2", "name": "美债2年期收益率", "symbol": "DGS2", "unit": "%", "source": "treasury",
@@ -111,6 +121,51 @@ async def _fetch_vix() -> Dict[str, Any]:
     return {"value": latest[1], "date": _parse_ymd(latest[0])}
 
 
+_MONTHS = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+           "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+
+
+def _parse_nasdaq_ts(ts: str) -> str:
+    """解析 Nasdaq 报价时间，如 'Aug 21, 2026' -> '2026-08-21'。"""
+    try:
+        parts = ts.replace(",", "").split()
+        if len(parts) != 3:
+            return ""
+        month, day, year = parts
+        return f"{year}-{_MONTHS[month[:3]]:02d}-{int(day):02d}"
+    except Exception:
+        return ""
+
+
+async def _fetch_nasdaq() -> Dict[str, Any]:
+    """备用源：纳斯达克100官方实时报价（api.nasdaq.com，免 Key，当日收盘即更新）。
+    从 primaryData 取 lastSalePrice 与 lastTradeTimestamp。需要浏览器 UA，否则会被拒绝。
+    """
+    try:
+        response = await _client.get(NASDAQ_URL, headers=NASDAQ_HEADERS)
+        response.raise_for_status()
+    except Exception as e:
+        logger.error(f"获取 Nasdaq NDX 失败: {e}", exc_info=True)
+        return {"value": None, "date": None}
+
+    try:
+        primary = response.json()["data"]["primaryData"]
+        last_sale = (primary.get("lastSalePrice") or "").replace(",", "").strip()
+        ts = (primary.get("lastTradeTimestamp") or "").strip()
+        if not last_sale or not ts:
+            logger.error("Nasdaq NDX 返回数据为空")
+            return {"value": None, "date": None}
+        try:
+            value = float(last_sale)
+        except ValueError:
+            logger.error(f"Nasdaq NDX 价格无法解析: {last_sale}")
+            return {"value": None, "date": None}
+        return {"value": value, "date": _parse_nasdaq_ts(ts)}
+    except Exception as e:
+        logger.error(f"解析 Nasdaq NDX 数据失败: {e}", exc_info=True)
+        return {"value": None, "date": None}
+
+
 async def _fetch_treasury(column: str) -> Dict[str, Any]:
     """抓取美国财政部当年每日收益率 CSV，取首行（最新日期）对应列的值。"""
     year = datetime.now().year
@@ -147,16 +202,27 @@ async def _fetch_treasury(column: str) -> Dict[str, Any]:
 
 
 async def _fetch_series(series: Dict[str, Any]) -> Dict[str, Any]:
-    """按指标的 source 分发给对应的抓取函数。"""
+    """按指标的 source 分发给对应的抓取函数；主源无有效值时回退到备用源。"""
     source = series["source"]
     if source == "fred":
-        return await _fetch_fred(series["symbol"])
-    if source == "cboe":
-        return await _fetch_vix()
-    if source == "treasury":
-        return await _fetch_treasury(series["column"])
-    logger.error(f"未知数据源 {source}，跳过指标 {series['name']}")
-    return {"value": None, "date": None}
+        result = await _fetch_fred(series["symbol"])
+    elif source == "cboe":
+        result = await _fetch_vix()
+    elif source == "treasury":
+        result = await _fetch_treasury(series["column"])
+    else:
+        logger.error(f"未知数据源 {source}，跳过指标 {series['name']}")
+        return {"value": None, "date": None}
+
+    # 主源未抓取到有效数值时，尝试备用源
+    backup = series.get("backup")
+    if result.get("value") is None and backup:
+        logger.info(f"{series['name']}: 主源 {source} 无可解析数据，回退到备用源 {backup}")
+        if backup == "nasdaq":
+            result = await _fetch_nasdaq()
+        else:
+            logger.error(f"{series['name']}: 未知备用源 {backup}")
+    return result
 
 
 async def fetch_fred_prices() -> List[Dict[str, Any]]:
@@ -186,6 +252,10 @@ def save_market_prices(items: List[Dict[str, Any]]) -> None:
     try:
         saved = 0
         for item in items:
+            # 主源 + 备用源均未获取到有效数值 → 不落库（避免写入空值记录）
+            if item.get("value") is None:
+                logger.info(f"  - {item['name']}: 未获取到有效数据，跳过落库")
+                continue
             latest = (
                 db.query(crud.models.MarketPrice)
                 .filter(crud.models.MarketPrice.symbol == item["symbol"])
