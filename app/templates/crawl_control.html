@@ -13,24 +13,6 @@
         <p>立即开始抓取所有来源的最新新闻</p>
         <button id="startCrawlBtn" class="btn btn-primary">开始抓取</button>
     </div>
-    
-    <div class="status-card">
-        <h2>抓取状态</h2>
-        <div id="statusInfo">
-            <div class="status-item">
-                <span class="status-label">当前状态:</span>
-                <span id="crawlStatus" class="status-value">空闲</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">当前步骤:</span>
-                <span id="currentStep" class="status-value">-</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">最后抓取时间:</span>
-                <span id="lastCrawlTime" class="status-value">-</span>
-            </div>
-        </div>
-    </div>
 </div>
 
 <div class="finance-crawl">
@@ -302,26 +284,14 @@ function updateLogs(logs) {
 function updateStatus(data) {
     isCrawling = data.is_running;
 
-    const statusEl = document.getElementById('crawlStatus');
-    const stepEl = document.getElementById('currentStep');
     const btnEl = document.getElementById('startCrawlBtn');
 
     if (isCrawling) {
-        statusEl.textContent = '抓取中...';
-        statusEl.className = 'status-value status-running';
         btnEl.disabled = true;
         btnEl.textContent = '抓取中...';
     } else {
-        statusEl.textContent = '空闲';
-        statusEl.className = 'status-value status-idle';
         btnEl.disabled = false;
         btnEl.textContent = '开始抓取';
-    }
-
-    stepEl.textContent = data.current_step || '-';
-
-    if (data.last_run) {
-        document.getElementById('lastCrawlTime').textContent = formatTime(data.last_run);
     }
 
     updateSourcesList(data.latest_log);
@@ -393,13 +363,7 @@ function pollStatus() {
     }, 500);
 }
 
-function formatTime(timeStr) {
-    const date = new Date(timeStr);
-    return date.toLocaleString('zh-CN');
-}
-
 document.getElementById('startCrawlBtn').addEventListener('click', startCrawl);
-
 loadStatus();
 
 // ===== 财务指标抓取/查询 =====
