@@ -1,7 +1,7 @@
 """财务指标图表计算：基于已入库的 FinancialReport 记录，生成指标数值与同比/环比增速系列。
 
 约定（来自产品需求）：
-- 利润表 / 现金流量表为累计值：单季值 = 本季累计 − 上季累计（无上一期时近似等于累计值）
+- 利润表 / 现金流量表为累计值：单季值 = 本季累计 − 同一自然年内上一季度累计（Q1 取累计值；跨年/缺季时无法还原置空）
 - 资产负债表为时点值：直接使用期末值
 - 周转类指标使用期初期末平均余额，并按累计口径年化以保证各季度可比
 - 去年同期 / 上期为 0 或负时，增速标记为 "—" 或 "扭亏"，不硬算百分比
@@ -106,7 +106,8 @@ def compute_indicators(records, start: Optional[str] = None, end: Optional[str] 
 
     # ---- 单季值（累计 → 单季）----
     # 国内季报利润表为「年初至本季末累计」，且每年年初重新累计：
-    # Q1 本身即单季值；Q2-Q4 单季值 = 本季累计 − 上一季度累计（同一年内连续）。
+    # Q1 本身即单季值；Q2-Q4 单季值 = 本季累计 − 同一自然年内上一季度累计。
+    # 仅当上一期是同一年内紧邻的上一季度时才相减；否则（跨年、缺季、半年报）无法可靠还原，置为 None。
     def single_series(attr: str) -> List[Optional[float]]:
         out = []
         for i in range(n):
@@ -117,7 +118,11 @@ def compute_indicators(records, start: Optional[str] = None, end: Optional[str] 
             if _quarter_no(dates[i]) == 1:
                 out.append(cum)  # Q1 单季值 = 累计值
                 continue
-            prev = _value(records[i - 1], attr) if i > 0 else None
+            prev = None
+            if i > 0:
+                pd = dates[i - 1]
+                if pd[:4] == dates[i][:4] and _quarter_no(pd) == _quarter_no(dates[i]) - 1:
+                    prev = _value(records[i - 1], attr)
             out.append(None if prev is None else cum - prev)
         return out
 
