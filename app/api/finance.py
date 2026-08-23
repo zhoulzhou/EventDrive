@@ -44,6 +44,20 @@ def _validate_period(start: Optional[str], end: Optional[str]):
             raise HTTPException(status_code=400, detail=f"{label} 日期格式应为 YYYY-MM-DD，如 2024-03-31")
 
 
+@router.get("/finance/stocks")
+async def list_financial_stocks(
+    db: Session = Depends(get_db),
+    auth: bool = Depends(require_auth),
+):
+    """列出已入库财务数据的所有股票（名称 + 代码），供财务指标页下拉选择。"""
+    try:
+        stocks = crud.list_financial_stocks(db)
+        return {"status": "ok", "stocks": stocks}
+    except Exception as exc:
+        logger.exception("列出财务股票失败")
+        raise HTTPException(status_code=500, detail=f"列出财务股票失败: {exc}")
+
+
 @router.get("/finance/query")
 async def query_finance(
     code: Optional[str] = Query(None, description="股票代码，如 600519"),

@@ -4,19 +4,21 @@
 
 {% block content %}
 <div class="page-header">
-    <p class="form-hint">输入股票名称，展示已入库财务指标的数值（柱形图）与同比/环比增速（折线）（数据需先在「抓取控制」页面抓取入库）</p>
+    <p class="form-hint">选择股票名称，展示已入库财务指标的数值（柱形图）与同比/环比增速（折线）（数据需先在「抓取控制」页面抓取入库）</p>
 </div>
 
 <div class="finance-query">
     <div class="finance-field">
         <label for="stockName">股票名称</label>
-        <input id="stockName" type="text" placeholder="如 贵州茅台" value="贵州茅台">
+        <select id="stockName">
+            <option value="">加载中...</option>
+        </select>
     </div>
     <button id="queryBtn" class="btn btn-primary">查询并展示图表</button>
 </div>
 
 <div id="financeResult">
-    <div class="finance-empty">请输入股票名称，点击「查询并展示图表」查看已入库的财务指标图表。</div>
+    <div class="finance-empty">请选择股票名称，点击「查询并展示图表」查看已入库的财务指标图表。</div>
 </div>
 {% endblock %}
 
@@ -24,6 +26,27 @@
 <script src="/static/js/echarts.min.js"></script>
 <script>
 let charts = [];
+
+async function loadStocks() {
+    const sel = document.getElementById('stockName');
+    try {
+        const response = await fetchWithAuth('/api/finance/stocks');
+        const data = await response.json();
+        if (data.status !== 'ok') throw new Error(data.message || '获取股票列表失败');
+        const stocks = data.stocks || [];
+        if (!stocks.length) {
+            sel.innerHTML = '<option value="">暂无已入库的股票，请先在「抓取控制」抓取</option>';
+            return;
+        }
+        sel.innerHTML = '<option value="">请选择股票</option>' + stocks.map(function (s) {
+            return `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}（${escapeHtml(s.code)}）</option>`;
+        }).join('');
+        sel.selectedIndex = 1; // 默认选中第一条
+    } catch (error) {
+        sel.innerHTML = '<option value="">加载股票列表失败</option>';
+        console.error('加载股票列表失败:', error);
+    }
+}
 
 function disposeCharts() {
     charts.forEach(function (c) { try { c.dispose(); } catch (e) {} });
@@ -47,7 +70,7 @@ function lazyInit(elId, renderFn) {
 
 async function runQuery() {
     const name = document.getElementById('stockName').value.trim();
-    if (!name) { alert('请输入股票名称'); return; }
+    if (!name) { alert('请选择股票名称'); return; }
     const box = document.getElementById('financeResult');
     box.innerHTML = '<div class="loading">正在计算指标图表...</div>';
     disposeCharts();
@@ -193,6 +216,8 @@ function renderIndicatorChart(elId, ind, periods, sharedRange) {
 
 document.getElementById('queryBtn').addEventListener('click', runQuery);
 
+loadStocks();
+
 window.addEventListener('resize', function () {
     charts.forEach(function (c) { try { c.resize(); } catch (e) {} });
 });
@@ -220,7 +245,8 @@ window.addEventListener('resize', function () {
     color: #666;
     font-weight: 500;
 }
-.finance-field input {
+.finance-field input,
+.finance-field select {
     padding: 0.5rem 0.6rem;
     border: 1px solid #d6dbe2;
     border-radius: 8px;

@@ -355,3 +355,15 @@ def get_financial_reports(
     if end:
         query = query.filter(models.FinancialReport.report_date <= end)
     return query.order_by(models.FinancialReport.report_date.asc()).all()
+
+
+def list_financial_stocks(db: Session) -> List[dict]:
+    """列出已入库财务数据的所有股票（含代码，按名称去重排序），供前端下拉选择。"""
+    rows = (
+        db.query(models.FinancialReport.stock_name, models.FinancialReport.stock_code)
+        .filter(models.FinancialReport.stock_name.isnot(None))
+        .distinct()
+        .order_by(models.FinancialReport.stock_name.asc())
+        .all()
+    )
+    return [{"name": name, "code": code} for name, code in rows if name]
