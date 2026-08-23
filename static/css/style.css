@@ -54,6 +54,12 @@ body {
     background: rgba(255,255,255,0.2);
 }
 
+.nav-link.active {
+    background: rgba(255,255,255,0.3);
+    font-weight: bold;
+    box-shadow: inset 0 -2px 0 #fff;
+}
+
 .main-content {
     min-height: calc(100vh - 140px);
     padding: 2rem 0;

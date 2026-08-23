@@ -5,6 +5,15 @@ document.addEventListener('DOMContentLoaded', function() {
     if (logoutBtn) {
         logoutBtn.addEventListener('click', handleLogout);
     }
+
+    // 高亮当前页面对应的导航 tab
+    const path = window.location.pathname;
+    document.querySelectorAll('.navbar-menu .nav-link').forEach(function (link) {
+        const href = link.getAttribute('href');
+        if (href && path === href) {
+            link.classList.add('active');
+        }
+    });
 });
 
 async function handleLogout() {
