@@ -114,22 +114,24 @@ function renderIndicators(data) {
         </div>`;
     // 亿元单位指标（营收/现金/资产负债/负债类）共享「营业收入」量级的数值 Y 轴，便于横向对比
     // （%/天类指标不同单位保持各自自适应，增速轴独立）
-    let axisMin = null, axisMax = null;
+    // 含负值的亿元指标（如经营现金流净额、亏损期归母净利润）不参与共享、各自自适应，
+    // 避免把共享轴拖出负区间，导致营业收入等纯正值指标出现负坐标；共享轴从 0 起，无负区间
+    let axisMax = null;
     inds.forEach(function (ind) {
         if (ind.unit !== '亿') return;
         ind.values.forEach(function (v) {
             if (v == null) return;
-            if (axisMin === null || v < axisMin) axisMin = v;
             if (axisMax === null || v > axisMax) axisMax = v;
         });
     });
-    const sharedRange = (axisMin === null || axisMax === null) ? null : (function () {
-        const pad = (axisMax - axisMin) * 0.08 || (Math.abs(axisMax) * 0.08) || 1;
-        return { min: axisMin >= 0 ? 0 : axisMin - pad, max: axisMax + pad };
+    const sharedRange = axisMax === null ? null : (function () {
+        const pad = axisMax * 0.08 || 1;
+        return { min: 0, max: axisMax + pad };
     })();
 
     inds.forEach(function (ind, i) {
-        const aligned = sharedRange && ind.unit === '亿' ? sharedRange : null;
+        const nonNeg = ind.values.every(function (v) { return v == null || v >= 0; });
+        const aligned = sharedRange && ind.unit === '亿' && nonNeg ? sharedRange : null;
         lazyInit('chart_' + i, function () { renderIndicatorChart('chart_' + i, ind, periods, aligned); });
     });
 }
@@ -142,11 +144,12 @@ function renderIndicatorChart(elId, ind, periods, sharedRange) {
     const valueFmt = function (v) { return v == null ? '—' : v.toFixed(1); };
     const growthData = ind.growth.map(function (g) { return g == null ? null : g; });
 
+    const intLabel = ind.unit === '亿' ? { formatter: function (value) { return Math.round(value); } } : {};
     const leftYAxis = {
         type: 'value',
         name: unitSuffix,
         nameTextStyle: { color: '#666', fontSize: 10 },
-        axisLabel: { color: '#888', fontSize: 10 },
+        axisLabel: Object.assign({ color: '#888', fontSize: 10 }, intLabel),
         splitLine: { lineStyle: { color: '#eef0f3' } }
     };
     if (sharedRange) {
