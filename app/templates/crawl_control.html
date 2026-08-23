@@ -7,14 +7,6 @@
     <h1>抓取控制</h1>
 </div>
 
-<div class="control-panel">
-    <div class="control-card">
-        <h2>新闻抓取</h2>
-        <p>立即开始抓取所有来源的最新新闻</p>
-        <button id="startCrawlBtn" class="btn btn-primary">开始抓取</button>
-    </div>
-</div>
-
 <div class="finance-crawl">
     <h2>财务指标抓取</h2>
     <p class="form-hint">输入股票代码与起止季度，抓取公司三大报表关键科目入库（新浪财报 · 金额单位：元）</p>
@@ -62,6 +54,11 @@
 </div>
 
 <div class="crawl-logs-section">
+    <div class="control-card">
+        <h2>新闻抓取</h2>
+        <p>立即开始抓取所有来源的最新新闻</p>
+        <button id="startCrawlBtn" class="btn btn-primary">开始抓取</button>
+    </div>
     <h2>抓取日志</h2>
     <div id="crawlLogs" class="crawl-logs">
         <div class="log-placeholder">点击"开始抓取"按钮启动抓取任务</div>
@@ -83,6 +80,10 @@
     color: #fff;
     margin-bottom: 15px;
     font-size: 16px;
+}
+
+.crawl-logs-section .control-card {
+    margin-bottom: 1.25rem;
 }
 
 .crawl-logs {
