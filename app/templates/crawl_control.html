@@ -67,12 +67,6 @@
         <div class="log-placeholder">点击"开始抓取"按钮启动抓取任务</div>
     </div>
 </div>
-
-<div class="sources-status">
-    <h2>各来源抓取状态</h2>
-    <div id="sourcesList" class="sources-grid">
-    </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
@@ -293,41 +287,6 @@ function updateStatus(data) {
         btnEl.disabled = false;
         btnEl.textContent = '开始抓取';
     }
-
-    updateSourcesList(data.latest_log);
-}
-
-function updateSourcesList(latestLog) {
-    const container = document.getElementById('sourcesList');
-    const allSources = ['财联社', '东方财富'];
-    
-    container.innerHTML = allSources.map(source => {
-        let status = 'pending';
-        let count = '-';
-        
-        if (latestLog && latestLog.source === source) {
-            status = latestLog.status || 'pending';
-            count = latestLog.news_count || 0;
-        }
-        
-        return `
-            <div class="source-item">
-                <div class="source-name">${source}</div>
-                <div class="source-status ${status}">${getStatusText(status)}</div>
-                <div class="source-count">${count}条</div>
-            </div>
-        `;
-    }).join('');
-}
-
-function getStatusText(status) {
-    const statusMap = {
-        'pending': '等待中',
-        'running': '进行中',
-        'success': '成功',
-        'failed': '失败'
-    };
-    return statusMap[status] || '等待中';
 }
 
 async function startCrawl() {
