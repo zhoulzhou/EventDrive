@@ -53,12 +53,11 @@
     </div>
 </div>
 
-<div class="crawl-logs-section">
-    <div class="control-card">
-        <h2>新闻抓取</h2>
-        <p>立即开始抓取所有来源的最新新闻</p>
-        <button id="startCrawlBtn" class="btn btn-primary">开始抓取</button>
-    </div>
+<div class="finance-crawl">
+    <h2>新闻抓取</h2>
+    <p class="form-hint">立即开始抓取所有来源的最新新闻</p>
+    <button id="startCrawlBtn" class="btn btn-primary" style="margin-bottom:1.25rem;">开始抓取</button>
+
     <h2>抓取日志</h2>
     <div id="crawlLogs" class="crawl-logs">
         <div class="log-placeholder">点击"开始抓取"按钮启动抓取任务</div>
@@ -68,30 +67,6 @@
 
 {% block scripts %}
 <style>
-.crawl-logs-section {
-    margin-top: 20px;
-    background: #fff;
-    border-radius: 8px;
-    padding: 15px;
-}
-
-.crawl-logs-section h2 {
-    color: #333;
-    margin-bottom: 15px;
-    font-size: 16px;
-}
-
-.crawl-logs-section .control-card {
-    margin-bottom: 1.25rem;
-    background: #fafbfc;
-    box-shadow: none;
-    border: 1px solid #eef1f4;
-    padding: 1.25rem 1.5rem;
-}
-.crawl-logs-section .control-card h2 {
-    margin-bottom: 0.5rem;
-}
-
 .crawl-logs {
     max-height: 400px;
     overflow-y: auto;
