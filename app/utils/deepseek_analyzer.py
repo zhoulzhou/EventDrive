@@ -9,7 +9,7 @@ class DeepSeekAnalyzer:
     def __init__(
         self,
         api_key: str,
-        model: str = "deepseek-v4-flash",
+        model: str = "deepseek-flash",
         feishu_webhook_url: str = "",
         keyword: str = "深度分析"
     ):
@@ -129,7 +129,7 @@ _deepseek_analyzer: Optional[DeepSeekAnalyzer] = None
 
 def init_deepseek_analyzer(
     api_key: str,
-    model: str = "deepseek-v4-flash",
+    model: str = "deepseek-flash",
     feishu_webhook_url: str = "",
     keyword: str = "深度分析"
 ):
