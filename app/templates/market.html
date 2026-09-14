@@ -119,7 +119,15 @@ async function renderAllHistory(items) {
         valMap[s.symbol] = {};
         s.points.forEach(p => valMap[s.symbol][p.date] = p.value);
     });
-    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.date)))].sort();
+    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.date)))].sort()
+        // 仅保留同一日期有至少 3 个非空数值的日期，避免稀疏日期拉宽 X 轴
+        .filter(d => {
+            const count = series.reduce(
+                (acc, s) => acc + (valMap[s.symbol] && valMap[s.symbol][d] != null ? 1 : 0),
+                0
+            );
+            return count >= 3;
+        });
 
     const mk = (sym, color, fill) => ({
         label: nameMap[sym] || sym,
