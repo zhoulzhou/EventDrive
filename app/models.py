@@ -78,6 +78,26 @@ class IndexHistory(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class CompanyValuation(Base):
+    """公司估值（DCF）：按 企业名称 存储一次估值计算记录。
+
+    数据来源: 估值计算页面前端输入，由本应用的估值 API 计算并入库。
+    以自增 id 为主键，按 created_at 倒序展示最近 100 条。
+    """
+    __tablename__ = "company_valuations"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    company_name = Column(Text, nullable=False)  # 企业名称
+    base_profit = Column(Float, nullable=False)  # 基期净利润（亿元）
+    forecast_years = Column(Integer, nullable=False)  # 预测期年限（年）
+    growth_forecast = Column(Float, nullable=False)  # 预测期增长率（%）
+    growth_perpetual = Column(Float, nullable=False)  # 永续增长率（%）
+    discount_rate = Column(Float, nullable=False)  # 折现率（%）
+    enterprise_value = Column(Float, nullable=False)  # 企业整体价值（亿元）
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class FinancialReport(Base):
     """财务指标：按 股票代码 + 报告期 存储公司三大报表关键科目（金额单位：元）。
 

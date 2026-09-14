@@ -367,3 +367,58 @@ def list_financial_stocks(db: Session) -> List[dict]:
         .all()
     )
     return [{"name": name, "code": code} for name, code in rows if name]
+
+
+def get_valuation_records(db: Session, limit: int = 100) -> List[models.CompanyValuation]:
+    """查询最近 limit 条估值记录（按时间倒序，最新在前）。"""
+    return (
+        db.query(models.CompanyValuation)
+        .order_by(desc(models.CompanyValuation.created_at))
+        .limit(limit)
+        .all()
+    )
+
+
+def create_valuation_record(
+    db: Session, valuation: schemas.CompanyValuationCreate
+) -> models.CompanyValuation:
+    """新增一条估值记录，并裁剪历史至最近 100 条。"""
+    record = models.CompanyValuation(**valuation.model_dump())
+    db.add(record)
+    db.flush()
+    # 裁剪：仅保留最近 100 条（按 id 倒序）
+    keep_ids = [
+        row[0]
+        for row in db.query(models.CompanyValuation.id)
+        .order_by(desc(models.CompanyValuation.id))
+        .limit(100)
+        .all()
+    ]
+    if keep_ids:
+        db.query(models.CompanyValuation).filter(
+            ~models.CompanyValuation.id.in_(keep_ids)
+        ).delete(synchronize_session=False)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def delete_valuation_record(db: Session, record_id: int) -> bool:
+    """按 id 删除一条估值记录。"""
+    record = (
+        db.query(models.CompanyValuation)
+        .filter(models.CompanyValuation.id == record_id)
+        .first()
+    )
+    if record:
+        db.delete(record)
+        db.commit()
+        return True
+    return False
+
+
+def clear_valuation_records(db: Session) -> int:
+    """清空所有估值记录，返回删除条数。"""
+    deleted = db.query(models.CompanyValuation).delete()
+    db.commit()
+    return deleted

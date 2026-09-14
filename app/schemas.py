@@ -76,9 +76,30 @@ class MarketPriceCreate(MarketPriceBase):
     pass
 
 
-class MarketPrice(MarketPriceBase):
+class MarketPrice(BaseModel):
     id: int
     created_at: datetime
     updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CompanyValuationBase(BaseModel):
+    company_name: str
+    base_profit: Optional[float] = None
+    forecast_years: Optional[int] = None
+    growth_forecast: Optional[float] = None
+    growth_perpetual: Optional[float] = None
+    discount_rate: Optional[float] = None
+    enterprise_value: Optional[float] = None
+
+
+class CompanyValuationCreate(CompanyValuationBase):
+    pass
+
+
+class CompanyValuation(CompanyValuationBase):
+    id: int
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

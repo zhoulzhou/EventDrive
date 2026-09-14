@@ -9,7 +9,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, logs, feishu, login, market, index_alarm, finance
+from app.api import news, crawl, logs, feishu, login, market, index_alarm, finance, valuation
 from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
@@ -104,6 +104,7 @@ app.include_router(login.router, prefix="/api", tags=["login"])
 app.include_router(market.router, prefix="/api", tags=["market"])
 app.include_router(index_alarm.router, prefix="/api", tags=["index-alarm"])
 app.include_router(finance.router, prefix="/api", tags=["finance"])
+app.include_router(valuation.router, prefix="/api", tags=["valuation"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:
@@ -180,3 +181,10 @@ async def finance_page(request: Request):
     if not is_logged_in(request):
         return RedirectResponse(url="/login")
     return render_template("finance.html", {"request": request})
+
+
+@app.get("/valuation")
+async def valuation_page(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("valuation.html", {"request": request})

@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}公司估值 - 新闻抓取应用{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2 class="page-title">自由现金流估值计算器（净利润替代 FCFF）</h2>
+    <p class="form-hint">输入企业净利润等参数，计算企业整体价值，历史记录保存在数据库。</p>
+</div>
+
+<div class="valuation-card">
+    <div class="input-group">
+        <label>企业名称</label>
+        <input type="text" id="companyName" placeholder="如贵州茅台、长江电力">
+    </div>
+    <div class="input-group">
+        <label>基期净利润（亿元）</label>
+        <input type="number" id="baseProfit" step="0.01" placeholder="如577（茅台）">
+    </div>
+    <div class="input-group">
+        <label>预测期年限（年）</label>
+        <input type="number" id="forecastYears" step="1" min="1" placeholder="如5">
+    </div>
+    <div class="input-group">
+        <label>预测期增长率（%）</label>
+        <input type="number" id="growthForecast" step="0.1" placeholder="如10">
+    </div>
+    <div class="input-group">
+        <label>永续增长率（%）</label>
+        <input type="number" id="growthPerpetual" step="0.1" placeholder="如2.5">
+    </div>
+    <div class="input-group">
+        <label>折现率（%）</label>
+        <input type="number" id="discountRate" step="0.1" placeholder="如9">
+    </div>
+
+    <div id="warning" class="warning"></div>
+
+    <div class="btn-group">
+        <button class="btn btn-primary" onclick="calculateValue()">计算企业整体价值</button>
+        <button class="btn btn-secondary" onclick="resetInputs()">重置输入</button>
+    </div>
+
+    <div class="result">
+        <div class="result-item">企业整体价值：<span id="enterpriseValue">0.00</span> 亿元</div>
+    </div>
+</div>
+
+<div class="history-container">
+    <div class="history-header">
+        <div class="history-title">最近 100 条计算记录</div>
+        <button class="btn btn-danger btn-small" onclick="clearHistory()">清空所有记录</button>
+    </div>
+    <table class="history-table" id="historyTable">
+        <thead>
+            <tr>
+                <th>序号</th>
+                <th>计算时间</th>
+                <th>企业名称</th>
+                <th>基期净利润（亿元）</th>
+                <th>预测期（年）</th>
+                <th>预测增长率（%）</th>
+                <th>永续增长率（%）</th>
+                <th>折现率（%）</th>
+                <th>企业价值（亿元）</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="historyBody">
+            <tr><td colspan="10" class="history-empty">加载中...</td></tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 页面加载渲染历史记录
+window.onload = function () {
+    loadHistory();
+};
+
+// 核心计算逻辑：前端校验，后端计算并入库
+async function calculateValue() {
+    const companyName = document.getElementById('companyName').value.trim() || '未命名';
+    const baseProfit = parseFloat(document.getElementById('baseProfit').value);
+    const forecastYears = parseInt(document.getElementById('forecastYears').value);
+    const growthForecast = parseFloat(document.getElementById('growthForecast').value);
+    const growthPerpetual = parseFloat(document.getElementById('growthPerpetual').value);
+    const discountRate = parseFloat(document.getElementById('discountRate').value);
+    const warning = document.getElementById('warning');
+
+    warning.textContent = '';
+
+    if (isNaN(baseProfit) || isNaN(forecastYears) || isNaN(growthForecast) ||
+        isNaN(discountRate) || isNaN(growthPerpetual)) {
+        warning.textContent = '⚠️ 请输入有效的数字参数！';
+        return;
+    }
+    if (forecastYears < 1) {
+        warning.textContent = '⚠️ 预测期年限需大于 0！';
+        return;
+    }
+    if (discountRate <= growthPerpetual) {
+        warning.textContent = '⚠️ 折现率需大于永续增长率，已自动上调折现率=永续增长率+3%';
+    }
+
+    try {
+        const response = await fetchWithAuth('/api/valuation/calculate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                company_name: companyName,
+                base_profit: baseProfit,
+                forecast_years: forecastYears,
+                growth_forecast: growthForecast,
+                growth_perpetual: growthPerpetual,
+                discount_rate: discountRate
+            })
+        });
+        const data = await response.json();
+        if (data.status !== 'ok') {
+            warning.textContent = data.message || '计算失败';
+            return;
+        }
+        document.getElementById('enterpriseValue').textContent = data.enterprise_value.toFixed(2);
+        renderHistory(data.history || []);
+    } catch (error) {
+        warning.textContent = '请求失败：' + error.message;
+    }
+}
+
+// 加载历史记录（数据库）
+async function loadHistory() {
+    try {
+        const response = await fetchWithAuth('/api/valuation/history');
+        const data = await response.json();
+        if (data.status !== 'ok') {
+            renderHistory([]);
+            return;
+        }
+        renderHistory(data.history || []);
+    } catch (error) {
+        const body = document.getElementById('historyBody');
+        body.innerHTML = '<tr><td colspan="10" class="history-empty">历史记录加载失败</td></tr>';
+    }
+}
+
+// 渲染历史记录表格
+function renderHistory(history) {
+    const historyBody = document.getElementById('historyBody');
+    historyBody.innerHTML = '';
+
+    if (!history.length) {
+        historyBody.innerHTML = '<tr><td colspan="10" class="history-empty">暂无计算记录</td></tr>';
+        return;
+    }
+
+    history.forEach(function (item, index) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${index + 1}</td>
+            <td>${escapeHtml(formatTime(item.created_at))}</td>
+            <td>${escapeHtml(item.company_name)}</td>
+            <td>${Number(item.base_profit).toFixed(2)}</td>
+            <td>${item.forecast_years}</td>
+            <td>${Number(item.growth_forecast).toFixed(1)}</td>
+            <td>${Number(item.growth_perpetual).toFixed(1)}</td>
+            <td>${Number(item.discount_rate).toFixed(1)}</td>
+            <td>${Number(item.enterprise_value).toFixed(2)}</td>
+            <td><button class="btn btn-danger btn-mini" onclick="deleteRecord(${item.id})">删除</button></td>
+        `;
+        historyBody.appendChild(tr);
+    });
+}
+
+// 格式化数据库时间戳 YYYY-MM-DDTHH:MM:SS -> YYYY-MM-DD HH:MM
+function formatTime(ts) {
+    if (!ts) return '';
+    return String(ts).replace('T', ' ').substring(0, 16);
+}
+
+// 单条记录删除
+async function deleteRecord(id) {
+    if (!confirm('确定要删除这条记录吗？')) return;
+    try {
+        const response = await fetchWithAuth('/api/valuation/' + id, { method: 'DELETE' });
+        const data = await response.json();
+        if (data.status !== 'ok') alert(data.message || '删除失败');
+        loadHistory();
+    } catch (error) {
+        alert('删除失败：' + error.message);
+    }
+}
+
+// 清空所有记录
+async function clearHistory() {
+    if (!confirm('确定要清空所有计算记录吗？')) return;
+    try {
+        const response = await fetchWithAuth('/api/valuation/history', { method: 'DELETE' });
+        const data = await response.json();
+        if (data.status !== 'ok') alert(data.message || '清空失败');
+        loadHistory();
+    } catch (error) {
+        alert('清空失败：' + error.message);
+    }
+}
+
+// 重置输入框
+function resetInputs() {
+    ['companyName', 'baseProfit', 'forecastYears', 'growthForecast', 'growthPerpetual', 'discountRate']
+        .forEach(function (id) { document.getElementById(id).value = ''; });
+    document.getElementById('warning').textContent = '';
+    document.getElementById('enterpriseValue').textContent = '0.00';
+}
+</script>
+
+<style>
+.valuation-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    padding: 1.5rem 1.5rem 1rem;
+    margin-bottom: 1.5rem;
+}
+.input-group {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 0.9rem 0;
+}
+.input-group label {
+    width: 190px;
+    font-weight: 500;
+    color: #34495e;
+    font-size: 0.95rem;
+    flex-shrink: 0;
+}
+.input-group input {
+    flex: 1;
+    max-width: 320px;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid #d6dbe2;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    color: #333;
+}
+.input-group input:focus { outline: none; border-color: #2563eb; }
+.btn-group { display: flex; gap: 0.75rem; margin: 1.25rem 0; }
+.btn-group .btn { flex: 1; }
+.btn { padding: 0.6rem 1.2rem; border: none; border-radius: 8px; font-size: 0.95rem; cursor: pointer; }
+.btn-primary { background-color: #2563eb; color: white; }
+.btn-primary:hover { background-color: #1d4ed8; }
+.btn-secondary { background-color: #64748b; color: white; }
+.btn-secondary:hover { background-color: #475569; }
+.btn-danger { background-color: #dc2626; color: white; }
+.btn-danger:hover { background-color: #b91c1c; }
+.btn-small { padding: 0.4rem 0.9rem; font-size: 0.85rem; }
+.btn-mini { padding: 0.2rem 0.6rem; font-size: 0.75rem; }
+.warning { color: #dc2626; margin: 0.6rem 0; font-weight: 500; text-align: center; }
+.result { margin-top: 1rem; padding-top: 1.25rem; border-top: 1px solid #eee; }
+.result-item { font-size: 1.25rem; margin: 0.6rem 0; text-align: center; color: #2c3e50; }
+.result-item span { color: #2563eb; font-weight: bold; }
+.history-container {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    padding: 1.5rem;
+}
+.history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+.history-title {
+    color: #2c3e50;
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-left: 4px solid #2563eb;
+    padding-left: 0.65rem;
+}
+.history-table { width: 100%; border-collapse: collapse; }
+.history-table th, .history-table td {
+    border: 1px solid #eef0f3;
+    padding: 0.55rem 0.5rem;
+    text-align: center;
+    font-size: 0.85rem;
+}
+.history-table th { background-color: #f2f5f9; color: #34495e; }
+.history-empty { text-align: center; color: #999; padding: 1.5rem; }
+@media (max-width: 900px) {
+    .input-group { flex-direction: column; align-items: flex-start; }
+    .input-group label { width: auto; }
+    .input-group input { width: 100%; max-width: 100%; }
+}
+</style>
+{% endblock %}
