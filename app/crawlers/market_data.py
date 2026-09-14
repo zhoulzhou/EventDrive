@@ -14,7 +14,9 @@ import asyncio
 import csv
 import io
 import logging
-from datetime import datetime
+import calendar
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List
 
 import httpx
@@ -25,7 +27,84 @@ from app.market_strategy import advance
 
 logger = logging.getLogger(__name__)
 
+# 美东时区：用于判断美股是否开盘
+US_EASTERN = ZoneInfo("America/New_York")
+
 _client = httpx.AsyncClient(timeout=20)
+
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """返回某月第 n 个 weekday（weekday: 0=周一 ... 6=周日）。"""
+    days = [
+        d for d in (
+            date(year, month, day)
+            for day in range(1, calendar.monthrange(year, month)[1] + 1)
+        ) if d.weekday() == weekday
+    ]
+    return days[n - 1]
+
+
+def _last_weekday(year: int, month: int, weekday: int) -> date:
+    """返回某月最后一个 weekday。"""
+    days = [
+        d for d in (
+            date(year, month, day)
+            for day in range(1, calendar.monthrange(year, month)[1] + 1)
+        ) if d.weekday() == weekday
+    ]
+    return days[-1]
+
+
+def _easter(year: int) -> date:
+    """高斯复活节算法（Annexe de la date de Pâques），用于推算耶稣受难日(Good Friday)。"""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def _observed_holiday(d: date) -> date:
+    """美股"补假"规则：固定日期假日若落在周六则提前至周五休市，落在周日则顺延至周一。"""
+    if d.weekday() == 5:  # 周六
+        return d - timedelta(days=1)
+    if d.weekday() == 6:  # 周日
+        return d + timedelta(days=1)
+    return d
+
+
+def _us_holidays(year: int):
+    """生成给定年份的美股主要休市日集合（规则计算，跨年自动生效）。"""
+    s = {
+        _observed_holiday(date(year, 1, 1)),                            # New Year's Day
+        _nth_weekday(year, 1, 0, 3),                                    # MLK Day
+        _nth_weekday(year, 2, 0, 3),                                    # Presidents' Day
+        _easter(year) - timedelta(days=2),                              # Good Friday
+        _last_weekday(year, 5, 0),                                      # Memorial Day
+        _observed_holiday(date(year, 6, 19)),                           # Juneteenth
+        _observed_holiday(date(year, 7, 4)),                            # Independence Day
+        _nth_weekday(year, 9, 0, 1),                                    # Labor Day
+        _nth_weekday(year, 11, 3, 4),                                   # Thanksgiving
+        _observed_holiday(date(year, 12, 25)),                          # Christmas
+    }
+    return s
+
+
+def _is_us_market_open(today: date) -> bool:
+    """判断给定美东日期是否为美股交易日：排除周末与主要节假日。"""
+    if today.weekday() >= 5:  # 周六/周日
+        return False
+    return today not in _us_holidays(today.year)
 
 # 各数据源端点
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -287,6 +366,16 @@ def save_market_prices(items: List[Dict[str, Any]]) -> None:
 
 async def refresh_market_data() -> Dict[str, Any]:
     """抓取全市场指标并落库（按 symbol+date 累积历史），返回原始数据供日志使用。"""
+    # 美股休市日（周末/节假日）不抓取，直接跳过，避免无意义的外部请求
+    us_today = datetime.now(US_EASTERN).date()
+    if not _is_us_market_open(us_today):
+        logger.info(f"美股今日休市({us_today}, {us_today.strftime('%A')})，跳过市场行情抓取")
+        return {
+            "items": [],
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "source": "跳过(美股休市)",
+        }
+
     items = await fetch_fred_prices()
     await asyncio.to_thread(save_market_prices, items)
     return {
