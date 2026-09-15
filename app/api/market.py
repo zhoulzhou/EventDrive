@@ -120,3 +120,20 @@ async def get_market_history(
     except Exception as e:
         logger.error(f"获取历史数据失败: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
+
+
+@router.post("/market/cleanup")
+async def cleanup_market_data(
+    db: Session = Depends(get_db),
+    auth: bool = Depends(require_auth),
+):
+    """手动清理稀疏日期：删除当日 4 个行情指标中非空值数量 < 3 的行。
+
+    用于减少历史走势曲线的断点；预计低频触发，仅在有需要时由用户手动调用。
+    """
+    try:
+        deleted = crud.cleanup_sparse_market_dates(db, DISPLAY_ORDER)
+        return {"status": "ok", "deleted": deleted}
+    except Exception as e:
+        logger.error(f"手动清理市场数据失败: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
