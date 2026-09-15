@@ -20,6 +20,7 @@
         </div>
     </div>
     <div id="historyEmpty" class="history-empty" style="position:static;display:none;">加载中...</div>
+    <div id="historyTip" class="history-tip" style="display:none;"></div>
     <div class="panel-stack">
         <div class="panel">
             <div class="history-wrap"><canvas id="chartNasdaq"></canvas></div>
@@ -95,6 +96,58 @@ function renderCard(item) {
 
 const FIXED_Y_WIDTH = 84;
 
+// 跨面板共享的历史曲线 hover 状态：任一图表被悬停时，三面板联动
+// 画出同一 X 竖线，并在统一 tooltip(historyTip) 中集中显示各曲线数值
+const historySync = { allDates: [], valMap: {}, nameMap: {}, colorOf: {}, syms: [], charts: [], idx: -1 };
+
+function formatVal(v, unit) {
+    if (v == null) return '--';
+    return unit === '%'
+        ? Number(v).toFixed(2)
+        : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderHistoryTip() {
+    const tip = document.getElementById('historyTip');
+    if (!tip) return;
+    const { idx, allDates, valMap, nameMap, colorOf, syms } = historySync;
+    if (idx < 0 || idx >= allDates.length) { tip.style.display = 'none'; return; }
+    const date = allDates[idx];
+    const rows = syms.filter(s => valMap[s]).map(s => {
+        const v = valMap[s][date];
+        const unit = s === 'DGS2' || s === 'DGS10' ? '%' : '';
+        return `<div class="tip-row"><span class="tip-dot" style="background:${colorOf[s]}"></span>`
+            + `<span class="tip-name">${nameMap[s] || s}</span>`
+            + `<span class="tip-val">${formatVal(v, unit)}</span></div>`;
+    }).join('');
+    tip.innerHTML = `<div class="tip-date">${date}</div>${rows}`;
+    tip.style.display = 'block';
+}
+
+// 统一插件：在每一图表的已绘制数据之上叠加一条竖线，标记当前悬停的 X 索引
+const crossLinePlugin = {
+    id: 'crossLine',
+    afterDatasetsDraw(chart) {
+        const { idx, allDates } = historySync;
+        if (idx < 0 || idx >= allDates.length) return;
+        const xScale = chart.scales.x;
+        if (!xScale) return;
+        const x = xScale.getPixelForValue(idx);
+        const { left, right, top, bottom } = chart.chartArea;
+        if (x < left || x > right) return;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(37, 99, 235, 0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, bottom);
+        ctx.stroke();
+        ctx.restore();
+    }
+};
+
 async function renderAllHistory(items) {
     const empty = document.getElementById('historyEmpty');
     const results = await Promise.all(items.map(item =>
@@ -137,10 +190,49 @@ async function renderAllHistory(items) {
     const dgs2 = mk('DGS2', '#059669', false);
     const dgs10 = mk('DGS10', '#f59e0b', false);
 
-    renderChart('chartNasdaq', allDates, [nasdaq], { showX: false, unit: '' },
-        [drawdownEventsPlugin], { drawdownEvents: { events: eventsMap['NASDAQ100'] || [] } });
-    renderChart('chartVix', allDates, [vix], { showX: false, unit: '' });
-    renderChart('chartBond', allDates, [dgs2, dgs10], { showX: true, unit: '%' });
+    // 初始化跨面板共享 hover 状态
+    Object.assign(historySync, {
+        allDates,
+        valMap,
+        nameMap,
+        colorOf: { NASDAQ100: '#2563eb', VIXCLS: '#ef4444', DGS2: '#059669', DGS10: '#f59e0b' },
+        syms: ['NASDAQ100', 'VIXCLS', 'DGS2', 'DGS10'],
+        charts: [],
+        idx: -1,
+    });
+
+    // 渲染三面板，均附加 crossLinePlugin（画统一竖线），并收集 chart 实例
+    const charts = [
+        renderChart('chartNasdaq', allDates, [nasdaq], { showX: false },
+            [drawdownEventsPlugin, crossLinePlugin], { drawdownEvents: { events: eventsMap['NASDAQ100'] || [] } }),
+        renderChart('chartVix', allDates, [vix], { showX: false },
+            [crossLinePlugin]),
+        renderChart('chartBond', allDates, [dgs2, dgs10], { showX: true },
+            [crossLinePlugin]),
+    ].filter(Boolean);
+    historySync.charts = charts;
+
+    // 任一图表悬停/离开 → 同步所有面板的竖线位置并刷新统一 tooltip
+    charts.forEach(chart => {
+        chart.canvas.addEventListener('mousemove', e => {
+            const rect = chart.canvas.getBoundingClientRect();
+            const xScale = chart.scales.x;
+            if (!xScale) return;
+            const mouseX = e.clientX - rect.left;
+            const idx = xScale.getValueForPixel(mouseX);
+            if (idx < 0 || idx >= allDates.length) return;
+            if (historySync.idx === idx) { renderHistoryTip(); return; }
+            historySync.idx = idx;
+            charts.forEach(c => c.draw());
+            renderHistoryTip();
+        });
+        chart.canvas.addEventListener('mouseleave', () => {
+            historySync.idx = -1;
+            charts.forEach(c => c.draw());
+            renderHistoryTip();
+        });
+    });
+
     buildLegend([nasdaq, vix, dgs2, dgs10]);
 }
 
@@ -217,17 +309,8 @@ function renderChart(canvasId, labels, datasets, opts, chartPlugins = [], plugin
             interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        label: ctx => {
-                            const v = ctx.parsed.y;
-                            const shown = opts.unit === '%'
-                                ? v.toFixed(2)
-                                : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                            return ` ${ctx.dataset.label}: ${shown}`;
-                        }
-                    }
-                },
+                // 统一由外部 HTML tooltip(historyTip) 呈现，关闭内置浮框
+                tooltip: { enabled: false },
                 drawdownEvents: pluginOptions.drawdownEvents || { events: [] }
             },
             scales: {
@@ -247,6 +330,7 @@ function renderChart(canvasId, labels, datasets, opts, chartPlugins = [], plugin
         },
         plugins: chartPlugins
     });
+    return Chart.getChart(canvas);
 }
 
 function buildLegend(entries) {
@@ -291,6 +375,40 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
 </script>
 
 <style>
+.history-tip {
+    position: absolute;
+    left: 12px;
+    top: 46px;
+    z-index: 5;
+    background: rgba(255, 255, 255, 0.97);
+    border: 1px solid #e0e5ea;
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+    padding: 8px 12px;
+    min-width: 180px;
+    font-size: 0.82rem;
+}
+.history-tip .tip-date {
+    font-weight: 600;
+    color: #2563eb;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #eef1f4;
+}
+.history-tip .tip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+}
+.history-tip .tip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.history-tip .tip-name { color: #666; flex: 1; white-space: nowrap; }
+.history-tip .tip-val { color: #222; font-weight: 600; white-space: nowrap; }
 .cleanup-btn {
     padding: 0.3rem 0.9rem;
     font-size: 0.82rem;
@@ -368,6 +486,7 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
     color: #888;
 }
 .chart-section {
+    position: relative;
     margin-top: 2rem;
     background: white;
     border-radius: 12px;
