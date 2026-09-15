@@ -107,7 +107,7 @@ function formatVal(v, unit) {
         : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function renderHistoryTip() {
+function renderHistoryTip(mx = -1, my = -1) {
     const tip = document.getElementById('historyTip');
     if (!tip) return;
     const { idx, allDates, valMap, nameMap, colorOf, syms } = historySync;
@@ -121,7 +121,20 @@ function renderHistoryTip() {
             + `<span class="tip-val">${formatVal(v, unit)}</span></div>`;
     }).join('');
     tip.innerHTML = `<div class="tip-date">${date}</div>${rows}`;
+    // 跟随鼠标放置（右下偏移），并在靠近右/下边缘时翻转，避免被图表裁剪
     tip.style.display = 'block';
+    tip.style.left = '0px';
+    tip.style.top = '0px';
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    const pad = 14;
+    let x = mx + pad;
+    let y = my + pad;
+    if (mx < 0 || my < 0) { tip.style.left = '-9999px'; tip.style.top = '-9999px'; return; }
+    if (x + tw > window.innerWidth - 8) x = mx - tw - pad;
+    if (y + th > window.innerHeight - 8) y = my - th - pad;
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
 }
 
 // 统一插件：在每一图表的已绘制数据之上叠加一条竖线，标记当前悬停的 X 索引
@@ -221,10 +234,9 @@ async function renderAllHistory(items) {
             const mouseX = e.clientX - rect.left;
             const idx = xScale.getValueForPixel(mouseX);
             if (idx < 0 || idx >= allDates.length) return;
-            if (historySync.idx === idx) { renderHistoryTip(); return; }
             historySync.idx = idx;
             charts.forEach(c => c.draw());
-            renderHistoryTip();
+            renderHistoryTip(e.clientX, e.clientY);
         });
         chart.canvas.addEventListener('mouseleave', () => {
             historySync.idx = -1;
@@ -376,10 +388,10 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
 
 <style>
 .history-tip {
-    position: absolute;
-    left: 12px;
-    top: 46px;
-    z-index: 5;
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 1000;
     background: rgba(255, 255, 255, 0.97);
     border: 1px solid #e0e5ea;
     border-radius: 8px;
