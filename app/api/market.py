@@ -92,10 +92,42 @@ async def get_market_history(
 ):
     """返回某个指数/收益率的历史序列（按日期升序），用于绘制曲线图。
 
+    历史走势优先从 index_history 宽表读取（2015 至今完整日频，四个指标同一交易日历、
+    日期天然对齐，避免 market_prices 增量数据日期不同步导致的曲线错位）；
+    未命中（如新指标）时回退到 market_prices。
+
     若该 symbol 配置了峰值回撤策略，则同时返回 drawdown_events（10% 回撤事件的
     峰值日期/值与低点日期/值），供前端在图表中标记。
     """
     try:
+        # symbol -> index_history 列名映射（market 命名与预警命名不同，均归一到 NASDAQCOM）
+        symbol_to_index_col = {
+            "NASDAQ100": "NASDAQCOM_2015",
+            "VIXCLS": "VIXCLS_2015",
+            "DGS2": "DGS2_2015",
+            "DGS10": "DGS10_2015",
+        }
+        col = symbol_to_index_col.get(symbol)
+        if col is not None:
+            points = crud.get_index_history_series(db, col)
+            if points:
+                # 复用 market_prices 中的展示信息（名称/单位），无则用 symbol 兜底
+                meta = crud.get_market_latest(db, symbol)
+                name = meta.name if meta and meta.name else symbol
+                unit = (meta.unit or "") if meta else ""
+                drawdown_events = []
+                strategy = get_strategy(symbol)
+                if strategy is not None and strategy.get("red_pct") is not None:
+                    drawdown_events = compute_drawdown_events(points, strategy["red_pct"])
+                return {
+                    "status": "ok",
+                    "symbol": symbol,
+                    "name": name,
+                    "unit": unit,
+                    "points": points,
+                    "drawdown_events": drawdown_events,
+                }
+
         rows = crud.get_market_history(db, symbol)
         if not rows:
             return {"status": "ok", "symbol": symbol, "name": symbol, "unit": "", "points": [],
