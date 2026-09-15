@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, or_
+from sqlalchemy import desc, func, or_
 
 from app import models, schemas
 
@@ -162,6 +162,42 @@ def upsert_market_price(db: Session, price: schemas.MarketPriceCreate) -> models
     db.commit()
     db.refresh(db_price)
     return db_price
+
+
+def cleanup_sparse_market_dates(db: Session, symbols: List[str]) -> int:
+    """删除"当日这些指标中非空值数量 < 3"的行，保证历史曲线断点少、时间轴对齐。
+
+    规则：对给定 symbols（默认市场行情 4 指标），统计每一天有非空值的指标个数，
+    若某日不足 3 个指标有值，则删除该日所有属于这些 symbol 的行。
+    返回删除条数。
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # 对每个日期统计各 symbol 的非空数，找出不足 3 的日期
+    sparse_dates = [
+        row[0]
+        for row in db.query(models.MarketPrice.date)
+        .filter(models.MarketPrice.symbol.in_(symbols))
+        .group_by(models.MarketPrice.date)
+        .having(func.count(func.nullif(models.MarketPrice.value, None)) < 3)
+        .all()
+    ]
+    if not sparse_dates:
+        return 0
+
+    deleted = (
+        db.query(models.MarketPrice)
+        .filter(
+            models.MarketPrice.symbol.in_(symbols),
+            models.MarketPrice.date.in_(sparse_dates),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    if deleted:
+        logger.info(f"清理稀疏日期数据: 删除 {deleted} 行 (日期: {sparse_dates}, 非空指标数<3)")
+    return deleted
 
 
 def get_latest_market_prices(db: Session) -> Dict[str, List[models.MarketPrice]]:

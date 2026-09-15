@@ -360,6 +360,8 @@ def save_market_prices(items: List[Dict[str, Any]]) -> None:
             if item.get("value") is not None and item.get("date"):
                 advance(db, item["symbol"], item["value"], item["date"])
         logger.info(f"市场行情数据已落库: {saved} 项指标 (跳过 {len(items) - saved} 项无更新)")
+        # 落库后清理稀疏日期（当日非空指标数 < 3），保证历史曲线断点少、时间轴对齐
+        crud.cleanup_sparse_market_dates(db, [i["symbol"] for i in items])
     finally:
         db.close()
 
