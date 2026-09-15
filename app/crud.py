@@ -164,21 +164,36 @@ def upsert_market_price(db: Session, price: schemas.MarketPriceCreate) -> models
     return db_price
 
 
-def cleanup_sparse_market_dates(db: Session, symbols: List[str]) -> int:
-    """删除"当日这些指标中非空值数量 < 3"的行，保证历史曲线断点少、时间轴对齐。
+def cleanup_sparse_market_dates(db: Session, symbols: List[str], limit: int = 30) -> int:
+    """删除"最近 N 个日期内、当日非空值数量 < 3"的行，保证历史曲线断点少、时间轴对齐。
 
-    规则：对给定 symbols（默认市场行情 4 指标），统计每一天有非空值的指标个数，
-    若某日不足 3 个指标有值，则删除该日所有属于这些 symbol 的行。
-    返回删除条数。
+    规则：对给定 symbols（默认市场行情 4 指标），先取这些指标最近 limit 个日期的记录，
+    只在这批日期内统计每一天有非空值的指标个数，若某日不足 3 个指标有值，
+    则删除该日所有属于这些 symbol 的行。返回删除条数。
     """
     import logging
     logger = logging.getLogger(__name__)
 
-    # 对每个日期统计各 symbol 的非空数，找出不足 3 的日期
+    # 取这些指标最近 limit 个日期（去重后按日期倒序取前 limit 个）
+    recent_dates = [
+        d[0]
+        for d in db.query(models.MarketPrice.date)
+        .filter(models.MarketPrice.symbol.in_(symbols))
+        .order_by(models.MarketPrice.date.desc())
+        .limit(limit)
+        .all()
+    ]
+    if not recent_dates:
+        return 0
+
+    # 在最近这批日期中统计各 symbol 的非空数，找出不足 3 的日期
     sparse_dates = [
         row[0]
         for row in db.query(models.MarketPrice.date)
-        .filter(models.MarketPrice.symbol.in_(symbols))
+        .filter(
+            models.MarketPrice.symbol.in_(symbols),
+            models.MarketPrice.date.in_(recent_dates),
+        )
         .group_by(models.MarketPrice.date)
         .having(func.count(func.nullif(models.MarketPrice.value, None)) < 3)
         .all()

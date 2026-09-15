@@ -275,8 +275,7 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
             const resp = await fetchWithAuth('/api/market/cleanup', { method: 'POST' });
             const data = await resp.json();
             if (data.status === 'ok') {
-                alert(data.deleted > 0 ? `已清洗 ${data.deleted} 条记录` : '当前没有需要清洗的数据');
-                loadMarket(); // 清洗后重载，刷新历史走势图表
+                alert(data.deleted > 0 ? `已清洗最近 30 条中的 ${data.deleted} 条记录，请手动刷新页面查看` : '最近 30 条中没有需要清洗的数据');
             } else {
                 alert('清洗失败：' + (data.message || '未知错误'));
             }
