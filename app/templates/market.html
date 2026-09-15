@@ -111,7 +111,8 @@ async function renderAllHistory(items) {
     empty.style.display = 'none';
     empty.textContent = '';
 
-    // 统一时间轴：取所有指数日期并集并排序，缺值填 null，保证三面板 X 轴完全一致
+    // 统一时间轴：取所有指标日期并集并排序，缺失值填 null，保证三面板 X 轴完全一致、
+    // 每条曲线端点对齐（不因部分指标缺数据而裁剪日期，避免曲线长短不齐造成"错位"）
     const nameMap = {};
     const valMap = {};
     series.forEach(s => {
@@ -119,15 +120,7 @@ async function renderAllHistory(items) {
         valMap[s.symbol] = {};
         s.points.forEach(p => valMap[s.symbol][p.date] = p.value);
     });
-    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.date)))].sort()
-        // 仅保留同一日期有至少 3 个非空数值的日期，避免稀疏日期拉宽 X 轴
-        .filter(d => {
-            const count = series.reduce(
-                (acc, s) => acc + (valMap[s.symbol] && valMap[s.symbol][d] != null ? 1 : 0),
-                0
-            );
-            return count >= 3;
-        });
+    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.date)))].sort();
 
     const mk = (sym, color, fill) => ({
         label: nameMap[sym] || sym,
