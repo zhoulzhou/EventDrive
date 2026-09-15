@@ -201,16 +201,6 @@ def get_market_peak(db: Session, symbol: str) -> Optional[models.MarketPrice]:
     )
 
 
-def get_market_latest(db: Session, symbol: str) -> Optional[models.MarketPrice]:
-    """返回某 symbol 最新一条记录（按日期降序取第一条）。"""
-    return (
-        db.query(models.MarketPrice)
-        .filter(models.MarketPrice.symbol == symbol)
-        .order_by(models.MarketPrice.date.desc())
-        .first()
-    )
-
-
 def get_market_strategy_state(db: Session, symbol: str) -> Optional[models.MarketStrategyState]:
     """读取某 symbol 的峰值回撤策略状态（当前峰值/峰值日期/最近回撤触发日）。"""
     return (
@@ -261,25 +251,6 @@ def get_index_history_all(db: Session) -> List[models.IndexHistory]:
         .order_by(models.IndexHistory.date.asc())
         .all()
     )
-
-
-def get_index_history_series(db: Session, column: str) -> List[dict]:
-    """返回 index_history 某一指标列的历史序列（按日期升序）。
-
-    返回形如 [{"date": "2026-08-13", "value": 29490.96}, ...]，仅含该列非空的日期，
-    供市场行情历史走势曲线使用（与其它指标共用同一交易日历，天然对齐）。
-    """
-    col = getattr(models.IndexHistory, column, None)
-    if col is None:
-        return []
-    rows = (
-        db.query(models.IndexHistory.date, col)
-        .filter(col.isnot(None))
-        .order_by(models.IndexHistory.date.asc())
-        .all()
-    )
-    # rows 行为 (date, 列值) 元组，直接按索引取值
-    return [{"date": r[0], "value": r[1]} for r in rows]
 
 
 def get_index_history_count(db: Session) -> int:
