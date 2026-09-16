@@ -50,6 +50,41 @@ def _create_snapshot() -> bytes:
         return data
 
 
+def _resolve_repo_from_git() -> tuple:
+    """从本地 git remote (origin) 解析仓库 owner/name, 拿不到则返回 ('', '')。"""
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(BASE_DIR), text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "", ""
+
+    rest = out
+    if rest.startswith("git@"):
+        rest = rest.split(":", 1)[-1] if ":" in rest else rest
+    elif "://" in rest:
+        rest = rest.split("/")[-2:]  # https://github.com/owner/repo.git
+        rest = "/".join(rest)
+    rest = rest.removesuffix(".git").strip("/")
+    parts = [p for p in rest.split("/") if p]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return "", ""
+
+
+def _resolve_repo() -> tuple:
+    """返回 (owner, repo): 环境变量优先, 为空时自动从 git remote 解析。"""
+    owner = settings.GITHUB_REPO_OWNER.strip("/")
+    repo = settings.GITHUB_REPO_NAME.strip("/")
+    if not owner or not repo:
+        g_owner, g_repo = _resolve_repo_from_git()
+        owner = owner or g_owner
+        repo = repo or g_repo
+    return owner, repo
+
+
 def _auth_headers() -> dict:
     if not settings.GITHUB_TOKEN:
         raise PermissionError("未配置 GITHUB_TOKEN, 请在 .env 中填写 GitHub Personal Access Token")
@@ -68,10 +103,9 @@ def _backup_remote_path() -> str:
 
 def backup_db_to_github() -> dict:
     """执行数据库备份。返回 {success, message, path?, size?}。"""
-    owner = settings.GITHUB_REPO_OWNER.strip("/")
-    repo = settings.GITHUB_REPO_NAME.strip("/")
+    owner, repo = _resolve_repo()
     if not owner or not repo:
-        return {"success": False, "message": "未配置 GITHUB_REPO_OWNER / GITHUB_REPO_NAME"}
+        return {"success": False, "message": "未配置 GITHUB_REPO_OWNER / GITHUB_REPO_NAME, 且无法从 git remote 解析"}
 
     try:
         data = _create_snapshot()

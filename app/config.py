@@ -81,8 +81,9 @@ class Settings:
     # GitHub 数据库备份配置
     # 获取方式: GitHub -> Settings -> Developer settings -> Personal access tokens
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
-    GITHUB_REPO_OWNER: str = os.getenv("GITHUB_REPO_OWNER", "zhoulzhou")
-    GITHUB_REPO_NAME: str = os.getenv("GITHUB_REPO_NAME", "EventDrive")
+    # 仓库 owner/name 留空时会在备份时自动从 git remote 解析
+    GITHUB_REPO_OWNER: str = os.getenv("GITHUB_REPO_OWNER", "")
+    GITHUB_REPO_NAME: str = os.getenv("GITHUB_REPO_NAME", "")
     GITHUB_BACKUP_DIR: str = os.getenv("GITHUB_BACKUP_DIR", "backup")
 
     def __init__(self):
