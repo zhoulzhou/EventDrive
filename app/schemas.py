@@ -37,33 +37,6 @@ class News(NewsBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class CrawlLogBase(BaseModel):
-    source: str
-    news_count: int
-    status: str
-    error_message: Optional[str] = None
-    duration: Optional[int] = None
-
-
-class CrawlLogCreate(CrawlLogBase):
-    pass
-
-
-class CrawlLogUpdate(BaseModel):
-    source: Optional[str] = None
-    news_count: Optional[int] = None
-    status: Optional[str] = None
-    error_message: Optional[str] = None
-    duration: Optional[int] = None
-
-
-class CrawlLog(CrawlLogBase):
-    id: int
-    crawl_time: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class MarketPriceBase(BaseModel):
     symbol: str
     name: str

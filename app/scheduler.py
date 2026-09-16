@@ -101,15 +101,6 @@ async def crawl_single_source(crawler_class) -> Tuple[int, List[Dict[str, Any]]]
             else:
                 log_crawl(f"[{source_name}] 已存在，跳过")
 
-        log_entry = schemas.CrawlLogCreate(
-            source=crawler.source_name,
-            news_count=saved_count,
-            status=crawler.get_status(),
-            error_message=crawler.error_message,
-            duration=crawler.get_crawl_duration()
-        )
-        await _db_execute(crud.create_crawl_log, db, log_entry)
-
         log_crawl(f"{source_name} 抓取完成: 保存 {saved_count} 条")
         return saved_count, saved_news
 

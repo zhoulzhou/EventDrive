@@ -87,11 +87,3 @@ class BaseCrawler(ABC):
         
         logger.info(f"[{self.source_name}] 抓取完成，共获取 {len(self.news_list)} 条新闻")
         return self.news_list
-    
-    def get_crawl_duration(self) -> Optional[int]:
-        if self.start_time:
-            return int(time.time() - self.start_time)
-        return None
-    
-    def get_status(self) -> str:
-        return "failed" if self.error_message else "success"

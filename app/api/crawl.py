@@ -2,10 +2,7 @@ import asyncio
 import logging
 from typing import Optional, List, Dict
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app import crud, schemas
 from app.scheduler import full_crawl, set_crawl_progress_callback
 from app.api.login import require_auth
 
@@ -77,16 +74,13 @@ async def trigger_crawl():
 
 
 @router.get("/crawl/status")
-def get_crawl_status(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    latest_log = crud.get_latest_crawl_log(db)
-
+def get_crawl_status(auth: bool = Depends(require_auth)):
     response = {
         "is_running": crawl_status["is_running"],
         "last_run": crawl_status["last_run"],
         "current_source": crawl_status.get("current_source"),
         "current_step": crawl_status.get("current_step"),
         "steps": crawl_status.get("steps", []),
-        "logs": crawl_status.get("logs", []),
-        "latest_log": schemas.CrawlLog.model_validate(latest_log) if latest_log else None
+        "logs": crawl_status.get("logs", [])
     }
     return response

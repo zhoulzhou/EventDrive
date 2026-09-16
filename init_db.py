@@ -6,7 +6,7 @@
 import asyncio
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.models import News, CrawlLog, MarketPrice
+from app.models import News, MarketPrice
 
 
 async def init_db():

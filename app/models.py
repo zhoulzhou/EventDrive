@@ -20,18 +20,6 @@ class News(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
-class CrawlLog(Base):
-    __tablename__ = "crawl_logs"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    source = Column(Text, nullable=False)
-    crawl_time = Column(DateTime, nullable=False, server_default=func.now())
-    news_count = Column(Integer, nullable=False)
-    status = Column(Text, nullable=False)
-    error_message = Column(Text, nullable=True)
-    duration = Column(Integer, nullable=True)
-
-
 class MarketPrice(Base):
     __tablename__ = "market_prices"
     __table_args__ = (UniqueConstraint("symbol", "date", name="uq_market_symbol_date"),)

@@ -86,61 +86,6 @@ def delete_news(db: Session, news_id: int) -> bool:
     return False
 
 
-def get_crawl_log(db: Session, log_id: int) -> Optional[models.CrawlLog]:
-    return db.query(models.CrawlLog).filter(models.CrawlLog.id == log_id).first()
-
-
-def get_crawl_logs(
-    db: Session,
-    skip: int = 0,
-    limit: int = 100,
-    source: Optional[str] = None
-) -> List[models.CrawlLog]:
-    query = db.query(models.CrawlLog)
-    
-    if source:
-        query = query.filter(models.CrawlLog.source == source)
-    
-    query = query.order_by(desc(models.CrawlLog.crawl_time))
-    
-    return query.offset(skip).limit(limit).all()
-
-
-def get_latest_crawl_log(db: Session, source: Optional[str] = None) -> Optional[models.CrawlLog]:
-    query = db.query(models.CrawlLog)
-    if source:
-        query = query.filter(models.CrawlLog.source == source)
-    return query.order_by(desc(models.CrawlLog.crawl_time)).first()
-
-
-def create_crawl_log(db: Session, log: schemas.CrawlLogCreate) -> models.CrawlLog:
-    db_log = models.CrawlLog(**log.model_dump())
-    db.add(db_log)
-    db.commit()
-    db.refresh(db_log)
-    return db_log
-
-
-def update_crawl_log(db: Session, log_id: int, log: schemas.CrawlLogUpdate) -> Optional[models.CrawlLog]:
-    db_log = get_crawl_log(db, log_id)
-    if db_log:
-        update_data = log.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            setattr(db_log, key, value)
-        db.commit()
-        db.refresh(db_log)
-    return db_log
-
-
-def delete_crawl_log(db: Session, log_id: int) -> bool:
-    db_log = get_crawl_log(db, log_id)
-    if db_log:
-        db.delete(db_log)
-        db.commit()
-        return True
-    return False
-
-
 def get_all_market_prices(db: Session) -> List[models.MarketPrice]:
     return db.query(models.MarketPrice).all()
 
