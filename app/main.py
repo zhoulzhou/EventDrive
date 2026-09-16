@@ -9,7 +9,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, feishu, login, market, index_alarm, finance, valuation
+from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation
 from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
@@ -98,6 +98,7 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(crawl.router, prefix="/api", tags=["crawl"])
+app.include_router(backup.router, prefix="/api", tags=["backup"])
 app.include_router(feishu.router, prefix="/api", tags=["feishu"])
 app.include_router(login.router, prefix="/api", tags=["login"])
 app.include_router(market.router, prefix="/api", tags=["market"])

@@ -54,6 +54,11 @@
     <p class="form-hint">立即开始抓取所有来源的最新新闻</p>
     <button id="startCrawlBtn" class="btn btn-primary" style="margin-bottom:1.25rem;">开始抓取</button>
 
+    <h2>数据库备份</h2>
+    <p class="form-hint">把本地 SQLite 数据库上传到 GitHub 仓库备份目录(按时间戳保留多个备份)</p>
+    <button id="backupDbBtn" class="btn btn-secondary" style="margin-bottom:1rem;">备份到 GitHub</button>
+    <div id="backupResult" class="backup-result"></div>
+
     <h2>抓取日志</h2>
     <div id="crawlLogs" class="crawl-logs">
         <div class="log-placeholder">点击"开始抓取"按钮启动抓取任务</div>
@@ -84,6 +89,10 @@
 .log-item {
     padding: 2px 0;
     border-bottom: 1px solid #f0f2f5;
+}
+
+.backup-result {
+    margin-bottom: 1.25rem;
 }
 
 .log-item:last-child {
@@ -407,5 +416,32 @@ async function runFinanceQuery() {
 document.getElementById('finFetchBtn').addEventListener('click', runFinanceFetch);
 document.getElementById('finQueryBtn').addEventListener('click', runFinanceQuery);
 finPopulateYears();
+
+// ===== 数据库备份到 GitHub =====
+async function backupDb() {
+    const btn = document.getElementById('backupDbBtn');
+    const box = document.getElementById('backupResult');
+    btn.disabled = true;
+    btn.textContent = '备份中...';
+    box.innerHTML = '<div class="loading">正在生成数据库快照并上传到 GitHub, 请稍候...</div>';
+
+    try {
+        const response = await fetchWithAuth('/api/backup/db', { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            box.innerHTML = `<div class="log-success"><b>✅ ${escapeHtml(data.message)}</b></div>`;
+        } else {
+            box.innerHTML = `<div class="log-error"><b>❌ ${escapeHtml(data.message)}</b></div>`;
+        }
+    } catch (error) {
+        box.innerHTML = `<div class="log-error"><b>❌ 备份失败: ${escapeHtml(error.message)}</b></div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '备份到 GitHub';
+    }
+}
+
+document.getElementById('backupDbBtn').addEventListener('click', backupDb);
 </script>
 {% endblock %}

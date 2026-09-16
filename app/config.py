@@ -78,6 +78,13 @@ class Settings:
     # CSV 更新后置 1 可强制重导 index_history 表
     RELOAD_INDEX_DATA: bool = _get_bool("RELOAD_INDEX_DATA", False)
 
+    # GitHub 数据库备份配置
+    # 获取方式: GitHub -> Settings -> Developer settings -> Personal access tokens
+    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
+    GITHUB_REPO_OWNER: str = os.getenv("GITHUB_REPO_OWNER", "zhoulzhou")
+    GITHUB_REPO_NAME: str = os.getenv("GITHUB_REPO_NAME", "EventDrive")
+    GITHUB_BACKUP_DIR: str = os.getenv("GITHUB_BACKUP_DIR", "backup")
+
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.LOGS_DIR.mkdir(exist_ok=True)
