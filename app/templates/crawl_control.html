@@ -55,8 +55,8 @@
     <button id="startCrawlBtn" class="btn btn-primary" style="margin-bottom:1.25rem;">开始抓取</button>
 
     <h2>数据库备份</h2>
-    <p class="form-hint">把本地 SQLite 数据库上传到 GitHub 仓库备份目录(按时间戳保留多个备份)</p>
-    <button id="backupDbBtn" class="btn btn-secondary" style="margin-bottom:1rem;">备份到 GitHub</button>
+    <p class="form-hint">把当前数据库复制到项目 backup/ 目录(按时间戳保留多个备份), 你可在本地提交到 git</p>
+    <button id="backupDbBtn" class="btn btn-secondary" style="margin-bottom:1rem;">备份数据库</button>
     <div id="backupResult" class="backup-result"></div>
 
     <h2>抓取日志</h2>
@@ -417,13 +417,13 @@ document.getElementById('finFetchBtn').addEventListener('click', runFinanceFetch
 document.getElementById('finQueryBtn').addEventListener('click', runFinanceQuery);
 finPopulateYears();
 
-// ===== 数据库备份到 GitHub =====
+// ===== 本地数据库备份 =====
 async function backupDb() {
     const btn = document.getElementById('backupDbBtn');
     const box = document.getElementById('backupResult');
     btn.disabled = true;
     btn.textContent = '备份中...';
-    box.innerHTML = '<div class="loading">正在生成数据库快照并上传到 GitHub, 请稍候...</div>';
+    box.innerHTML = '<div class="loading">正在复制数据库到 backup/ 目录, 请稍候...</div>';
 
     try {
         const response = await fetchWithAuth('/api/backup/db', { method: 'POST' });
@@ -438,7 +438,7 @@ async function backupDb() {
         box.innerHTML = `<div class="log-error"><b>❌ 备份失败: ${escapeHtml(error.message)}</b></div>`;
     } finally {
         btn.disabled = false;
-        btn.textContent = '备份到 GitHub';
+        btn.textContent = '备份数据库';
     }
 }
 

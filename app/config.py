@@ -78,17 +78,13 @@ class Settings:
     # CSV 更新后置 1 可强制重导 index_history 表
     RELOAD_INDEX_DATA: bool = _get_bool("RELOAD_INDEX_DATA", False)
 
-    # GitHub 数据库备份配置
-    # 获取方式: GitHub -> Settings -> Developer settings -> Personal access tokens
-    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
-    # 仓库 owner/name 留空时会在备份时自动从 git remote 解析
-    GITHUB_REPO_OWNER: str = os.getenv("GITHUB_REPO_OWNER", "")
-    GITHUB_REPO_NAME: str = os.getenv("GITHUB_REPO_NAME", "")
-    GITHUB_BACKUP_DIR: str = os.getenv("GITHUB_BACKUP_DIR", "backup")
+    # 数据库本地备份目录(纳入 git 管理, 备份文件按时间戳命名)
+    DB_BACKUP_DIR: Path = BASE_DIR / "backup"
 
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.LOGS_DIR.mkdir(exist_ok=True)
+        self.DB_BACKUP_DIR.mkdir(exist_ok=True)
 
 
 settings = Settings()
