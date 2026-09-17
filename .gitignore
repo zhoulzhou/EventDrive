@@ -37,6 +37,10 @@ htmlcov/
 *.sqlite3
 *.sqlite3-journal
 
+# 数据库备份目录(不忽略, 纳入 git 管理, 便于提交备份)
+!backup/
+!backup/*.sqlite3
+
 # Logs
 *.log
 logs/
