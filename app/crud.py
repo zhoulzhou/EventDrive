@@ -140,7 +140,7 @@ def cleanup_sparse_market_dates(db: Session, symbols: List[str], limit: int = 30
             models.MarketPrice.date.in_(recent_dates),
         )
         .group_by(models.MarketPrice.date)
-        .having(func.count(func.nullif(models.MarketPrice.value, None)) < 3)
+        .having(func.count(models.MarketPrice.value) < 3)
         .all()
     ]
     if not sparse_dates:
