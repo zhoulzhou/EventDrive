@@ -129,6 +129,49 @@ class MacroIndicatorHistory(Base):
     fetched_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
 
 
+class StockTempIndicator(Base):
+    """股票指标（A 股冷热三层温度计）最新读数：一行一个指标。
+
+    与 MacroIndicator 结构一致，但独立成表：股票指标口径是「估值 / 情绪 / 资金 / 结构」
+    四组，与宏观指标的「资金面 / 经济热度」两组的抓取源、频率完全不同，混在一张表里
+    会让两边的「待刷新判定」「缓存有效期」互相干扰。
+
+    - key: 指标键，与 app/utils/stock_temp.py 的 INDICATORS 对应
+    - value / as_of: 当前读数与数据日期
+    - source: 'akshare' 自动抓取（含交易所官网、乐咕乐股、东财数据中心、新浪）
+    - detail: 读数明细（JSON 字符串，含十年分位、分位窗口、分量分解等）
+
+    本表只保留每个指标的最新一行（覆盖式）。完整历史见 StockTempHistory。
+    """
+    __tablename__ = "stock_temp_indicators"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    key = Column(Text, nullable=False, unique=True, index=True)
+    value = Column(Float, nullable=True)
+    as_of = Column(Text, nullable=True)
+    source = Column(Text, nullable=False, default="akshare")
+    detail = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class StockTempHistory(Base):
+    """股票指标历史读数：只增不改，用于趋势图与分位计算。
+
+    写入口径与 MacroIndicatorHistory 完全一致：按 (key, as_of) 唯一定位，
+    已存在且数值相同则跳过，数值不同则就地修正，避免反复回填堆出重复点。
+    """
+    __tablename__ = "stock_temp_history"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    key = Column(Text, nullable=False, index=True)
+    value = Column(Float, nullable=True)
+    as_of = Column(Text, nullable=True)
+    source = Column(Text, nullable=False, default="akshare")
+    detail = Column(Text, nullable=True)
+    fetched_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+
+
 class FinancialReport(Base):
     """财务指标：按 股票代码 + 报告期 存储公司三大报表关键科目（金额单位：元）。
 

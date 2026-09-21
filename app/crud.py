@@ -659,3 +659,164 @@ def get_macro_history_series(
         rows.reverse()  # 转成时间正序
         result[key] = rows
     return result
+
+
+# ================================================================ 股票指标
+#
+# 「股票指标」页（A 股冷热三层温度计）的快照表与历史表。写入口径与市场指标
+# 完全一致（历史表按 (key, as_of) 唯一定位），只是换成独立的表，避免与宏观
+# 指标的待刷新判定、缓存有效期互相干扰。下面的历史读写共用一份泛型实现。
+
+
+def _bulk_upsert_history(db: Session, model, records: List[dict]) -> Dict[str, int]:
+    """泛型历史写入：按 (key, as_of) 定位，返回 {"added", "updated"}。
+
+    - 该 (key, as_of) 尚不存在 → 新增
+    - 已存在且数值相同 → 跳过
+    - 已存在但数值不同 → 就地修正（早期回填口径与最新抓取口径不一致时用得上）
+    """
+    if not records:
+        return {"added": 0, "updated": 0}
+
+    keys = {rec["key"] for rec in records}
+    existing = {
+        (row.key, row.as_of): row
+        for row in db.query(model).filter(model.key.in_(keys)).all()
+    }
+
+    added = 0
+    updated = 0
+    for rec in records:
+        row = existing.get((rec["key"], rec.get("as_of")))
+        if row is None:
+            row = model(
+                key=rec["key"],
+                value=rec.get("value"),
+                as_of=rec.get("as_of"),
+                source=rec.get("source", "akshare"),
+                detail=rec.get("detail", "{}"),
+            )
+            db.add(row)
+            existing[(rec["key"], rec.get("as_of"))] = row
+            added += 1
+            continue
+        if _same_reading(row, rec):
+            continue
+        row.value = rec.get("value")
+        row.source = rec.get("source", row.source)
+        row.detail = rec.get("detail", row.detail)
+        updated += 1
+
+    if added or updated:
+        db.commit()
+    return {"added": added, "updated": updated}
+
+
+def _history_series(db: Session, model, keys: List[str], per_key_limit: int):
+    """泛型历史序列取数：按 as_of（数据日期）排序，返回时间正序。"""
+    result: Dict[str, list] = {k: [] for k in keys}
+    for key in keys:
+        rows = (
+            db.query(model)
+            .filter(model.key == key)
+            .order_by(model.as_of.desc(), model.id.desc())
+            .limit(per_key_limit)
+            .all()
+        )
+        rows.reverse()
+        result[key] = rows
+    return result
+
+
+# ------------------------------------------------------------ 股票指标快照
+
+def get_stock_temp_indicators(db: Session) -> Dict[str, models.StockTempIndicator]:
+    """返回全部股票指标最新读数，按 key 索引。"""
+    return {row.key: row for row in db.query(models.StockTempIndicator).all()}
+
+
+def get_stock_temp_indicator(db: Session, key: str) -> Optional[models.StockTempIndicator]:
+    return (
+        db.query(models.StockTempIndicator)
+        .filter(models.StockTempIndicator.key == key)
+        .first()
+    )
+
+
+def upsert_stock_temp_indicators(db: Session, records: List[dict]) -> int:
+    """批量写入股票指标读数。records 形如 [{key, value, as_of, source, detail}]。"""
+    for rec in records:
+        row = get_stock_temp_indicator(db, rec["key"])
+        if row is None:
+            row = models.StockTempIndicator(key=rec["key"])
+            db.add(row)
+        row.value = rec.get("value")
+        row.as_of = rec.get("as_of")
+        row.source = rec.get("source", "akshare")
+        row.detail = rec.get("detail", "{}")
+    db.commit()
+    return len(records)
+
+
+def get_stock_temp_last_updated(db: Session, source: Optional[str] = None):
+    """最近一次更新时间（判断缓存是否过期）。"""
+    query = db.query(func.max(models.StockTempIndicator.updated_at))
+    if source:
+        query = query.filter(models.StockTempIndicator.source == source)
+    return query.scalar()
+
+
+# ------------------------------------------------------------ 股票指标历史
+
+def bulk_upsert_stock_temp_history(db: Session, records: List[dict]) -> Dict[str, int]:
+    return _bulk_upsert_history(db, models.StockTempHistory, records)
+
+
+def add_stock_temp_history(db: Session, records: List[dict]) -> int:
+    """快照刷新时把读数写进历史表（与回填共用同一判重口径）。"""
+    return bulk_upsert_stock_temp_history(db, records)["added"]
+
+
+def seed_stock_temp_history_from_snapshot(db: Session) -> int:
+    """把快照表已有读数补写进历史表（仅针对历史表中尚无记录的指标）。"""
+    has_history = {
+        row[0] for row in db.query(models.StockTempHistory.key).distinct().all()
+    }
+    records = []
+    for row in db.query(models.StockTempIndicator).all():
+        if row.key in has_history:
+            continue
+        records.append({
+            "key": row.key,
+            "value": row.value,
+            "as_of": row.as_of,
+            "source": row.source,
+            "detail": row.detail,
+        })
+    return add_stock_temp_history(db, records)
+
+
+def get_stock_temp_history_series(
+    db: Session, keys: List[str], per_key_limit: int = 3000
+) -> Dict[str, List[models.StockTempHistory]]:
+    return _history_series(db, models.StockTempHistory, keys, per_key_limit)
+
+
+def get_stock_temp_history(
+    db: Session, key: Optional[str] = None, limit: int = 200, order: str = "desc"
+) -> List[models.StockTempHistory]:
+    query = db.query(models.StockTempHistory)
+    if key:
+        query = query.filter(models.StockTempHistory.key == key)
+    if order == "asc":
+        query = query.order_by(models.StockTempHistory.id.asc())
+    else:
+        query = query.order_by(models.StockTempHistory.id.desc())
+    return query.limit(limit).all()
+
+
+def count_stock_temp_history(db: Session, key: Optional[str] = None) -> int:
+    query = db.query(func.count(models.StockTempHistory.id))
+    if key:
+        query = query.filter(models.StockTempHistory.key == key)
+    return int(query.scalar() or 0)

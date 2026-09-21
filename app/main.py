@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation, macro
+from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation, macro, stock_temp
 from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
@@ -107,6 +107,7 @@ app.include_router(index_alarm.router, prefix="/api", tags=["index-alarm"])
 app.include_router(finance.router, prefix="/api", tags=["finance"])
 app.include_router(valuation.router, prefix="/api", tags=["valuation"])
 app.include_router(macro.router, prefix="/api", tags=["macro"])
+app.include_router(stock_temp.router, prefix="/api", tags=["stock-temp"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:
@@ -192,6 +193,13 @@ async def macro_page(request: Request):
     return render_template("macro.html", {"request": request})
 
 
+@app.get("/stock-temp")
+async def stock_temp_page(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("stock_temp.html", {"request": request})
+
+
 _PAGE_LINKS = [
     ("/home", "首页"),
     ("/crawl", "抓取"),
@@ -200,6 +208,7 @@ _PAGE_LINKS = [
     ("/finance", "财务"),
     ("/valuation", "估值"),
     ("/macro", "宏观指标"),
+    ("/stock-temp", "股票指标"),
 ]
 
 

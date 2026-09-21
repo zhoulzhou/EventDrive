@@ -18,6 +18,10 @@ from app.crawlers import (
 from app.crawlers.x_twitter import fetch_tweets
 from app.crawlers.market_data import refresh_market_data
 from app.utils.macro_refresh import refresh_snapshot, backfill_history
+from app.utils.stock_temp_refresh import (
+    refresh_snapshot as refresh_stock_temp_snapshot,
+    backfill_history as backfill_stock_temp,
+)
 from app.utils.feishu_notifier import (
     dfcf_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
     doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify,
@@ -184,6 +188,51 @@ async def backfill_macro_history():
         logger.error(f"!!! 宏观指标历史回填出错: {e}", exc_info=True)
 
 
+async def refresh_stock_temp():
+    """抓取股票指标（A 股冷热三层温度计）快照，写入最新值与历史表。
+
+    与页面接口 /api/stock-temp/refresh 共用 app/utils/stock_temp_refresh.py 的实现，
+    抓取是同步阻塞的（akshare + 交易所官网 + 东财数据中心），放到线程里执行避免卡住事件循环。
+    """
+    log_crawl("=" * 50)
+    log_crawl("开始更新股票指标（三层温度计）...")
+    log_crawl("=" * 50)
+
+    try:
+        updated, errors, history_added = await asyncio.to_thread(refresh_stock_temp_snapshot)
+        log_crawl(f"股票指标更新完成: 快照 {updated} 项, 历史新增 {history_added} 条")
+        for key, msg in (errors or {}).items():
+            log_crawl(f"  ! {key} 抓取失败（保留上次读数）: {msg}")
+    except Exception as e:
+        log_crawl(f"股票指标更新出错: {str(e)}")
+        logger.error(f"!!! 股票指标更新出错: {e}", exc_info=True)
+
+    log_crawl("=" * 50)
+
+
+async def backfill_stock_temp_history():
+    """回填股票指标历史（各数据源自带历史 + 交易所日频数据滚动窗口）。
+
+    幂等可反复执行；历史表条数偏少时会自动升级为全量窗口
+    （见 stock_temp_refresh.SPARSE_HISTORY_ROWS）。
+    """
+    log_crawl("开始回填股票指标历史序列...")
+
+    try:
+        result = await asyncio.to_thread(backfill_stock_temp)
+        extra = "（本次升级为全量窗口）" if result.get("escalated") else ""
+        log_crawl(
+            f"股票指标历史回填完成: 生成 {result['generated']} 条, "
+            f"新增 {result['added']}, 更新 {result['updated']}, "
+            f"累计 {result['history_total']} 条{extra}"
+        )
+        for key, msg in (result.get("errors") or {}).items():
+            log_crawl(f"  ! {key} 回溯失败: {msg}")
+    except Exception as e:
+        log_crawl(f"股票指标历史回填出错: {str(e)}")
+        logger.error(f"!!! 股票指标历史回填出错: {e}", exc_info=True)
+
+
 async def full_crawl():
     log_crawl("=" * 50)
     log_crawl("开始执行新闻抓取任务...")
@@ -339,6 +388,22 @@ def start_scheduler():
             trigger=CronTrigger(hour='8,12,16,20', minute=35, timezone=TOKYO_TZ),
             id='macro_backfill_job',
             name='Backfill macro history at 8,12,16,20 JST',
+            replace_existing=True
+        )
+        # 股票指标（三层温度计）：交易日收盘后才有意义，故只在 JST 16/20 两次；
+        # 与宏观指标错开时刻（10 分 / 40 分），避免多个抓取任务同时打外部接口
+        scheduler.add_job(
+            refresh_stock_temp,
+            trigger=CronTrigger(hour='16,20', minute=10, timezone=TOKYO_TZ),
+            id='stock_temp_snapshot_job',
+            name='Refresh stock temperature at 16,20 JST',
+            replace_existing=True
+        )
+        scheduler.add_job(
+            backfill_stock_temp_history,
+            trigger=CronTrigger(hour='16,20', minute=40, timezone=TOKYO_TZ),
+            id='stock_temp_backfill_job',
+            name='Backfill stock temperature history at 16,20 JST',
             replace_existing=True
         )
         scheduler.start()
