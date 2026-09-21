@@ -418,3 +418,244 @@ def clear_valuation_records(db: Session) -> int:
     deleted = db.query(models.CompanyValuation).delete()
     db.commit()
     return deleted
+
+
+# ---------------------------------------------------------------- 市场指标
+
+def get_macro_indicators(db: Session) -> Dict[str, models.MacroIndicator]:
+    """返回全部市场指标最新读数，按 key 索引。"""
+    rows = db.query(models.MacroIndicator).all()
+    return {row.key: row for row in rows}
+
+
+def get_macro_indicator(db: Session, key: str) -> Optional[models.MacroIndicator]:
+    return db.query(models.MacroIndicator).filter(models.MacroIndicator.key == key).first()
+
+
+def upsert_macro_indicator(
+    db: Session,
+    key: str,
+    value: Optional[float],
+    as_of: Optional[str],
+    source: str,
+    detail: str = "{}",
+) -> models.MacroIndicator:
+    """按 key 写入（新增或更新）一条市场指标读数。"""
+    row = get_macro_indicator(db, key)
+    if row is None:
+        row = models.MacroIndicator(key=key)
+        db.add(row)
+    row.value = value
+    row.as_of = as_of
+    row.source = source
+    row.detail = detail
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def upsert_macro_indicators(db: Session, records: List[dict]) -> int:
+    """批量写入市场指标读数。records 形如 [{key, value, as_of, source, detail}]。"""
+    for rec in records:
+        row = get_macro_indicator(db, rec["key"])
+        if row is None:
+            row = models.MacroIndicator(key=rec["key"])
+            db.add(row)
+        row.value = rec.get("value")
+        row.as_of = rec.get("as_of")
+        row.source = rec.get("source", "akshare")
+        row.detail = rec.get("detail", "{}")
+    db.commit()
+    return len(records)
+
+
+def seed_macro_fallbacks(db: Session, defaults: Dict[str, dict]) -> int:
+    """为尚未入库的指标写入兜底读数（已存在则不覆盖），返回新增条数。
+
+    defaults 形如 {"excess_reserve": {"value": 1.3, "as_of": "兜底默认值"}}。
+    这些记录 source 标记为 fallback，首次自动抓取成功后会被真实读数替换。
+    """
+    existing = {row[0] for row in db.query(models.MacroIndicator.key).all()}
+    created = 0
+    for key, meta in defaults.items():
+        if key in existing:
+            continue
+        db.add(models.MacroIndicator(
+            key=key,
+            value=meta.get("value"),
+            as_of=meta.get("as_of", "兜底默认值"),
+            source="fallback",
+            detail="{}",
+        ))
+        created += 1
+    if created:
+        db.commit()
+    return created
+
+
+def get_macro_last_updated(db: Session, source: Optional[str] = None):
+    """返回最近一次更新的时间（用于判断缓存是否过期）。"""
+    query = db.query(func.max(models.MacroIndicator.updated_at))
+    if source:
+        query = query.filter(models.MacroIndicator.source == source)
+    return query.scalar()
+
+
+# ------------------------------------------------------------ 市场指标历史
+
+def _same_reading(row, rec: dict) -> bool:
+    """历史记录与待写入读数是否等价（数据日期相同、数值相同）。"""
+    if (row.as_of or "") != (rec.get("as_of") or ""):
+        return False
+    old, new = row.value, rec.get("value")
+    if old is None and new is None:
+        return True
+    if old is None or new is None:
+        return False
+    try:
+        return abs(float(old) - float(new)) < 1e-9
+    except (TypeError, ValueError):
+        return False
+
+
+def add_macro_history(db: Session, records: List[dict]) -> int:
+    """把本次抓到的读数写进历史表，返回新增条数。
+
+    判重口径与 bulk_upsert_macro_history 完全一致：按「指标 + 数据日期」定位。
+    同一 (key, as_of) 已存在且读数相同则跳过；读数被修正（同一天抓到不同值）
+    则就地更新那一行，而不是再追加一条。
+
+    ⚠️ 这里**不能用「该指标 id 最大的那条」当比较基准**：历史表里 as_of 最新的
+    记录 id 未必最大（首次引入历史时 seed 的行 id 很小，后续回填插入的行 id 在
+    另一段），按 id 取「最后一条」会比对错对象，进而追加出同 (key, as_of) 的
+    重复点，曲线末端于是出现重叠的数据点。
+    """
+    if not records:
+        return 0
+    return bulk_upsert_macro_history(db, records)["added"]
+
+
+def seed_macro_history_from_snapshot(db: Session) -> int:
+    """把快照表里已有的读数补写进历史表（仅针对历史表中尚无记录的指标）。
+
+    用于首次引入历史表时，让历史从「当前读数」开始，而不是空表。
+    """
+    has_history = {row[0] for row in db.query(models.MacroIndicatorHistory.key).distinct().all()}
+    records = []
+    for row in db.query(models.MacroIndicator).all():
+        if row.key in has_history:
+            continue
+        records.append({
+            "key": row.key,
+            "value": row.value,
+            "as_of": row.as_of,
+            "source": row.source,
+            "detail": row.detail,
+        })
+    return add_macro_history(db, records)
+
+
+def get_macro_history(
+    db: Session,
+    key: Optional[str] = None,
+    limit: int = 200,
+    order: str = "desc",
+) -> List[models.MacroIndicatorHistory]:
+    """查询历史读数。key 为空时返回全部指标（按抓取时间排序，默认最新在前）。"""
+    query = db.query(models.MacroIndicatorHistory)
+    if key:
+        query = query.filter(models.MacroIndicatorHistory.key == key)
+    if order == "asc":
+        query = query.order_by(models.MacroIndicatorHistory.id.asc())
+    else:
+        query = query.order_by(models.MacroIndicatorHistory.id.desc())
+    return query.limit(limit).all()
+
+
+def count_macro_history(db: Session, key: Optional[str] = None) -> int:
+    """历史记录条数（可按指标过滤）。"""
+    query = db.query(func.count(models.MacroIndicatorHistory.id))
+    if key:
+        query = query.filter(models.MacroIndicatorHistory.key == key)
+    return int(query.scalar() or 0)
+
+
+def bulk_upsert_macro_history(db: Session, records: List[dict]) -> Dict[str, int]:
+    """按 (key, as_of) 批量写入历史（回溯补齐与快照刷新共用），返回 {"added", "updated"}。
+
+    按「指标 + 数据日期」定位，是全项目**唯一**的历史表写入口径：
+    - 该 (key, as_of) 尚不存在 → 新增一行
+    - 已存在且数值相同 → 跳过
+    - 已存在但数值不同 → 就地更新（视为对历史读数的修正）
+
+    这样反复执行回溯不会堆重复行，也能修正早期用错锚（如政策利率已调整）的旧值。
+    add_macro_history（快照刷新用）也委托到这里，保证两条写入路径判重一致。
+    """
+    if not records:
+        return {"added": 0, "updated": 0}
+
+    keys = {rec["key"] for rec in records}
+    existing = {
+        (row.key, row.as_of): row
+        for row in db.query(models.MacroIndicatorHistory)
+        .filter(models.MacroIndicatorHistory.key.in_(keys))
+        .all()
+    }
+
+    added = 0
+    updated = 0
+    for rec in records:
+        row = existing.get((rec["key"], rec.get("as_of")))
+        if row is None:
+            row = models.MacroIndicatorHistory(
+                key=rec["key"],
+                value=rec.get("value"),
+                as_of=rec.get("as_of"),
+                source=rec.get("source", "akshare"),
+                detail=rec.get("detail", "{}"),
+            )
+            db.add(row)
+            existing[(rec["key"], rec.get("as_of"))] = row
+            added += 1
+            continue
+        if _same_reading(row, rec):
+            continue
+        row.value = rec.get("value")
+        row.source = rec.get("source", row.source)
+        row.detail = rec.get("detail", row.detail)
+        updated += 1
+
+    if added or updated:
+        db.commit()
+    return {"added": added, "updated": updated}
+
+
+def get_macro_history_series(
+    db: Session,
+    keys: List[str],
+    per_key_limit: int = 3000,
+) -> Dict[str, List[models.MacroIndicatorHistory]]:
+    """按指标取历史序列（时间正序），供图表使用。
+
+    按 as_of（数据日期）排序而非自增 id：回溯补齐前已存在的「最新一期」记录
+    id 很小，若按 id 排会插到序列开头，导致折线图乱序。
+    每个指标最多取 per_key_limit 条最新记录，再按时间正序返回。
+    """
+    result: Dict[str, List[models.MacroIndicatorHistory]] = {k: [] for k in keys}
+    if not keys:
+        return result
+
+    for key in keys:
+        rows = (
+            db.query(models.MacroIndicatorHistory)
+            .filter(models.MacroIndicatorHistory.key == key)
+            .order_by(
+                models.MacroIndicatorHistory.as_of.desc(),
+                models.MacroIndicatorHistory.id.desc(),
+            )
+            .limit(per_key_limit)
+            .all()
+        )
+        rows.reverse()  # 转成时间正序
+        result[key] = rows
+    return result

@@ -86,6 +86,49 @@ class CompanyValuation(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class MacroIndicator(Base):
+    """市场指标（资金面 / 经济热度）最新读数：一行一个指标。
+
+    - key: 指标键，与 app/utils/macro_indicators.py 中的 INDICATORS / PARAM_META 对应
+    - value / as_of: 当前读数与数据日期（数据发布日，如 2026-09-21 / 2026-08 / 2026-06）
+    - source: 'akshare' 行情类自动抓取 / 'pbc' 央行官网自动抓取 / 'fallback' 抓取失败时的兜底默认值
+    - detail: 读数明细（JSON 字符串，如 DR007 与逆回购利率的分解、M1/M2 同比、公告号与链接）
+
+    本表只保留每个指标的最新一行（覆盖式）。完整历史见 MacroIndicatorHistory。
+    """
+    __tablename__ = "macro_indicators"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    key = Column(Text, nullable=False, unique=True, index=True)
+    value = Column(Float, nullable=True)
+    as_of = Column(Text, nullable=True)
+    source = Column(Text, nullable=False, default="akshare")
+    detail = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class MacroIndicatorHistory(Base):
+    """市场指标历史读数：只增不改，用于回溯任一指标的变化。
+
+    每次抓取后，若某指标的读数（as_of 或 value）与上一条历史记录不同，就追加一行；
+    连续相同的读数不重复记录，避免周期性刷新堆出大量无意义的重复行。
+    fetched_at 为该读数**首次**被抓到的时刻。
+
+    - key / value / as_of / source / detail：同 MacroIndicator
+    - fetched_at: 抓取时间（服务器本地时间）
+    """
+    __tablename__ = "macro_indicator_history"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    key = Column(Text, nullable=False, index=True)
+    value = Column(Float, nullable=True)
+    as_of = Column(Text, nullable=True)
+    source = Column(Text, nullable=False, default="akshare")
+    detail = Column(Text, nullable=True)
+    fetched_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+
+
 class FinancialReport(Base):
     """财务指标：按 股票代码 + 报告期 存储公司三大报表关键科目（金额单位：元）。
 

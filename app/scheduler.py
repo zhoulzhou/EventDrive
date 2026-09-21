@@ -17,6 +17,7 @@ from app.crawlers import (
 )
 from app.crawlers.x_twitter import fetch_tweets
 from app.crawlers.market_data import refresh_market_data
+from app.utils.macro_refresh import refresh_snapshot, backfill_history
 from app.utils.feishu_notifier import (
     dfcf_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
     doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify,
@@ -136,6 +137,51 @@ async def crawl_market_data():
     log_crawl("=" * 50)
     log_crawl("市场行情更新任务完成")
     log_crawl("=" * 50)
+
+
+async def refresh_macro_indicators():
+    """抓取宏观指标快照（资金面 / 经济热度），写入最新值与历史表。
+
+    与页面接口 /api/macro/refresh 共用 app/utils/macro_refresh.py 的实现，
+    抓取是同步阻塞的（akshare + 央行官网），放到线程里执行避免卡住事件循环。
+    """
+    log_crawl("=" * 50)
+    log_crawl("开始更新宏观指标...")
+    log_crawl("=" * 50)
+
+    try:
+        updated, errors, history_added = await asyncio.to_thread(refresh_snapshot)
+        log_crawl(f"宏观指标更新完成: 快照 {updated} 项, 历史新增 {history_added} 条")
+        for key, msg in (errors or {}).items():
+            log_crawl(f"  ! {key} 抓取失败（保留上次读数）: {msg}")
+    except Exception as e:
+        log_crawl(f"宏观指标更新出错: {str(e)}")
+        logger.error(f"!!! 宏观指标更新出错: {e}", exc_info=True)
+
+    log_crawl("=" * 50)
+
+
+async def backfill_macro_history():
+    """回填宏观指标历史序列（默认增量窗口，幂等，可反复执行）。
+
+    历史表条数偏少时会自动升级为全量窗口（见 macro_refresh.SPARSE_HISTORY_ROWS），
+    所以新部署下这个任务也能自己把图表数据攒起来。
+    """
+    log_crawl("开始回填宏观指标历史序列...")
+
+    try:
+        result = await asyncio.to_thread(backfill_history)
+        extra = "（本次升级为全量窗口）" if result.get("escalated") else ""
+        log_crawl(
+            f"宏观指标历史回填完成: 生成 {result['generated']} 条, "
+            f"新增 {result['added']}, 更新 {result['updated']}, "
+            f"累计 {result['history_total']} 条{extra}"
+        )
+        for key, msg in (result.get("errors") or {}).items():
+            log_crawl(f"  ! {key} 回溯失败: {msg}")
+    except Exception as e:
+        log_crawl(f"宏观指标历史回填出错: {str(e)}")
+        logger.error(f"!!! 宏观指标历史回填出错: {e}", exc_info=True)
 
 
 async def full_crawl():
@@ -280,8 +326,25 @@ def start_scheduler():
             name='Crawl market data at 8,12,16,20 JST',
             replace_existing=True
         )
+        # 宏观指标：与新闻/行情同一节奏（JST 8/12/16/20），各错开几分钟避开抓取高峰
+        scheduler.add_job(
+            refresh_macro_indicators,
+            trigger=CronTrigger(hour='8,12,16,20', minute=5, timezone=TOKYO_TZ),
+            id='macro_snapshot_job',
+            name='Refresh macro indicators at 8,12,16,20 JST',
+            replace_existing=True
+        )
+        scheduler.add_job(
+            backfill_macro_history,
+            trigger=CronTrigger(hour='8,12,16,20', minute=35, timezone=TOKYO_TZ),
+            id='macro_backfill_job',
+            name='Backfill macro history at 8,12,16,20 JST',
+            replace_existing=True
+        )
         scheduler.start()
-        logger.info("Scheduler started. Crawl at 8,12,16,20 JST (Asia/Tokyo).")
+        logger.info(
+            "Scheduler started. Crawl + market data + macro indicators at 8,12,16,20 JST (Asia/Tokyo)."
+        )
 
 
 def stop_scheduler():

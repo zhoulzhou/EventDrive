@@ -1,3 +1,4 @@
+import html
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,7 +10,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation
+from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation, macro
 from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
@@ -105,6 +106,7 @@ app.include_router(market.router, prefix="/api", tags=["market"])
 app.include_router(index_alarm.router, prefix="/api", tags=["index-alarm"])
 app.include_router(finance.router, prefix="/api", tags=["finance"])
 app.include_router(valuation.router, prefix="/api", tags=["valuation"])
+app.include_router(macro.router, prefix="/api", tags=["macro"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:
@@ -181,3 +183,50 @@ async def valuation_page(request: Request):
     if not is_logged_in(request):
         return RedirectResponse(url="/login")
     return render_template("valuation.html", {"request": request})
+
+
+@app.get("/macro")
+async def macro_page(request: Request):
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("macro.html", {"request": request})
+
+
+_PAGE_LINKS = [
+    ("/home", "首页"),
+    ("/crawl", "抓取"),
+    ("/market", "行情"),
+    ("/index-alarm", "指数预警"),
+    ("/finance", "财务"),
+    ("/valuation", "估值"),
+    ("/macro", "宏观指标"),
+]
+
+
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    """404 处理：/api、/static 保持 JSON 语义；页面路径返回带导航的友好 404 页。
+
+    未匹配到路由时 FastAPI 默认只回 {"detail":"Not Found"} 裸 JSON，
+    在浏览器里看到会很困惑（分不清是"路径写错"还是"服务挂了"）。
+    """
+    path = request.url.path
+    if path.startswith("/api") or path.startswith("/static") or path.startswith("/docs") or path.startswith("/openapi"):
+        return JSONResponse(status_code=404, content={"detail": "Not Found", "path": path})
+
+    link_html = " · ".join(
+        '<a href="%s">%s</a>' % (href, label) for href, label in _PAGE_LINKS
+    )
+    body = (
+        '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<title>404 · 页面不存在</title>"
+        '<link rel="stylesheet" href="/static/css/style.css"></head><body>'
+        '<div class="container"><div class="error-state">'
+        "<h1>404</h1>"
+        "<p>没有这个页面：<code>%s</code></p>"
+        '<p class="form-hint">可用页面：%s</p>'
+        '<p><a class="btn" href="/home">返回首页</a></p>'
+        "</div></div></body></html>"
+    ) % (html.escape(path), link_html)
+    return HTMLResponse(status_code=404, content=body)

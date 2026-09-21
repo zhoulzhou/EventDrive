@@ -78,6 +78,9 @@ class Settings:
     # CSV 更新后置 1 可强制重导 index_history 表
     RELOAD_INDEX_DATA: bool = _get_bool("RELOAD_INDEX_DATA", False)
 
+    # 市场指标自动抓取缓存有效期（小时）。超过则下次打开页面重新抓取
+    MACRO_CACHE_TTL_HOURS: float = float(os.getenv("MACRO_CACHE_TTL_HOURS", "12"))
+
     # 数据库本地备份目录(纳入 git 管理, 备份文件按时间戳命名)
     DB_BACKUP_DIR: Path = BASE_DIR / "backup"
 

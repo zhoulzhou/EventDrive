@@ -70,7 +70,7 @@ async def _main_async():
 
     logger.info("启动APScheduler调度器...")
     start_scheduler()
-    logger.info("APScheduler调度器已启动 (JST 8:00/12:00/16:00/20:00)")
+    logger.info("APScheduler调度器已启动 (新闻/行情/宏观指标 JST 8:00/12:00/16:00/20:00)")
     jobs = scheduler.get_jobs()
     for job in jobs:
         logger.info(f"  已注册任务: {job.name} (next: {job.next_run_time})")

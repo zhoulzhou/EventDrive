@@ -36,6 +36,9 @@ htmlcov/
 *.sqlite
 *.sqlite3
 *.sqlite3-journal
+# SQLite WAL 运行时文件(非数据本体, 每次运行都变)
+*.sqlite3-shm
+*.sqlite3-wal
 
 # 数据库备份目录(不忽略, 纳入 git 管理, 便于提交备份)
 !backup/
@@ -57,6 +60,13 @@ data/history_tweet_cache.json
 *.tmp
 .DS_Store
 Thumbs.db
+
+# 本地智能体工作目录(memory 等个人上下文, 不入库)
+.workbuddy/
+
+# 调试截图(页面实拍校验产物)
+docs/_charts/
+docs/*.png
 
 # Test/debug scripts
 test_*.py
