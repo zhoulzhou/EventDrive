@@ -193,6 +193,14 @@ async def macro_page(request: Request):
     return render_template("macro.html", {"request": request})
 
 
+@app.get("/macro-trend")
+async def macro_trend_page(request: Request):
+    """宏观趋势：只看历史曲线与走势（图表实现见 static/js/macro_charts.js）。"""
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("macro_trend.html", {"request": request})
+
+
 @app.get("/stock-temp")
 async def stock_temp_page(request: Request):
     if not is_logged_in(request):
@@ -208,6 +216,7 @@ _PAGE_LINKS = [
     ("/finance", "财务"),
     ("/valuation", "估值"),
     ("/macro", "宏观指标"),
+    ("/macro-trend", "宏观趋势"),
     ("/stock-temp", "股票指标"),
 ]
 

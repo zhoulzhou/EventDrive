@@ -1,6 +1,6 @@
 """中国人民银行官网（www.pbc.gov.cn）数据抓取。
 
-补齐 akshare 未覆盖的三个指标，改由央行官方发布渠道直接抓取：
+补齐 akshare 未覆盖的指标，改由央行官方发布渠道直接抓取：
 
 ======================  ==========================================  ==========
 指标                    官方发布渠道                                 频率
@@ -8,6 +8,8 @@
 7天逆回购操作利率        《公开市场业务交易公告》                       每个交易日
 社融存量同比             《金融统计数据报告》（数据解读栏目）             每月
 超储率                   《中国货币政策执行报告》（PDF 正文）           每季度
+分部门存贷款             《金融统计数据报告》第四、五节（累计口径）        每月
+（住户/企业/非银/财政）
 ======================  ==========================================  ==========
 
 设计约定：
@@ -203,7 +205,7 @@ def fetch_tsf_stock_yoy() -> Dict[str, Any]:
         stock_wan_yi = float(m.group(1))
         return {
             "value": float(m.group(2)),
-            "as_of": _cn_ym_to_iso(title) or _cn_ym_to_iso(text) or "",
+            "as_of": _report_period(title) or _cn_ym_to_iso(text) or "",
             "detail": {
                 "报告": title,
                 "存量": "%s 万亿元" % m.group(1),
@@ -212,6 +214,112 @@ def fetch_tsf_stock_yoy() -> Dict[str, Any]:
             },
         }
     raise RuntimeError("未能解析社融存量同比（%s）" % (last_error or "报告正文无匹配字段"))
+
+
+# ---------------------------------------------------------------- 分部门存贷款
+#
+# ③「部门结构」维度看的是「钱在谁手里」，取《金融统计数据报告》第四、五节的
+# 分部门数据。注意口径是**年初至今累计**（"前八个月人民币存款增加…其中住户存款
+# 增加 6.99 万亿元"），不是当月增量 —— 央行月度报告只披露累计数。
+#
+# 正文里同时出现存款方与贷款方两个列表（如"非银行业金融机构存款增加…"与
+# "非银行业金融机构贷款减少…"），所以匹配式必须带上「存款」/「贷款」以免串档。
+
+_AMOUNT_PATTERN = r"([\d.]+)\s*(万亿元|亿元)"
+_DEPOSIT_SPLIT_FIELDS = {
+    "住户存款": "住户存款",
+    "住户贷款": "住户贷款",
+    "非银行业金融机构存款": "非银存款",
+    "非金融企业存款": "企业存款",
+}
+
+
+_REPORT_PERIODS = (
+    (re.compile(r"(\d{4})\s*年\s*一季度"), 3),
+    (re.compile(r"(\d{4})\s*年\s*上半年"), 6),
+    (re.compile(r"(\d{4})\s*年\s*前三季度"), 9),
+    (re.compile(r"(\d{4})\s*年\s*年度"), 12),
+)
+
+
+def _report_period(title: str) -> Optional[str]:
+    """由报告标题推出数据期：2026年8月→2026-08；上半年→2026-06；一季度→2026-03。
+
+    季度/半年类的标题里没有「N 月」，_cn_ym_to_iso 会返回 None，故先按这些关键词归一。
+    """
+    for pattern, month in _REPORT_PERIODS:
+        m = pattern.search(title)
+        if m:
+            return "%s-%02d" % (m.group(1), month)
+    return _cn_ym_to_iso(title)
+
+
+def _parse_split_amount(flat: str, name: str) -> Optional[float]:
+    """解析「住户存款增加 6.99 万亿元」/「住户贷款减少 8271 亿元」→ 万亿元（减少为负）。
+
+    取第一条匹配（报告中同一分部门只出现一次）。
+    """
+    pattern = re.compile(
+        r"%s\s*(增加|减少|下降|上升)\s*%s" % (re.escape(name), _AMOUNT_PATTERN)
+    )
+    m = pattern.search(flat)
+    if not m:
+        return None
+    value = float(m.group(2))
+    if m.group(3) == "亿元":
+        value = value / 10000.0
+    sign = -1.0 if m.group(1) in ("减少", "下降") else 1.0
+    return round(sign * value, 4)
+
+
+def fetch_deposit_loan_split() -> Dict[str, Any]:
+    """抓取分部门存贷款累计增量（住户存款 / 住户贷款 / 非银存款 / 企业存款）。
+
+    价值口径：**年初至今累计**（万亿元），与央行《金融统计数据报告》正文一致。
+    返回 value = 住户贷款累计增量（判读「居民加杠杆还是缩表」的主口径），
+    其余分项放在 detail 里供页面展开。
+    """
+    html = _get(COL_FIN_STAT).text
+    candidates = _recent_links(html, "金融统计数据报告", limit=8)
+    if not candidates:
+        raise RuntimeError("《金融统计数据报告》栏目未解析到任何条目")
+
+    last_error: Optional[Exception] = None
+    for title, href in candidates:
+        try:
+            text = _page_text(href)
+        except Exception as exc:
+            last_error = exc
+            continue
+        flat = re.sub(r"\s+", "", text)
+        if "住户存款" not in flat:
+            continue
+
+        parsed: Dict[str, Optional[float]] = {}
+        for needle, label in _DEPOSIT_SPLIT_FIELDS.items():
+            parsed[label] = _parse_split_amount(flat, needle)
+
+        household_loan = parsed.get("住户贷款")
+        household_dep = parsed.get("住户存款")
+        if household_loan is None and household_dep is None:
+            continue
+
+        as_of = _report_period(title) or _cn_ym_to_iso(flat) or ""
+        window = re.search(r"(前[一二三四五六七八九十]+个月|上半年|前三季度|前?一季度)人民币存款增加", flat)
+        return {
+            "value": household_loan if household_loan is not None else 0.0,
+            "as_of": as_of,
+            "detail": {
+                "报告": title,
+                "住户存款": household_dep,
+                "住户贷款": household_loan,
+                "非银存款": parsed.get("非银存款"),
+                "企业存款": parsed.get("企业存款"),
+                "口径": "年初至今累计（%s）" % (window.group(1) if window else "累计"),
+                "来源": "中国人民银行《金融统计数据报告》分部门存贷款",
+            },
+        }
+    raise RuntimeError("未能解析分部门存贷款（%s）" % (last_error or "报告正文无匹配字段"))
 
 
 # ---------------------------------------------------------------- 超储率（PDF）

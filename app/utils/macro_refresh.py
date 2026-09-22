@@ -51,6 +51,15 @@ def current_hints(db: Session) -> Dict[str, dict]:
     return {key: mi.load_detail(row.detail) for key, row in rows.items()}
 
 
+def stock_snapshot(db: Session) -> Dict[str, Any]:
+    """「股票指标」页的存量快照，供 ④A股温度 复用（不重复抓外部接口）。"""
+    try:
+        return crud.get_stock_temp_indicators(db)
+    except Exception as exc:  # 表未建 / 模块未启用时不能让宏观页整体失败
+        logger.warning("读取股票指标快照失败（A股温度将按数据缺失展示）: %s", exc)
+        return {}
+
+
 def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str], int]:
     """抓取全部自动指标并落库。
 
@@ -65,7 +74,9 @@ def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str],
         db = SessionLocal()
     try:
         fetched = mi.fetch_auto_values(
-            anchor_fallback=anchor_value(db), hints=current_hints(db)
+            anchor_fallback=anchor_value(db),
+            hints=current_hints(db),
+            stock_rows=stock_snapshot(db),
         )
 
         records = []

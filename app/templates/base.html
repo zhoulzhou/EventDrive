@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}新闻抓取应用{% endblock %}</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    {% block head %}{% endblock %}
 </head>
 <body>
     <nav class="navbar">
@@ -17,6 +18,7 @@
                 <a href="/market" class="nav-link">市场行情</a>
                 <a href="/index-alarm" class="nav-link">指数预警</a>
                 <a href="/macro" class="nav-link">宏观指标</a>
+                <a href="/macro-trend" class="nav-link">宏观趋势</a>
                 <a href="/stock-temp" class="nav-link">股票指标</a>
                 <a href="/finance" class="nav-link">财务指标</a>
                 <a href="/valuation" class="nav-link">公司估值</a>

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}宏观趋势 - 新闻抓取应用{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/css/macro.css">
+{% endblock %}
+
+{% block content %}
+<div class="page-header macro-header">
+    <div class="macro-header-text">
+        <h1>宏观趋势</h1>
+        <p class="form-hint">
+            只看<strong>历史曲线与走势</strong>：日度 / 月度 / 季度分开画，每个面板 = 主图 + 辅图 + 判读，最后用四象限定位全局。
+            阈值线与色带已内置，落在哪条泳道直接读；当前值、极值都标在图上。
+            各指标的<strong>当前读数、阈值分档与组合解读</strong>见 <a href="/macro">宏观指标</a>。
+        </p>
+    </div>
+    <div class="macro-toolbar">
+        <span id="trendUpdated" class="macro-updated">加载中…</span>
+        <button id="macroBackfill" class="btn btn-secondary">补齐历史数据</button>
+        <button id="macroTrendReload" class="btn btn-primary">刷新图表</button>
+    </div>
+</div>
+
+<div id="trendNotice"></div>
+<div id="macroTrendRoot">
+    <div class="loading">正在加载历史序列…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/macro_charts.js"></script>
+{% endblock %}
