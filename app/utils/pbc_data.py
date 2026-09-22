@@ -254,6 +254,20 @@ def _report_period(title: str) -> Optional[str]:
     return _cn_ym_to_iso(title)
 
 
+# 报告正文里的窗口描述：「前八个月 / 上半年 / 前三季度 / 一季度 / 8月份」
+_REPORT_WINDOW = r"(前[一二三四五六七八九十]+个月|上半年|前三季度|前?一季度|\d{1,2}月份)"
+_WINDOW_RE = re.compile(_REPORT_WINDOW)
+
+# 「前八个月人民币存款增加 18.99 万亿元」——温度计里「企业/非银存款占新增存款比」的分母
+_TOTAL_DEPOSIT_RE = re.compile(_REPORT_WINDOW + r"人民币存款增加" + _AMOUNT_PATTERN)
+_TOTAL_DEPOSIT_LOOSE_RE = re.compile(r"人民币存款增加" + _AMOUNT_PATTERN)
+
+
+def _wan_yi(value: float, unit: str) -> float:
+    """把「亿元」折算成「万亿元」；本来就是「万亿元」则原样返回。"""
+    return round(value / 10000.0, 4) if unit == "亿元" else round(value, 4)
+
+
 def _parse_split_amount(flat: str, name: str) -> Optional[float]:
     """解析「住户存款增加 6.99 万亿元」/「住户贷款减少 8271 亿元」→ 万亿元（减少为负）。
 
@@ -272,54 +286,104 @@ def _parse_split_amount(flat: str, name: str) -> Optional[float]:
     return round(sign * value, 4)
 
 
-def fetch_deposit_loan_split() -> Dict[str, Any]:
+def _parse_split_report(title: str, flat: str) -> Optional[Dict[str, Any]]:
+    """解析**单期**《金融统计数据报告》的分部门存贷款与新增存款总额（均为累计口径）。
+
+    解析不出分部门数据时返回 None，由调用方继续往前翻一期。
+    """
+    if "住户存款" not in flat:
+        return None
+
+    parsed = {
+        label: _parse_split_amount(flat, needle)
+        for needle, label in _DEPOSIT_SPLIT_FIELDS.items()
+    }
+    if parsed.get("住户贷款") is None and parsed.get("住户存款") is None:
+        return None
+
+    window = None
+    total = None
+    m = _TOTAL_DEPOSIT_RE.search(flat)
+    if m:
+        window = m.group(1)
+        total = _wan_yi(float(m.group(2)), m.group(3))
+    if total is None:  # 标题/正文里没有窗口词（个别月份报告）时的兜底
+        m2 = _TOTAL_DEPOSIT_LOOSE_RE.search(flat)
+        if m2:
+            total = _wan_yi(float(m2.group(1)), m2.group(2))
+    if window is None:
+        w = _WINDOW_RE.search(flat)
+        window = w.group(1) if w else "累计"
+
+    return {
+        "报告": title,
+        "as_of": _report_period(title) or _cn_ym_to_iso(flat) or "",
+        "期间": window,
+        "人民币存款增加": total,
+        "住户存款": parsed.get("住户存款"),
+        "住户贷款": parsed.get("住户贷款"),
+        "非银存款": parsed.get("非银存款"),
+        "企业存款": parsed.get("企业存款"),
+    }
+
+
+def fetch_deposit_loan_split(periods: int = 2) -> Dict[str, Any]:
     """抓取分部门存贷款累计增量（住户存款 / 住户贷款 / 非银存款 / 企业存款）。
 
     价值口径：**年初至今累计**（万亿元），与央行《金融统计数据报告》正文一致。
     返回 value = 住户贷款累计增量（判读「居民加杠杆还是缩表」的主口径），
     其余分项放在 detail 里供页面展开。
+
+    默认再往前翻一期报告（periods=2），把上一期累计值一并放进
+    detail["分部门明细"]["上期"] —— 宏观温度计要用「相邻两期累计相减」得到
+    住户贷款**当月**增量，并用到该期的人民币存款新增额算存款占比。
     """
     html = _get(COL_FIN_STAT).text
     candidates = _recent_links(html, "金融统计数据报告", limit=8)
     if not candidates:
         raise RuntimeError("《金融统计数据报告》栏目未解析到任何条目")
 
+    parsed_periods: List[Dict[str, Any]] = []
     last_error: Optional[Exception] = None
     for title, href in candidates:
+        if len(parsed_periods) >= max(1, periods):
+            break
         try:
-            text = _page_text(href)
+            flat = re.sub(r"\s+", "", _page_text(href))
         except Exception as exc:
             last_error = exc
             continue
-        flat = re.sub(r"\s+", "", text)
-        if "住户存款" not in flat:
-            continue
+        record = _parse_split_report(title, flat)
+        if record:
+            parsed_periods.append(record)
 
-        parsed: Dict[str, Optional[float]] = {}
-        for needle, label in _DEPOSIT_SPLIT_FIELDS.items():
-            parsed[label] = _parse_split_amount(flat, needle)
+    if not parsed_periods:
+        raise RuntimeError("未能解析分部门存贷款（%s）" % (last_error or "报告正文无匹配字段"))
 
-        household_loan = parsed.get("住户贷款")
-        household_dep = parsed.get("住户存款")
-        if household_loan is None and household_dep is None:
-            continue
+    current = parsed_periods[0]
+    previous = parsed_periods[1] if len(parsed_periods) > 1 else None
+    household_loan = current.get("住户贷款")
 
-        as_of = _report_period(title) or _cn_ym_to_iso(flat) or ""
-        window = re.search(r"(前[一二三四五六七八九十]+个月|上半年|前三季度|前?一季度)人民币存款增加", flat)
-        return {
-            "value": household_loan if household_loan is not None else 0.0,
-            "as_of": as_of,
-            "detail": {
-                "报告": title,
-                "住户存款": household_dep,
-                "住户贷款": household_loan,
-                "非银存款": parsed.get("非银存款"),
-                "企业存款": parsed.get("企业存款"),
-                "口径": "年初至今累计（%s）" % (window.group(1) if window else "累计"),
-                "来源": "中国人民银行《金融统计数据报告》分部门存贷款",
-            },
-        }
-    raise RuntimeError("未能解析分部门存贷款（%s）" % (last_error or "报告正文无匹配字段"))
+    # 供宏观温度计使用的完整两期明细（含上一期累计值与原币存款新增额）
+    split_detail: Dict[str, Any] = dict(current)
+    if previous:
+        split_detail["上期"] = previous
+
+    return {
+        "value": household_loan if household_loan is not None else 0.0,
+        "as_of": current.get("as_of") or "",
+        "detail": {
+            "报告": current["报告"],
+            "住户存款": current.get("住户存款"),
+            "住户贷款": household_loan,
+            "非银存款": current.get("非银存款"),
+            "企业存款": current.get("企业存款"),
+            "人民币存款增加": current.get("人民币存款增加"),
+            "口径": "年初至今累计（%s）" % (current.get("期间") or "累计"),
+            "来源": "中国人民银行《金融统计数据报告》分部门存贷款",
+            "分部门明细": split_detail,
+        },
+    }
 
 
 # ---------------------------------------------------------------- 超储率（PDF）

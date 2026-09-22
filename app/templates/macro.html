@@ -13,6 +13,8 @@
         <p class="form-hint">
             <strong>四个维度 · 12 项读数</strong>：① 资金面（钱贵不贵）② 经济热度（经济跑不跑）
             ③ 部门结构（钱在谁手里）④ A股温度（市场热不热）。
+            四个维度再由 <strong>宏观温度计</strong>加权合成一个 0-100 的总分
+            （资金面 × 25% + 实体热度 × 45% + 信用/部门 × 30%），并给出「温差」看政策到实体的传导。
             资金面看「价」（DR007 偏离、分层利差）与「水位」（超储率）；热度看「量」（社融）与「温度」（PMI、PPI）；
             部门结构看 M1−M2 与分部门存贷款；A股温度看估值分位、ERP 与成交额/两融。
             数据取自 akshare、<strong>央行官网</strong>（《货币政策执行报告》/《金融统计数据报告》/《公开市场业务交易公告》）
@@ -271,6 +273,210 @@ function notesHtml() {
     </section>`;
 }
 
+// ==================== 宏观温度计 ====================
+// 五段冷热色兜底值（正常以后端 thermometer.zone_colors 为准，与 style.css 的 --zone-* 同源）
+const LOCAL_ZONE_COLORS = {
+    ice: "#5B8FC7", cold: "#8BC8EA", neutral: "#E4D48F", warm: "#F4B393", hot: "#EA6668"
+};
+let ZONE_COLORS = Object.assign({}, LOCAL_ZONE_COLORS);
+
+function zoneColor(z) { return ZONE_COLORS[z] || "#9ca3af"; }
+
+function num1(v) {
+    return (v === null || v === undefined || isNaN(v)) ? "—" : Number(v).toFixed(1);
+}
+
+// 判读区间的文字表示：第 1 段 "<40"，最后一段 ">90"，中间 "40 – 60"
+function bandRange(bands, i) {
+    const prev = i === 0 ? 0 : Math.min(bands[i - 1].under, 100);
+    const hi = Math.min(bands[i].under, 100);
+    if (i === 0) return "< " + hi;
+    if (hi >= 100) return "> " + prev;
+    return prev + " – " + hi;
+}
+
+function thermoScoreHtml(t) {
+    const color = zoneColor(t.zone);
+    return `<div class="macro-thermo-score">
+        <div class="macro-thermo-score-line">
+            <span class="macro-thermo-num" style="color:${color}">${num1(t.score)}</span>
+            <span class="macro-thermo-max">/ 100</span>
+        </div>
+        <div class="macro-thermo-reading" style="color:${color};background:${tint(color, 0.14)}">${escapeHtml(t.reading || "数据不足")}</div>
+        <div class="macro-thermo-reading-hint">${escapeHtml(t.reading_hint || "")}</div>
+    </div>`;
+}
+
+function thermoScaleHtml(t) {
+    const bands = t.reading_bands || [];
+    let prev = 0;
+    const segs = bands.map(function (b) {
+        const hi = Math.min(b.under, 100);
+        const seg = `<div class="macro-thermo-seg" style="left:${prev}%;width:${Math.max(hi - prev, 0)}%;background:${zoneColor(b.tone)}"></div>`;
+        prev = hi;
+        return seg;
+    }).join("");
+
+    const has = t.score !== null && t.score !== undefined;
+    const marker = has
+        ? `<div class="macro-thermo-marker" style="left:${Math.max(0, Math.min(100, t.score))}%"></div>`
+        : "";
+
+    prev = 0;
+    const legend = bands.map(function (b) {
+        const hi = Math.min(b.under, 100);
+        const active = t.reading === b.label;
+        const color = zoneColor(b.tone);
+        const range = bandRange(bands, bands.indexOf(b));
+        prev = hi;
+        return `<span class="macro-thermo-legend-item${active ? " active" : ""}"${active ? ` style="color:${color};border-color:${color};background:${tint(color, 0.12)}"` : ""}>
+            <span class="macro-band-dot" style="background:${color}"></span>${escapeHtml(range)} ${escapeHtml(b.label)}</span>`;
+    }).join("");
+
+    return `<div class="macro-thermo-scale-wrap">
+        <div class="macro-thermo-scale">${segs}${marker}</div>
+        <div class="macro-thermo-legend">${legend}</div>
+    </div>`;
+}
+
+function thermoSubsHtml(t) {
+    const subs = (t.subs || []).map(function (s) {
+        const color = zoneColor(s.zone);
+        const has = s.score !== null && s.score !== undefined;
+        const width = has ? Math.max(0, Math.min(100, s.score)) : 0;
+        return `<div class="macro-thermo-sub">
+            <div class="macro-thermo-sub-head">
+                <span class="macro-thermo-sub-name">${escapeHtml(s.name)}</span>
+                <span class="macro-thermo-sub-weight">权重 ${s.weight_pct}%</span>
+                <span class="macro-thermo-sub-score" style="color:${color}">${num1(s.score)}</span>
+            </div>
+            <div class="macro-thermo-sub-bar"><div class="macro-thermo-sub-fill" style="width:${width}%;background:${color}"></div></div>
+            <div class="macro-thermo-sub-dir">${escapeHtml(s.direction || "")}</div>
+        </div>`;
+    }).join("");
+    return `<div class="macro-thermo-subs">${subs}</div>`;
+}
+
+function thermoSpreadHtml(t) {
+    if (t.spread === null || t.spread === undefined) return "";
+    const color = zoneColor(t.spread_tone);
+    const byKey = {};
+    (t.weights || []).forEach(function (w) { byKey[w.key] = w; });
+    const live = "当前 资金面 " + num1((byKey.liquidity || {}).score)
+        + " vs 信用/部门 " + num1((byKey.structure || {}).score)
+        + "，温差 " + num1(t.spread) + " 分。";
+    // spread_note / reading_note / caveat_note 是后端内置的说明文案（含 <b> 标签），按 HTML 渲染
+    return `<div class="macro-thermo-spread" style="border-color:${tint(color, 0.4)};background:${tint(color, 0.07)}">
+        <div class="macro-thermo-spread-head">
+            <span class="macro-thermo-spread-label">温差 · 资金面 − 信用/部门</span>
+            <span class="macro-thermo-spread-value" style="color:${color}">${num1(t.spread)} 分</span>
+            <span class="macro-thermo-spread-tag" style="color:${color}">${escapeHtml(t.spread_label || "")}</span>
+        </div>
+        <p class="macro-thermo-spread-live">${escapeHtml(live)} ${escapeHtml(t.spread_hint || "")}</p>
+        <p class="macro-note-body">${t.spread_note || ""}</p>
+    </div>`;
+}
+
+function thermoBreakdownHtml(t) {
+    return `<div class="macro-thermo-breakdown">${(t.subs || []).map(function (s) {
+        const rows = (s.components || []).map(function (c) {
+            const has = c.score !== null && c.score !== undefined;
+            const digits = c.digits === undefined ? 1 : c.digits;
+            const rawTxt = (c.raw === null || c.raw === undefined || isNaN(c.raw))
+                ? "—" : Number(c.raw).toFixed(digits) + (c.unit ? " " + c.unit : "");
+            const color = zoneColor(c.zone);
+            return `<tr${has ? "" : ` class="macro-tb-missing"`}>
+                <td>${escapeHtml(c.name)}</td>
+                <td class="macro-tb-freq">${c.weight_pct}%</td>
+                <td><b>${escapeHtml(rawTxt)}</b></td>
+                <td class="macro-thermo-tb-score"${has ? ` style="color:${color}"` : ""}>${num1(c.score)}</td>
+                <td class="macro-tb-anchor">${escapeHtml(c.anchor_text)}</td>
+            </tr>`;
+        }).join("");
+        const scoreColor = zoneColor(s.zone);
+        const miss = (s.missing || []).length
+            ? `<p class="macro-thermo-tb-miss">缺数据：${escapeHtml(s.missing.join("、"))}（该项已按可用权重归一化，不影响其余分项）</p>`
+            : "";
+        return `<div class="macro-note macro-note-wide">
+            <h3>${escapeHtml(s.name)}
+                <span class="macro-thermo-sub-weight">总权重 ${s.weight_pct}%</span>
+                <span class="macro-thermo-bd-score" style="color:${scoreColor}">${num1(s.score)} 分</span>
+            </h3>
+            <p class="macro-note-tail">${escapeHtml(s.source_note || "")}</p>
+            <table class="macro-table">
+                <thead><tr><th>分项</th><th>权重</th><th>当前读数</th><th>单项分</th><th>打分锚点（两点间线性插值）</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+            ${miss}
+        </div>`;
+    }).join("")}</div>`;
+}
+
+function thermoNotesHtml(t) {
+    const steps = (t.usage_steps || []).map(function (s) { return `<li>${escapeHtml(s)}</li>`; }).join("");
+    const bands = t.reading_bands || [];
+    const bandRows = bands.map(function (b, i) {
+        const active = t.reading === b.label;
+        const color = zoneColor(b.tone);
+        return `<div class="macro-thermo-bandrow${active ? " active" : ""}"${active ? ` style="background:${tint(color, 0.12)};border-color:${tint(color, 0.45)}"` : ""}>
+            <span class="macro-band-dot" style="background:${color}"></span>
+            <span class="macro-thermo-bandrange">${escapeHtml(bandRange(bands, i))}</span>
+            <span class="macro-thermo-bandlabel"${active ? ` style="color:${color}"` : ""}>${escapeHtml(b.label)}${active ? " ← 当前" : ""}</span>
+            <span class="macro-band-note">${escapeHtml(b.hint)}</span>
+        </div>`;
+    }).join("");
+
+    const derived = t.derived_detail || {};
+    const derivedRows = Object.keys(derived).map(function (k) {
+        const v = derived[k];
+        const text = (v && typeof v === "object")
+            ? Object.keys(v).map(function (kk) { return kk + " " + v[kk]; }).join(" · ")
+            : String(v);
+        return `<tr><td class="macro-tb-dim">${escapeHtml(k)}</td><td>${escapeHtml(text)}</td></tr>`;
+    }).join("");
+
+    return `<div class="macro-thermo-notes">
+        <h3 class="macro-thermo-notes-title">怎么用这套温度计</h3>
+        <ol class="macro-rules">${steps}</ol>
+        <div class="macro-notes-grid">
+            <div class="macro-note">
+                <h3>判读阈值（比单看数字更重要）</h3>
+                ${bandRows}
+                <p class="macro-note-body">${t.reading_note || ""}</p>
+            </div>
+            <div class="macro-note">
+                <h3>取数与口径</h3>
+                <table class="macro-table"><tbody>${derivedRows}</tbody></table>
+                <p class="macro-note-body">${t.caveat_note || ""}</p>
+            </div>
+        </div>
+    </div>`;
+}
+
+function thermoHtml(data) {
+    const t = data.thermometer;
+    if (!t) return "";
+    ZONE_COLORS = Object.assign({}, LOCAL_ZONE_COLORS, t.zone_colors || {});
+    return `<section class="macro-thermo">
+        <div class="macro-thermo-head">
+            <h2 class="macro-thermo-title">宏观温度计</h2>
+            <p class="macro-thermo-lead">
+                三个子温度计（① 资金面 ② 实体热度 ③ 信用/部门）按权重合成一个 0-100 的总分，
+                分数越高越热。全部读数取自本页四个维度的同一份数据，不额外抓取。
+            </p>
+            <p class="macro-thermo-formula"><span>模型公式</span>${escapeHtml(t.formula || "")}</p>
+        </div>
+        <div class="macro-thermo-top">
+            ${thermoScoreHtml(t)}
+            ${thermoScaleHtml(t)}
+        </div>
+        ${thermoSubsHtml(t)}
+        ${thermoSpreadHtml(t)}
+        ${thermoBreakdownHtml(t)}
+        ${thermoNotesHtml(t)}
+    </section>`;
+}
+
 function render(data) {
     currentData = data;
     TONES = Object.assign({}, LOCAL_TONES, data.tones || {});
@@ -282,6 +488,7 @@ function render(data) {
     document.getElementById("macroUpdated").textContent = "更新于 " + (data.updated_at || "—") + (data.refreshed ? `（本次刷新 ${data.refreshed} 项）` : "");
 
     const html = comboHtml(data)
+        + thermoHtml(data)
         + (data.groups || []).map(groupHtml).join("")
         + anchorHtml(data)
         + notesHtml();

@@ -346,3 +346,176 @@
     .macro-table { font-size: 0.74rem; }
     .macro-table th, .macro-table td { padding: 0.3rem 0.3rem; }
 }
+
+/* ==================== 宏观温度计 ==================== */
+/* 五段冷热色沿用 style.css :root 的 --zone-*（后端 thermometer.zone_colors 同一份，改色三处同步） */
+.macro-thermo {
+    background: white;
+    border-radius: 12px;
+    padding: 1.4rem 1.6rem 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    margin-bottom: 1.75rem;
+}
+.macro-thermo-head { margin-bottom: 1.15rem; }
+.macro-thermo-title {
+    font-size: 1.15rem;
+    color: #333;
+    margin-bottom: 0.5rem;
+    padding-left: 0.6rem;
+    border-left: 4px solid #667eea;
+    line-height: 1.2;
+}
+.macro-thermo-lead { font-size: 0.85rem; color: #555; line-height: 1.8; margin-bottom: 0.5rem; }
+.macro-thermo-formula {
+    font-size: 0.82rem;
+    color: #374151;
+    background: #f4f6fb;
+    border-radius: 8px;
+    padding: 0.55rem 0.8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height: 1.7;
+}
+.macro-thermo-formula span {
+    font-family: inherit;
+    font-size: 0.7rem;
+    color: #667eea;
+    background: rgba(102,126,234,0.1);
+    border-radius: 4px;
+    padding: 0.05rem 0.4rem;
+    margin-right: 0.5rem;
+}
+
+/* 总分 + 刻度条 */
+.macro-thermo-top {
+    display: grid;
+    grid-template-columns: minmax(180px, 220px) 1fr;
+    gap: 1.4rem;
+    align-items: center;
+    margin-bottom: 1.3rem;
+}
+.macro-thermo-score-line { display: flex; align-items: baseline; gap: 0.3rem; }
+.macro-thermo-num { font-size: 3.2rem; font-weight: 700; line-height: 1; }
+.macro-thermo-max { font-size: 0.95rem; color: #9aa3af; }
+.macro-thermo-reading {
+    display: inline-block;
+    margin-top: 0.55rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border-radius: 20px;
+    padding: 0.2rem 0.75rem;
+}
+.macro-thermo-reading-hint { font-size: 0.78rem; color: #7b8496; margin-top: 0.4rem; line-height: 1.6; }
+
+.macro-thermo-scale-wrap { min-width: 0; }
+.macro-thermo-scale { position: relative; height: 26px; }
+.macro-thermo-seg { position: absolute; top: 0; bottom: 0; }
+.macro-thermo-seg:first-child { border-radius: 8px 0 0 8px; }
+.macro-thermo-seg:last-child { border-radius: 0 8px 8px 0; }
+.macro-thermo-marker {
+    position: absolute;
+    top: -6px;
+    width: 3px;
+    height: 38px;
+    margin-left: -1.5px;
+    background: #111827;
+    border-radius: 2px;
+    box-shadow: 0 0 0 2px #fff, 0 1px 5px rgba(0,0,0,0.3);
+}
+.macro-thermo-legend { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.7rem; }
+.macro-thermo-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.73rem;
+    color: #6b7280;
+    border: 1px solid transparent;
+    border-radius: 20px;
+    padding: 0.16rem 0.6rem;
+}
+.macro-thermo-legend-item.active { font-weight: 600; }
+
+/* 三根子温度计 */
+.macro-thermo-subs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.9rem;
+    margin-bottom: 1.15rem;
+}
+.macro-thermo-sub { border: 1px solid #eef1f6; border-radius: 10px; padding: 0.75rem 0.9rem; background: #fbfcfe; }
+.macro-thermo-sub-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.macro-thermo-sub-name { font-size: 0.88rem; font-weight: 600; color: #333; }
+.macro-thermo-sub-weight {
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: #6b7280;
+    background: #f1f3f8;
+    border-radius: 10px;
+    padding: 0.1rem 0.5rem;
+}
+.macro-thermo-sub-score { margin-left: auto; font-size: 1.3rem; font-weight: 700; }
+.macro-thermo-sub-bar {
+    height: 9px;
+    border-radius: 5px;
+    background: #eef1f6;
+    margin: 0.55rem 0 0.4rem;
+    overflow: hidden;
+}
+.macro-thermo-sub-fill { height: 100%; border-radius: 5px; transition: width 0.3s; }
+.macro-thermo-sub-dir { font-size: 0.74rem; color: #9aa3af; line-height: 1.6; }
+
+/* 温差 */
+.macro-thermo-spread {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1.15rem;
+}
+.macro-thermo-spread-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.macro-thermo-spread-label { font-size: 0.78rem; color: #6b7280; letter-spacing: 0.03em; }
+.macro-thermo-spread-value { font-size: 1.5rem; font-weight: 700; }
+.macro-thermo-spread-tag { font-size: 0.8rem; font-weight: 600; }
+.macro-thermo-spread-live { font-size: 0.8rem; color: #555; line-height: 1.7; margin-top: 0.4rem; }
+.macro-note-body { font-size: 0.79rem; color: #555; line-height: 1.8; margin-top: 0.55rem; }
+.macro-note-body b { color: #333; }
+
+/* 分项明细表 */
+.macro-thermo-breakdown { display: grid; grid-template-columns: 1fr; gap: 1rem; margin-bottom: 1.15rem; }
+.macro-thermo-bd-score { font-size: 0.95rem; font-weight: 700; margin-left: 0.4rem; }
+.macro-thermo-tb-score { font-weight: 700; white-space: nowrap; }
+.macro-tb-anchor { color: #6b7280; font-size: 0.74rem; white-space: normal; min-width: 190px; }
+.macro-tb-missing td { color: #b0b7c3; }
+.macro-thermo-tb-miss { font-size: 0.74rem; color: #b45309; line-height: 1.7; margin-top: 0.4rem; }
+
+/* 说明 */
+.macro-thermo-notes { border-top: 1px dashed #e8ebf0; padding-top: 1.05rem; }
+.macro-thermo-notes-title {
+    font-size: 0.98rem;
+    color: #333;
+    margin-bottom: 0.7rem;
+    padding-left: 0.6rem;
+    border-left: 4px solid #667eea;
+    line-height: 1.2;
+}
+.macro-thermo-notes .macro-rules { margin-bottom: 0.95rem; }
+.macro-thermo-bandrow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.79rem;
+    color: #666;
+    padding: 0.24rem 0.5rem;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    line-height: 1.5;
+}
+.macro-thermo-bandrow.active { font-weight: 600; }
+.macro-thermo-bandrange { color: #888; flex: 0 0 auto; min-width: 72px; }
+.macro-thermo-bandrow.active .macro-thermo-bandrange { color: inherit; }
+.macro-thermo-bandlabel { flex: 0 0 auto; min-width: 86px; }
+
+@media (max-width: 760px) {
+    .macro-thermo-top { grid-template-columns: 1fr; gap: 1rem; }
+    .macro-thermo-num { font-size: 2.6rem; }
+    .macro-thermo-bandrange { min-width: 60px; }
+    .macro-thermo-bandlabel { min-width: 0; }
+}

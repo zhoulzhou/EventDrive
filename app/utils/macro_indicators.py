@@ -32,6 +32,8 @@ from datetime import date, timedelta
 from statistics import mean
 from typing import Any, Dict, List, Optional
 
+from app.utils import macro_thermometer
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- 分组与色调
@@ -919,6 +921,8 @@ def fetch_auto_values(
                 "住户贷款": split.get("住户贷款"),
                 "口径": split.get("口径"),
                 "报告": split.get("报告"),
+                # 完整两期明细：宏观温度计要用「当期 − 上期」算住户贷款当月增量
+                "分部门明细": split.get("分部门明细"),
             })
             # 非银存款：同一份报告里的另一项，单独成卡
             result["nonbank_deposit"] = _item(split.get("非银存款"), as_of, "pbc", {
@@ -1226,7 +1230,7 @@ def build_items(raw: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
 
 
 def build_response(raw: Dict[str, Dict[str, Any]], params: Dict[str, Any]) -> Dict[str, Any]:
-    """组装接口响应：四个维度的分组指标 + 参数 + 组合解读。"""
+    """组装接口响应：四个维度的分组指标 + 参数 + 组合解读 + 宏观温度计。"""
     items = build_items(raw)
 
     groups = []
@@ -1244,6 +1248,7 @@ def build_response(raw: Dict[str, Dict[str, Any]], params: Dict[str, Any]) -> Di
         "groups": groups,
         "params": params,
         "combination": compute_combination(items),
+        "thermometer": macro_thermometer.compute_thermometer(items),
         "tones": TONES,
     }
 
