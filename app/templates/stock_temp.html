@@ -47,7 +47,30 @@ const LOCAL_TONES = {
 let TONES = Object.assign({}, LOCAL_TONES);
 
 // 温度计色带沿用方法论原文的五段配色（冰点 → 亢奋）
+// 索引即档位，与后端 TEMP_ZONES 五段一一对应，也是全站引用这套色的唯一来源：
+//   0  0-20   冰点 · 布局区  #5B8FC7
+//   1  20-40  偏冷           #8BC8EA
+//   2  40-60  中性           #E4D48F
+//   3  60-80  偏热           #F4B393
+//   4  80-100 亢奋 · 风险区  #EA6668
+// 纯 CSS 场景可用 style.css 里的 :root 变量 --zone-ice/cold/neutral/warm/hot（改色请两边同步）。
 const ZONE_COLORS = ["#5B8FC7", "#8BC8EA", "#E4D48F", "#F4B393", "#EA6668"];
+
+// 温度值 → 档位下标（优先按后端 zones 的 lo/hi 切档，取不到时按 20 一段回落）
+function zoneIndexOf(value, zones) {
+    const v = Number(value);
+    const list = (zones && zones.length) ? zones : null;
+    if (list) {
+        for (let i = 0; i < list.length; i++) {
+            if (v >= list[i].lo && v < list[i].hi) return Math.min(i, ZONE_COLORS.length - 1);
+        }
+        return v >= list[list.length - 1].lo ? ZONE_COLORS.length - 1 : 0;
+    }
+    return Math.max(0, Math.min(ZONE_COLORS.length - 1, Math.floor(v / 20)));
+}
+
+// 取某个温度值对应的区间色（其他位置要按温度上色时直接调它）
+function zoneColorOf(value, zones) { return ZONE_COLORS[zoneIndexOf(value, zones)]; }
 
 function tone(key) { return TONES[key] || "#6b7280"; }
 
@@ -175,14 +198,6 @@ function heatLevel(score) {
     return "mid";
 }
 
-// 浅底上直接写高饱和色（lime/cyan/amber）对比度不够，换成同色系深色版
-const DEEP_TONE = {
-    blue: "#2563eb", cyan: "#0e7490", green: "#15803d", lime: "#4d7c0f", amber: "#b45309",
-    orange: "#c2410c", red: "#b91c1c", violet: "#6d28d9", slate: "#475569"
-};
-
-function deepTone(key) { return DEEP_TONE[key] || tone(key); }
-
 function summaryHtml(t) {
     const byKey = {};
     (t.layers || []).forEach(function (l) { byKey[l.key] = l; });
@@ -194,16 +209,17 @@ function summaryHtml(t) {
             + "<p class=\"st-summary-main\">三层里还有数据没到位，等补齐后再给结论。</p></div>";
     }
 
-    const color = deepTone(t.tone);
+    // 背景直接用温度值所在区间的色带颜色，跟刻度条一一对上
+    const zoneIdx = zoneIndexOf(t.value, t.zones);
+    const zoneColor = ZONE_COLORS[zoneIdx];
     const zone = pickWord(TOTAL_WORDS, t.value);
     const wv = pickWord(SUMMARY_WORDS.valuation, lv.score);
     const ws = pickWord(SUMMARY_WORDS.sentiment, ls.score);
     const wc = pickWord(SUMMARY_WORDS.capital, lc.score);
     const vL = heatLevel(lv.score), sL = heatLevel(ls.score), cL = heatLevel(lc.score);
 
-    const main = "现在 A 股整体<b>" + zone + "</b>（温度 <b style=\"color:" + color + "\">"
-        + Number(t.value).toFixed(1) + "</b>）：估值<b>" + wv + "</b>、情绪<b>" + ws
-        + "</b>、资金<b>" + wc + "</b>。";
+    const main = "现在 A 股整体<b>" + zone + "</b>（温度 <b>" + Number(t.value).toFixed(1)
+        + "</b>）：估值<b>" + wv + "</b>、情绪<b>" + ws + "</b>、资金<b>" + wc + "</b>。";
 
     let read;
     if (vL === "cold" && cL === "hot") {
@@ -227,7 +243,7 @@ function summaryHtml(t) {
     const spreadTip = (t.spread !== null && t.spread !== undefined && Number(t.spread) >= 25)
         ? "三层温差 " + Number(t.spread).toFixed(1) + " 度、分歧不小——" : "";
 
-    return "<div class=\"st-summary\">"
+    return "<div class=\"st-summary\" data-zone=\"" + zoneIdx + "\" style=\"background:" + zoneColor + "\">"
         + "<div class=\"st-summary-title\">一句话总结</div>"
         + "<p class=\"st-summary-main\">" + main + "</p>"
         + "<p class=\"st-summary-read\">怎么理解：" + (spreadTip ? "<em>" + spreadTip + "</em>" : "")

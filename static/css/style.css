@@ -1,3 +1,14 @@
+/* 市场冷热五段配色（股票温度计口径，全局可复用）
+   0-20 冰点·布局区 / 20-40 偏冷 / 40-60 中性 / 60-80 偏热 / 80-100 亢奋·风险区
+   与 static/js 里的 STOCK_ZONE_COLORS 一一对应，改色时两边同步 */
+:root {
+    --zone-ice: #5B8FC7;
+    --zone-cold: #8BC8EA;
+    --zone-neutral: #E4D48F;
+    --zone-warm: #F4B393;
+    --zone-hot: #EA6668;
+}
+
 * {
     margin: 0;
     padding: 0;
