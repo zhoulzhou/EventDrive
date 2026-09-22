@@ -2,6 +2,10 @@
 
 {% block title %}股票指标 - A股冷热三层温度计{% endblock %}
 
+{% block head %}
+<link rel="stylesheet" href="/static/css/stock.css">
+{% endblock %}
+
 {% block content %}
 <div class="page-header st-header">
     <div class="st-header-text">
@@ -10,6 +14,7 @@
             A 股冷热要分三层看 —— <strong>估值层</strong>（贵不贵）、<strong>情绪层</strong>（亢奋不亢奋）、
             <strong>资金层</strong>（钱进不进），最后合成一个 <strong>0-100 市场温度计</strong>。
             慢变量定方向 · 快变量定情绪 · 资金变量定底气；<strong>全部用历史分位说话</strong>。
+            本页只放<strong>当前读数</strong>；历史曲线与走势图见 <a href="/stock-trend">股票走势</a>。
         </p>
         <p class="form-hint st-src-line">
             数据源：乐咕乐股（PE/PB、破净率、公募仓位、市场宽度）· 沪深交易所官网（成交额、流通市值）·
@@ -19,7 +24,6 @@
     </div>
     <div class="st-toolbar">
         <span id="stUpdated" class="st-updated">加载中…</span>
-        <button id="stBackfill" class="btn btn-secondary">补齐历史数据</button>
         <button id="stRefresh" class="btn btn-primary">刷新数据</button>
     </div>
 </div>
@@ -28,18 +32,19 @@
 <div id="stRoot">
     <div class="loading">正在加载股票指标…</div>
 </div>
+<div class="st-crosslink">
+    <a href="/stock-trend">历史曲线与走势图在这里：股票走势 →</a>
+</div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/echarts.min.js"></script>
 <script>
-/* ==================== 页面渲染 ==================== */
+/* ==================== 页面渲染（只含当前读数与判读） ==================== */
 const LOCAL_TONES = {
     blue: "#3b82f6", cyan: "#06b6d4", green: "#22c55e", lime: "#84cc16",
     amber: "#f59e0b", orange: "#f97316", red: "#ef4444", violet: "#8b5cf6", slate: "#64748b"
 };
 let TONES = Object.assign({}, LOCAL_TONES);
-let currentData = null;
 
 // 温度计色带沿用方法论原文的五段配色（冰点 → 亢奋）
 const ZONE_COLORS = ["#5B8FC7", "#8BC8EA", "#E4D48F", "#F4B393", "#EA6668"];
@@ -214,43 +219,6 @@ function overviewHtml(groups) {
         + "<tbody>" + rows.join("") + "</tbody></table></div></section>";
 }
 
-/* ---------------- 趋势面板骨架 ---------------- */
-function fig(title, note, id) {
-    return "<div class=\"st-fig\"><div class=\"st-fig-head\"><span class=\"st-fig-title\">" + escapeHtml(title)
-        + "</span><span class=\"st-fig-note\">" + escapeHtml(note) + "</span></div>"
-        + "<div class=\"st-chart\" id=\"" + id + "\"></div></div>";
-}
-
-function panelHtml() {
-    return "<section class=\"st-panel\">"
-        + "<h2 class=\"st-group-title\">趋势面板<span class=\"st-group-sub\">阈值线已内置，落在哪条泳道直接读；缺数据的图层自动断线</span></h2>"
-        + "<div class=\"st-fig-block st-f-valuation\">"
-        + "<div class=\"st-fig-block-head\">估值层 · 慢变量定方向</div>"
-        + fig("沪深300 PE-TTM 与 PB（双轴）", "月频；分位带与当前值标在图上", "stPE")
-        + fig("ERP 股债性价比 = 1/PE − 10Y国债", "月频；均值 ±1σ 带，越高越便宜", "stERP")
-        + fig("破净率（全部A股）", "日频；10 / 6 / 3 / 1% 四条阈值线", "stBelowNa")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-sentiment\">"
-        + "<div class=\"st-fig-block-head\">情绪层 · 快变量定情绪</div>"
-        + fig("两市成交额 与 全A换手率（双轴）", "成交额阈值 7000 / 12000 / 20000 / 30000 亿", "stTurnover")
-        + fig("两融余额（万亿）", "杠杆水位；占流通市值比例见指标卡", "stMargin")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-capital\">"
-        + "<div class=\"st-fig-block-head\">资金层 · 资金变量定底气</div>"
-        + fig("公募仓位 与 新基金发行（双轴）", "股票型基金仓位（周）+ 权益类新成立基金募集（月）", "stFund")
-        + fig("产业资本净增持（滚动30日，亿元）", "红柱=净增持 · 绿柱=净减持（A 股涨红跌绿惯例）", "stCapital")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-structure\">"
-        + "<div class=\"st-fig-block-head\">结构 · 热度在哪个市场</div>"
-        + fig("科创50 vs 创业板 · 价格分位差", "月度；±20 / ±40pp 分化阈值线", "stStruct")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-temp\">"
-        + "<div class=\"st-fig-block-head\">温度轨迹 · 重建口径</div>"
-        + fig("三层温度 与 综合温度", "逐点滚动分位；三层齐备才给综合温度", "stTemp")
-        + "<div class=\"st-temp-note\" id=\"stTempNote\"></div>"
-        + "</div></section>";
-}
-
 /* ---------------- 方法说明（静态） ---------------- */
 function notesHtml() {
     return "<section class=\"st-notes\">"
@@ -265,7 +233,7 @@ function notesHtml() {
         + "<ul>"
         + "<li>情绪热 + 资金不进场（ETF 没增、两融不涨）→ <b>虚火</b>，涨不久。</li>"
         + "<li>估值冷 + 资金悄悄进场（ETF 份额持续增）→ <b>底部特征</b>，最值得关注。</li>"
-        + "<li>三层分离度越大越要警惕：以<b>估值定方向</b>、以<b>资金定真假</b>。</li>"
+        + "<li>三层分离度越大越要警惕：以<b>估值定方向</b>、以<b>资金定真假</b>。把三层画成曲线看背离更直观——见 <a href=\"/stock-trend\">股票走势</a>。</li>"
         + "</ul></div>"
         + "<div class=\"st-note\"><h3>三、构建你自己的温度计时，选这 6 个就够</h3>"
         + "<ul>"
@@ -285,8 +253,8 @@ function notesHtml() {
         + "成交额、换手率、两融占比、市场宽度、ETF 份额、产业资本、结构分化这 7 项，方法论本身给的是<b>绝对阈值</b>"
         + "（如成交额 7000 亿地量 / 2 万亿亢奋、两融占流通市值 3.5%、产业资本 ±100 / −400 亿、分位差 ±20 / ±40pp），"
         + "直接读绝对值档位反而更准，因此分位列留空、状态列给出档位判读。</li>"
-        + "<li><b>日频历史</b>：成交额 / 换手率 / 市场宽度 / ETF份额 依赖逐日抓取，本页回填窗口有限（「补齐历史数据」默认近 60 个交易日），之后由定时任务每天滚动补齐。"
-        + "「温度轨迹」中分位样本不足的指标退回按读数档位打分，三层齐备的月份才给综合温度。</li>"
+        + "<li><b>日频历史</b>：成交额 / 换手率 / 市场宽度 / ETF份额 依赖逐日抓取，本页只展示快照读数；"
+        + "历史曲线与逐日补齐在 <a href=\"/stock-trend\">股票走势</a> 页（「补齐历史数据」默认回溯最近 60 个交易日，之后由定时任务每天滚动补齐）。</li>"
         + "<li><b>两融占流通市值</b>：流通市值取沪深交易所官方口径（每日更新）；「连续回落交易日」按两融余额逐日比较统计。</li>"
         + "<li><b>结构分化</b>用「价格分位」而非 PE 分位（科创50 上市时间较短，估值序列覆盖不足十年）。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
@@ -295,7 +263,6 @@ function notesHtml() {
 }
 
 function render(data) {
-    currentData = data;
     TONES = Object.assign({}, LOCAL_TONES, data.tones || {});
 
     const errs = Object.keys(data.errors || {});
@@ -310,10 +277,7 @@ function render(data) {
         + gaugeHtml(data.thermometer || {})
         + overviewHtml(data.groups || [])
         + (data.groups || []).map(groupHtml).join("")
-        + panelHtml()
         + notesHtml();
-
-    loadSeries(false);
 }
 
 async function loadStock(force) {
@@ -325,7 +289,6 @@ async function loadStock(force) {
             { method: force ? "POST" : "GET" });
         const data = await response.json();
         if (data.status !== "ok") throw new Error(data.message || "获取股票指标失败");
-        if (force) seriesCache = null;
         render(data);
     } catch (error) {
         document.getElementById("stRoot").innerHTML =
@@ -336,538 +299,8 @@ async function loadStock(force) {
     }
 }
 
-/* ==================== 趋势面板 ==================== */
-const CH = {
-    ink: "#334155", sub: "#94a3b8", grid: "#e8ebf0", axis: "#cbd5e1", slate: "#64748b",
-    blue: "#3b82f6", cyan: "#06b6d4", green: "#22c55e", lime: "#84cc16",
-    amber: "#f59e0b", orange: "#f97316", red: "#ef4444", violet: "#8b5cf6"
-};
-const HALO = { textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5 };
-const chartReg = {};
-let seriesCache = null;
-
-function withAlpha(hex, a) {
-    const h = (hex || "#94a3b8").replace("#", "");
-    return "rgba(" + parseInt(h.substring(0, 2), 16) + ", " + parseInt(h.substring(2, 4), 16)
-        + ", " + parseInt(h.substring(4, 6), 16) + ", " + a + ")";
-}
-function pts(rows) {
-    return (rows || []).filter(function (p) {
-        return p && p.as_of && p.value !== null && p.value !== undefined && !isNaN(Number(p.value));
-    }).map(function (p) { return [String(p.as_of).slice(0, 10), Number(p.value)]; });
-}
-function num(v, d) {
-    if (v === null || v === undefined || isNaN(Number(v))) return "—";
-    return Number(v).toFixed(d === undefined ? 2 : d);
-}
-function mount(id, opt) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    chartReg[id] = echarts.init(el);
-    chartReg[id].setOption(opt);
-}
-function chartEmpty(id, msg) {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = "<div class=\"st-empty\">" + escapeHtml(msg) + "</div>";
-}
-function baseGrid() { return { left: 62, right: 92, top: 34, bottom: 34 }; }
-function xAxis(cats) {
-    return {
-        type: "category", data: cats, boundaryGap: false,
-        axisLine: { lineStyle: { color: CH.axis } },
-        axisLabel: { color: CH.sub, fontSize: 10, hideOverlap: true },
-        axisTick: { show: false }
-    };
-}
-function yAxis(name, fmt, position) {
-    return {
-        type: "value", name: name || "", position: position || "left", scale: true,
-        nameTextStyle: { color: CH.sub, fontSize: 10, padding: [0, 0, 4, 0], show: !!name },
-        axisLine: { show: false }, axisTick: { show: false },
-        splitLine: { lineStyle: { color: CH.grid, type: position === "right" ? "dashed" : "solid" } },
-        axisLabel: { color: CH.sub, fontSize: 10, formatter: fmt }
-    };
-}
-function lineSeries(name, data, color, extra) {
-    return Object.assign({
-        name: name, type: "line", data: data, symbol: "none",
-        lineStyle: { width: 1.8, color: color }, itemStyle: { color: color },
-        emphasis: { focus: "series" }
-    }, extra || {});
-}
-function lastMark(name, data, color, digits, unit) {
-    if (!data.length) return null;
-    const last = data[data.length - 1];
-    return {
-        silent: true,
-        data: [{
-            name: name, coord: last, value: last[1],
-            symbol: "circle", symbolSize: 10,
-            itemStyle: { color: color, borderColor: "#fff", borderWidth: 2 },
-            label: {
-                show: true, position: "right", distance: 6, color: CH.ink,
-                fontSize: 10.5, fontWeight: 600, ...HALO,
-                formatter: num(last[1], digits === undefined ? 2 : digits) + (unit || "")
-            }
-        }]
-    };
-}
-function thresholdLines(pairs, inside) {
-    return {
-        silent: true, symbol: "none",
-        lineStyle: { type: "dashed", width: 1 },
-        label: {
-            color: CH.sub, fontSize: 10, formatter: "{b}",
-            // 双轴图上右轴刻度也占右侧泳道，阈值文字改画在绘图区内侧避免压字
-            position: inside ? "insideEndTop" : "end"
-        },
-        data: pairs.map(function (p) {
-            return { yAxis: p[0], name: p[1], lineStyle: { color: p[2] || CH.slate } };
-        })
-    };
-}
-// hints：图例文字后缀，用来标明该序列挂在哪根轴上（右轴不再重复画轴名）
-function legend(names, hints) {
-    const opt = {
-        data: names, top: 2, right: 6, itemWidth: 12, itemHeight: 8,
-        textStyle: { color: CH.slate, fontSize: 10.5 }
-    };
-    if (hints) {
-        opt.formatter = function (name) { return hints[name] ? name + hints[name] : name; };
-    }
-    return opt;
-}
-function tipAxis(unit) {
-    return {
-        trigger: "axis", axisPointer: { type: "cross", lineStyle: { color: CH.axis } },
-        backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#e3e8ef", borderWidth: 1,
-        textStyle: { color: CH.ink, fontSize: 11 },
-        valueFormatter: function (v) { return v === null || v === undefined ? "—" : (Number(v).toFixed(2) + (unit || "")); }
-    };
-}
-
-/* ---------------- 各图 ---------------- */
-function drawPE(bag) {
-    const pe = pts(bag.hs300_pe), pb = pts(bag.hs300_pb);
-    if (!pe.length) return chartEmpty("stPE", "暂无 PE 历史数据，请点「补齐历史数据」");
-    const cats = pe.map(function (p) { return p[0]; });
-    mount("stPE", {
-        grid: baseGrid(),
-        legend: legend(["PE-TTM", "PB"], { "PE-TTM": "（倍 · 左轴）", "PB": "（倍 · 右轴）" }),
-        tooltip: tipAxis(""),
-        xAxis: xAxis(cats),
-        yAxis: [yAxis("PE-TTM（倍）"), yAxis("", null, "right")],
-        series: [
-            lineSeries("PE-TTM", pe, CH.blue, { markLine: thresholdLines([
-                [20, "PE 20 倍", CH.cyan], [13, "13 倍", CH.slate], [30, "30 倍", CH.orange]
-            ], true), markPoint: lastMark("PE-TTM", pe, CH.blue, 2) }),
-            lineSeries("PB", pb, CH.violet, { yAxisIndex: 1, lineStyle: { width: 1.6, color: CH.violet, type: "dotted" }, markPoint: lastMark("PB", pb, CH.violet, 2) })
-        ]
-    });
-}
-
-function drawERP(bag) {
-    const erp = pts(bag.erp);
-    if (!erp.length) return chartEmpty("stERP", "暂无 ERP 历史数据，请点「补齐历史数据」");
-    const vals = erp.map(function (p) { return p[1]; });
-    const mu = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
-    const sd = Math.sqrt(vals.reduce(function (a, b) { return a + (b - mu) * (b - mu); }, 0) / vals.length);
-    mount("stERP", {
-        grid: baseGrid(), tooltip: tipAxis("%"),
-        xAxis: xAxis(erp.map(function (p) { return p[0]; })),
-        yAxis: [yAxis("ERP（%）")],
-        series: [lineSeries("ERP", erp, CH.green, {
-            areaStyle: { color: withAlpha(CH.green, 0.10) },
-            markLine: thresholdLines([
-                [mu + sd, "均值+1σ（偏冷）", CH.blue],
-                [mu, "十年均值 " + num(mu, 2), CH.slate],
-                [mu - sd, "均值−1σ（偏热）", CH.red]
-            ]),
-            markPoint: lastMark("ERP", erp, CH.green, 2, "%")
-        })]
-    });
-}
-
-function drawBelowNa(bag) {
-    const d = pts(bag.below_na);
-    if (!d.length) return chartEmpty("stBelowNa", "暂无破净率历史数据，请点「补齐历史数据」");
-    const tail = d.length > 2600 ? d.slice(-2600) : d;
-    mount("stBelowNa", {
-        grid: baseGrid(), tooltip: tipAxis("%"),
-        xAxis: xAxis(tail.map(function (p) { return p[0]; })),
-        yAxis: [yAxis("破净率（%）")],
-        series: [lineSeries("破净率", tail, CH.cyan, {
-            areaStyle: { color: withAlpha(CH.cyan, 0.10) },
-            markLine: thresholdLines([
-                [10, "10% 底部区", CH.blue], [6, "6%", CH.cyan], [3, "3%", CH.lime], [1, "1% 无便宜货", CH.red]
-            ]),
-            markPoint: lastMark("破净率", tail, CH.cyan, 2, "%")
-        })]
-    });
-}
-
-function drawTurnover(bag) {
-    const amt = pts(bag.turnover_amt), rate = pts(bag.turnover_rate);
-    if (!amt.length) return chartEmpty("stTurnover", "暂无成交额历史数据（日频需回填，请点「补齐历史数据」）");
-    const cats = amt.map(function (p) { return p[0]; });
-    // 下限压到 5000 亿（或更低），保证 7000 亿地量线也能画出来
-    const lo = Math.min(5000, Math.floor(Math.min.apply(null, amt.map(function (p) { return p[1]; })) / 1000) * 1000);
-    mount("stTurnover", {
-        grid: baseGrid(),
-        legend: legend(["两市成交额", "全A换手率"],
-            { "两市成交额": "（亿元 · 左轴）", "全A换手率": "（% · 右轴）" }),
-        tooltip: tipAxis(""),
-        xAxis: xAxis(cats),
-        yAxis: [Object.assign(yAxis("成交额（亿元）"), { min: lo }), yAxis("", null, "right")],
-        series: [
-            lineSeries("两市成交额", amt, CH.amber, {
-                areaStyle: { color: withAlpha(CH.amber, 0.12) },
-                markLine: thresholdLines([
-                    [30000, "3 万亿 极端", CH.red], [20000, "2 万亿 亢奋", CH.orange],
-                    [12000, "1.2 万亿", CH.lime], [7000, "7000 亿 地量", CH.blue]
-                ], true),
-                markPoint: lastMark("两市成交额", amt, CH.amber, 0, " 亿")
-            }),
-            lineSeries("全A换手率", rate, CH.red, {
-                yAxisIndex: 1, symbol: "circle", symbolSize: 5,
-                lineStyle: { width: 1.6, color: CH.red, type: "dashed" },
-                markPoint: lastMark("全A换手率", rate, CH.red, 2, "%")
-            })
-        ]
-    });
-}
-
-function drawMargin(bag) {
-    const m = pts(bag.margin).map(function (p) { return [p[0], +(p[1] / 10000).toFixed(4)]; });
-    if (!m.length) return chartEmpty("stMargin", "暂无两融历史数据，请点「补齐历史数据」");
-    const tail = m.length > 1200 ? m.slice(-1200) : m;
-    mount("stMargin", {
-        grid: baseGrid(), tooltip: tipAxis(" 万亿"),
-        xAxis: xAxis(tail.map(function (p) { return p[0]; })),
-        yAxis: [yAxis("两融余额（万亿）")],
-        series: [lineSeries("两融余额", tail, CH.red, {
-            areaStyle: { color: withAlpha(CH.red, 0.10) },
-            markPoint: lastMark("两融余额", tail, CH.red, 4, " 万亿")
-        })]
-    });
-}
-
-function drawFund(bag) {
-    const pos = pts(bag.fund_position), nf = pts(bag.new_fund);
-    if (!pos.length && !nf.length) return chartEmpty("stFund", "暂无公募仓位 / 新基金发行数据");
-    const cats = (pos.length ? pos : nf).map(function (p) { return p[0]; });
-    const series = [];
-    if (nf.length) {
-        series.push({
-            name: "新基金发行（月）", type: "bar", yAxisIndex: 1, data: nf,
-            itemStyle: { color: withAlpha(CH.violet, 0.55) },
-            barMaxWidth: 14, markPoint: lastMark("新基金发行", nf, CH.violet, 0, " 亿")
-        });
-    }
-    if (pos.length) {
-        series.push(lineSeries("公募仓位", pos, CH.lime, {
-            markLine: thresholdLines([[88, "88% 仓位魔咒", CH.orange], [80, "80%（合同下限附近）", CH.slate]], true),
-            markPoint: lastMark("公募仓位", pos, CH.lime, 2, "%")
-        }));
-    }
-    mount("stFund", {
-        grid: baseGrid(),
-        legend: legend(["公募仓位", "新基金发行（月）"],
-            { "公募仓位": "（% · 左轴）", "新基金发行（月）": "（亿元 · 右轴）" }),
-        tooltip: tipAxis(""),
-        xAxis: xAxis(cats),
-        yAxis: [yAxis("公募仓位（%）"), yAxis("", null, "right")],
-        series: series
-    });
-}
-
-function drawCapital(bag) {
-    const c = pts(bag.industry_capital);
-    if (!c.length) return chartEmpty("stCapital", "暂无产业资本历史数据，请点「补齐历史数据」");
-    mount("stCapital", {
-        grid: baseGrid(), tooltip: tipAxis(" 亿"),
-        xAxis: Object.assign(xAxis(c.map(function (p) { return p[0]; })), { boundaryGap: true }),
-        yAxis: [yAxis("净增持（亿元）")],
-        series: [{
-            name: "产业资本净增持", type: "bar", data: c.map(function (p) {
-                return { value: p[1], itemStyle: { color: p[1] >= 0 ? withAlpha(CH.red, 0.75) : withAlpha(CH.green, 0.75) } };
-            }),
-            barMaxWidth: 18,
-            markLine: thresholdLines([[0, "0 轴（增减持分界）", CH.slate], [100, "增持潮 100 亿", CH.blue], [-400, "减持潮 −400 亿", CH.red]])
-        }]
-    });
-}
-
-function drawStruct(bag) {
-    const s = pts(bag.structure_div);
-    if (!s.length) return chartEmpty("stStruct", "暂无结构分化序列");
-    mount("stStruct", {
-        grid: baseGrid(), tooltip: tipAxis(" pp"),
-        xAxis: xAxis(s.map(function (p) { return p[0]; })),
-        yAxis: [yAxis("分位差（pp）")],
-        series: [lineSeries("科创50 − 创业板 分位差", s, CH.violet, {
-            areaStyle: { color: withAlpha(CH.violet, 0.10) },
-            markLine: thresholdLines([
-                [40, "+40pp 极端分化", CH.red], [20, "+20pp", CH.orange],
-                [0, "0 轴", CH.slate], [-20, "−20pp", CH.cyan], [-40, "−40pp 极端反向", CH.blue]
-            ]),
-            markPoint: lastMark("分位差", s, CH.violet, 1, "pp")
-        })]
-    });
-}
-
-function drawTemp(tp) {
-    const rows = (tp || {}).monthly || [];
-    if (!rows.length) return chartEmpty("stTemp", "历史序列尚未积累，无法重建温度轨迹");
-    const cats = rows.map(function (r) { return r.as_of; });
-    const mk = function (key) {
-        return rows.map(function (r) { return r[key] === null || r[key] === undefined ? null : r[key]; });
-    };
-    const series = [
-        lineSeries("估值温度", mk("valuation"), CH.blue, { connectNulls: false, areaStyle: { color: withAlpha(CH.blue, 0.08) } }),
-        lineSeries("情绪温度", mk("sentiment"), CH.amber, { connectNulls: false, symbol: "circle", symbolSize: 4 }),
-        lineSeries("资金温度", mk("capital"), CH.green, { connectNulls: false, symbol: "circle", symbolSize: 4 }),
-        lineSeries("综合温度", mk("total"), CH.ink, { connectNulls: false, lineStyle: { width: 2.6, color: CH.ink }, symbol: "circle", symbolSize: 5 })
-    ];
-    mount("stTemp", {
-        grid: baseGrid(), legend: legend(["估值温度", "情绪温度", "资金温度", "综合温度"]), tooltip: tipAxis(""),
-        xAxis: xAxis(cats),
-        yAxis: [yAxis("温度（0-100）")],
-        series: series
-    });
-    const el = document.getElementById("stTempNote");
-    if (el) el.textContent = tp.note || "";
-}
-
-function drawCharts(d) {
-    const bag = d.series || {};
-    drawPE(bag); drawERP(bag); drawBelowNa(bag); drawTurnover(bag);
-    drawMargin(bag); drawFund(bag); drawCapital(bag); drawStruct(bag);
-    drawTemp(d.temperature || {});
-    Object.keys(chartReg).forEach(function (k) { if (chartReg[k]) chartReg[k].resize(); });
-}
-
-async function loadSeries(force) {
-    if (seriesCache && !force) { drawCharts(seriesCache); return; }
-    try {
-        const response = await fetchWithAuth("/api/stock-temp/series");
-        const d = await response.json();
-        if (d.status !== "ok") throw new Error(d.message || "获取历史序列失败");
-        seriesCache = d;
-        drawCharts(d);
-    } catch (error) {
-        ["stPE", "stERP", "stBelowNa", "stTurnover", "stMargin", "stFund", "stCapital", "stStruct", "stTemp"]
-            .forEach(function (id) { chartEmpty(id, "历史序列加载失败：" + error.message); });
-    }
-}
-
-async function runBackfill() {
-    const btn = document.getElementById("stBackfill");
-    if (!window.confirm(
-        "将回溯补齐各指标的历史数据。\n\n"
-        + "· 乐咕乐股 / 东财 / 新浪自带历史的指标（PE、PB、ERP、破净率、两融、公募仓位、新基金）几乎瞬时完成；\n"
-        + "· 交易所日频数据（成交额、换手率、流通市值）需逐日请求，按最近 90 个交易日补齐，约需 3~4 分钟；\n"
-        + "· 产业资本按月回溯 24 个月。\n\n"
-        + "已存在的记录按「指标 + 数据日期」覆盖更新，不会产生重复行。\n继续？")) return;
-    btn.disabled = true;
-    btn.textContent = "回溯中…（约 3~4 分钟）";
-    try {
-        const response = await fetchWithAuth("/api/stock-temp/backfill", { method: "POST" });
-        const d = await response.json();
-        if (d.status !== "ok") throw new Error(d.message || "回溯失败");
-        const lines = Object.keys(d.counts || {}).map(function (k) { return "  " + k + "：" + d.counts[k] + " 条"; });
-        alert("回溯完成\n生成 " + d.generated + " 条（新增 " + d.added + " / 更新 " + d.updated + "）\n"
-            + lines.join("\n")
-            + (Object.keys(d.errors || {}).length ? "\n\n未完成：" + JSON.stringify(d.errors) : ""));
-        await loadSeries(true);
-    } catch (error) {
-        alert("回溯失败：" + error.message);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "补齐历史数据";
-    }
-}
-
-document.getElementById("stBackfill").addEventListener("click", runBackfill);
 document.getElementById("stRefresh").addEventListener("click", function () { loadStock(true); });
-window.addEventListener("resize", debounce(function () {
-    Object.keys(chartReg).forEach(function (k) { if (chartReg[k]) chartReg[k].resize(); });
-}, 150));
 
 loadStock(false);
 </script>
-
-<style>
-.st-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; flex-wrap: wrap; }
-.st-header-text { flex: 1; min-width: 320px; }
-.st-header h1 { font-size: 1.9rem; color: #333; margin-bottom: 0.7rem; }
-.st-src-line { margin-top: 0.35rem; }
-.st-toolbar { display: flex; align-items: center; gap: 0.8rem; }
-.st-updated { color: #888; font-size: 0.85rem; }
-
-.st-alert {
-    background: #fff3cd; color: #856404; border-radius: 10px;
-    padding: 0.85rem 1.15rem; margin-bottom: 1.25rem; font-size: 0.9rem; line-height: 1.6;
-}
-
-.st-group-title {
-    font-size: 1.1rem; color: #333; margin-bottom: 0.9rem; padding-left: 0.6rem;
-    border-left: 4px solid #667eea; line-height: 1.35;
-}
-.st-group-sub { font-size: 0.78rem; color: #94a3b8; font-weight: 400; margin-left: 0.6rem; }
-
-/* ---------------- 三层方法论 ---------------- */
-.st-method { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.9rem; margin-bottom: 1.5rem; }
-.st-method-card {
-    border-radius: 12px; border: 1px solid rgba(0,0,0,0.07);
-    padding: 0.9rem 1rem 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-}
-.st-m-valuation { background: linear-gradient(165deg, rgba(139,200,234,0.20), rgba(139,200,234,0.05)); }
-.st-m-sentiment { background: linear-gradient(165deg, rgba(244,179,147,0.22), rgba(244,179,147,0.05)); }
-.st-m-capital { background: linear-gradient(165deg, rgba(162,221,170,0.25), rgba(162,221,170,0.05)); }
-.st-method-title { font-size: 0.95rem; font-weight: 600; color: #1f2937; margin-bottom: 0.45rem; }
-.st-method-freq { font-size: 0.74rem; color: #6b7280; font-weight: 400; margin-left: 0.4rem; }
-.st-method-card ul { margin: 0 0 0 1.05rem; padding: 0; }
-.st-method-card li { font-size: 0.79rem; color: #374151; line-height: 1.7; margin-bottom: 0.28rem; }
-.st-method-card b { color: #111827; }
-
-/* ---------------- 温度计 ---------------- */
-.st-gauge-wrap {
-    background: white; border-radius: 12px; padding: 1.3rem 1.5rem 1.4rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 1.5rem;
-}
-.st-gauge { position: relative; height: 48px; margin: 0.6rem 0 0; }
-.st-gauge-track { display: flex; height: 18px; border-radius: 9px; overflow: hidden; }
-.st-gauge-seg { flex: 1; }
-.st-gauge-marker { position: absolute; top: -6px; transform: translateX(-50%); text-align: center; }
-.st-gauge-pin {
-    width: 15px; height: 15px; border-radius: 50%; background: #1f2937;
-    border: 2.5px solid #fff; box-shadow: 0 0 0 1.5px rgba(0,0,0,0.35); margin: 0 auto;
-}
-.st-gauge-tip { font-size: 0.85rem; font-weight: 700; margin-top: 2px; white-space: nowrap; }
-.st-gauge-legend { display: flex; justify-content: space-between; font-size: 0.72rem; margin-top: 0.6rem; }
-
-.st-layer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.9rem; margin-top: 1.1rem; }
-.st-layer { border: 1px solid #eef1f6; border-radius: 10px; padding: 0.75rem 0.85rem; background: #fbfcfe; }
-.st-layer-head { display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap; }
-.st-layer-name { font-size: 0.9rem; font-weight: 600; }
-.st-layer-weight { font-size: 0.72rem; color: #94a3b8; }
-.st-layer-score { margin-left: auto; font-size: 1.05rem; font-weight: 700; color: #334155; }
-.st-layer-cov { font-size: 0.68rem; color: #b0b8c4; font-weight: 400; }
-.st-layer-bar { height: 8px; border-radius: 4px; background: #eef1f6; overflow: hidden; margin: 0.45rem 0 0.4rem; }
-.st-layer-fill { height: 100%; border-radius: 4px; }
-.st-layer-desc { font-size: 0.72rem; color: #94a3b8; line-height: 1.5; }
-.st-layer-members { margin-top: 0.4rem; display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.st-member { font-size: 0.72rem; color: #64748b; background: #f1f5f9; border-radius: 10px; padding: 0.1rem 0.5rem; }
-.st-member b { color: #334155; }
-.st-gauge-note { font-size: 0.78rem; color: #555; line-height: 1.7; margin-top: 1rem; border-top: 1px dashed #e8ebf0; padding-top: 0.75rem; }
-
-/* ---------------- 速览表 ---------------- */
-.st-overview { background: white; border-radius: 12px; padding: 1.3rem 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
-.st-table-wrap { overflow-x: auto; }
-.st-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
-.st-table th {
-    text-align: left; color: #94a3b8; font-weight: 500; font-size: 0.75rem;
-    padding: 0.45rem 0.6rem; border-bottom: 1px solid #eef1f6; white-space: nowrap;
-}
-.st-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid #f4f6fa; color: #334155; vertical-align: middle; }
-.st-ov-group { font-weight: 600; color: #64748b; background: #fafbfd; white-space: nowrap; }
-.st-ov-val { font-size: 1rem; font-weight: 700; white-space: nowrap; }
-.st-ov-unit { font-size: 0.72rem; color: #94a3b8; font-weight: 400; margin-left: 2px; }
-.st-ov-state { font-weight: 600; white-space: nowrap; }
-.st-ov-date { color: #a3adba; font-size: 0.76rem; white-space: nowrap; }
-.st-ov-dash { color: #cbd5e1; }
-
-/* ---------------- 指标卡 ---------------- */
-.st-group { margin-bottom: 1.6rem; }
-.st-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(370px, 1fr)); gap: 1rem; }
-.st-card {
-    background: white; border-radius: 12px; border-top: 4px solid #9ca3af;
-    padding: 1.05rem 1.15rem 1.1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    display: flex; flex-direction: column;
-}
-.st-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.7rem; }
-.st-name { font-size: 0.98rem; font-weight: 600; color: #333; }
-.st-sub { font-size: 0.77rem; color: #9aa3af; margin-top: 0.15rem; line-height: 1.45; }
-.st-src {
-    font-size: 0.66rem; font-weight: 400; color: #667eea;
-    background: rgba(102,126,234,0.1); padding: 0.1rem 0.42rem; border-radius: 10px; margin-left: 0.35rem;
-}
-.st-src-fallback { color: #b45309; background: rgba(245,158,11,0.14); }
-.st-state { font-size: 0.78rem; font-weight: 600; padding: 0.24rem 0.66rem; border-radius: 20px; white-space: nowrap; }
-.st-value-row { display: flex; align-items: baseline; gap: 0.35rem; margin: 0.8rem 0 0.25rem; flex-wrap: wrap; }
-.st-value { font-size: 2rem; font-weight: 700; line-height: 1.1; }
-.st-unit { font-size: 0.9rem; color: #888; }
-.st-freq { font-size: 0.7rem; color: #b0b8c4; border: 1px solid #eef1f6; border-radius: 8px; padding: 0.05rem 0.4rem; }
-.st-asof { margin-left: auto; font-size: 0.76rem; color: #aab2bd; }
-.st-chip-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
-.st-pct { font-size: 0.74rem; font-weight: 600; border-radius: 10px; padding: 0.12rem 0.5rem; }
-.st-basis { font-size: 0.72rem; color: #a3adba; }
-.st-detail { font-size: 0.77rem; color: #7c8797; line-height: 1.6; margin-bottom: 0.3rem; }
-.st-error { font-size: 0.76rem; color: #b45309; margin-bottom: 0.35rem; line-height: 1.5; }
-.st-bands { margin: 0.55rem 0 0.7rem; }
-.st-bands-title { font-size: 0.74rem; color: #9aa3af; margin-bottom: 0.35rem; }
-.st-band {
-    display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: #6b7280;
-    padding: 0.2rem 0.5rem; border: 1px solid transparent; border-radius: 6px; line-height: 1.5;
-}
-.st-band.active { font-weight: 600; }
-.st-band-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px; }
-.st-band-range { flex: 0 0 auto; min-width: 120px; color: #94a3b8; }
-.st-band.active .st-band-range { color: inherit; }
-.st-band-state { flex: 1; }
-.st-explain { border-top: 1px dashed #e8ebf0; padding-top: 0.65rem; margin-top: auto; }
-.st-explain p { font-size: 0.81rem; color: #555; line-height: 1.75; margin-bottom: 0.35rem; }
-.st-explain p:last-child { margin-bottom: 0; }
-.st-label {
-    display: inline-block; font-size: 0.71rem; color: #667eea; background: rgba(102,126,234,0.1);
-    border-radius: 4px; padding: 0.05rem 0.4rem; margin-right: 0.42rem;
-}
-.st-explain p.st-warn { color: #8a6d3b; }
-.st-explain p.st-warn .st-label { color: #b45309; background: rgba(245,158,11,0.16); }
-
-/* ---------------- 趋势面板 ---------------- */
-.st-panel { background: white; border-radius: 12px; padding: 1.3rem 1.5rem 1.4rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 1.6rem; }
-.st-fig-block { border-radius: 10px; border: 1px solid #e8ebf0; padding: 0.8rem 0.95rem 0.85rem; margin-bottom: 1rem; }
-.st-fig-block:last-child { margin-bottom: 0; }
-.st-f-valuation { background: linear-gradient(165deg, rgba(139,200,234,0.14), rgba(139,200,234,0.03)); }
-.st-f-sentiment { background: linear-gradient(165deg, rgba(244,179,147,0.16), rgba(244,179,147,0.03)); }
-.st-f-capital { background: linear-gradient(165deg, rgba(162,221,170,0.18), rgba(162,221,170,0.03)); }
-.st-f-structure { background: linear-gradient(165deg, rgba(167,139,250,0.16), rgba(167,139,250,0.03)); }
-.st-f-temp { background: linear-gradient(165deg, rgba(148,163,184,0.16), rgba(148,163,184,0.03)); }
-.st-fig-block-head { font-size: 0.88rem; font-weight: 600; color: #334155; margin-bottom: 0.5rem; }
-.st-fig + .st-fig { margin-top: 0.7rem; }
-.st-fig-head { display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap; margin-bottom: 0.15rem; }
-.st-fig-title { font-size: 0.79rem; color: #444; font-weight: 500; }
-.st-fig-note { font-size: 0.71rem; color: #9aa3af; }
-.st-chart { width: 100%; height: 250px; }
-.st-empty {
-    display: flex; align-items: center; justify-content: center; height: 100%;
-    font-size: 0.78rem; color: #9aa3af; text-align: center; padding: 0 1rem;
-}
-.st-temp-note { font-size: 0.74rem; color: #9aa3af; line-height: 1.65; margin-top: 0.4rem; }
-
-/* ---------------- 说明 ---------------- */
-.st-notes { background: white; border-radius: 12px; padding: 1.3rem 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 1.6rem; }
-.st-notes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
-.st-note { background: #fbfcfe; border: 1px solid #eef1f6; border-radius: 10px; padding: 0.85rem 1rem; }
-.st-note h3 { font-size: 0.87rem; color: #333; margin-bottom: 0.5rem; line-height: 1.5; }
-.st-note ul { margin: 0 0 0 1.05rem; padding: 0; }
-.st-note li { font-size: 0.79rem; color: #555; line-height: 1.75; margin-bottom: 0.35rem; }
-.st-note b { color: #1f2937; }
-.st-caveat { margin-top: 1rem; background: #fdfcfa; border-color: #f0e9dd; }
-.st-quote {
-    margin-top: 1rem; background: #f7f8fb; border-radius: 8px; padding: 0.7rem 0.95rem;
-    color: #555; font-size: 0.85rem; line-height: 1.75;
-}
-
-@media (max-width: 900px) {
-    .st-chart { height: 220px; }
-}
-@media (max-width: 700px) {
-    .st-grid { grid-template-columns: 1fr; }
-    .st-band-range { min-width: 92px; }
-    .st-header { flex-direction: column; }
-}
-</style>
 {% endblock %}

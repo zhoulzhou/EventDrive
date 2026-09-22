@@ -203,9 +203,18 @@ async def macro_trend_page(request: Request):
 
 @app.get("/stock-temp")
 async def stock_temp_page(request: Request):
+    """股票指标：只看当前读数与阈值分档（历史曲线见 /stock-trend）。"""
     if not is_logged_in(request):
         return RedirectResponse(url="/login")
     return render_template("stock_temp.html", {"request": request})
+
+
+@app.get("/stock-trend")
+async def stock_trend_page(request: Request):
+    """股票走势：只看历史曲线与走势（图表实现见 static/js/stock_charts.js）。"""
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("stock_trend.html", {"request": request})
 
 
 _PAGE_LINKS = [
@@ -218,6 +227,7 @@ _PAGE_LINKS = [
     ("/macro", "宏观指标"),
     ("/macro-trend", "宏观趋势"),
     ("/stock-temp", "股票指标"),
+    ("/stock-trend", "股票走势"),
 ]
 
 
