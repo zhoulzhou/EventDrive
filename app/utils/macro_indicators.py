@@ -1,11 +1,13 @@
-"""宏观盯盘清单（四个维度）数据获取、状态判定与组合解读。
+"""宏观盯盘清单（三个维度）数据获取、状态判定与组合解读。
 
-四个维度、每维 3 项读数，共 12 项：
+三个维度、每维 3 项读数，共 9 项：
 
 - ① 资金面（松 ↔ 紧，日度）：DR007 − 7天逆回购利率、超储率、R001 − DR001
 - ② 经济热度（冷 ↔ 热，月度）：制造业 PMI、社融存量同比、PPI 同比
 - ③ 部门结构（钱的流向，月度累计）：M1 − M2 剪刀差、住户存款/贷款、非银存款
-- ④ A股温度（贵不贵 / 热不热，日·月）：沪深300 PE/PB、ERP、成交额/两融
+
+A股估值/情绪类读数（沪深300 PE/PB、ERP、成交额、两融）**不在本页**，
+见「股票指标」页（app/utils/stock_temp.py）。
 
 数据获取方式（全部自动，来源见各自 source 字段）：
 - akshare（source="akshare"）
@@ -17,9 +19,6 @@
           · 《公开市场业务交易公告》      → 7天逆回购操作利率（每个交易日）
           · 《金融统计数据报告》          → 社融存量同比、分部门存贷款（每月，累计口径）
           · 《中国货币政策执行报告》PDF   → 超储率（每季度）
-- 股票指标页（source="stock_temp"，见 app/utils/stock_temp.py）
-          · 直接复用 stock_temp_indicators 已有快照（沪深300 PE/PB、ERP、成交额、两融），
-            不重复抓外部接口；该表由股票指标模块自己的定时任务维护。
 
 全部指标均为自动获取，页面不提供任何手工录入入口。
 
@@ -38,21 +37,19 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- 分组与色调
 #
-# 页面按「四个维度」分组，顺序即页面上从上到下的顺序：
-# 钱贵不贵（资金面）→ 经济跑不跑（热度）→ 钱在谁手里（部门结构）→ 市场热不热（A股温度）。
+# 页面按「三个维度」分组，顺序即页面上从上到下的顺序：
+# 钱贵不贵（资金面）→ 经济跑不跑（热度）→ 钱在谁手里（部门结构）。
 
 GROUP_LIQUIDITY = "liquidity"
 GROUP_HEAT = "heat"
 GROUP_STRUCTURE = "structure"
-GROUP_ASTOCK = "astock"
 
-GROUP_ORDER = [GROUP_LIQUIDITY, GROUP_HEAT, GROUP_STRUCTURE, GROUP_ASTOCK]
+GROUP_ORDER = [GROUP_LIQUIDITY, GROUP_HEAT, GROUP_STRUCTURE]
 
 GROUP_TITLES = {
     GROUP_LIQUIDITY: "① 资金面（松 ↔ 紧）",
     GROUP_HEAT: "② 经济热度（冷 ↔ 热）",
     GROUP_STRUCTURE: "③ 部门结构（钱的流向）",
-    GROUP_ASTOCK: "④ A股温度（贵不贵 · 热不热）",
 }
 
 # 各维度的观察频率（放在维度标题右侧，提醒「日度盯异动、月度盯趋势」）
@@ -60,14 +57,12 @@ GROUP_FREQS = {
     GROUP_LIQUIDITY: "日度",
     GROUP_HEAT: "月度",
     GROUP_STRUCTURE: "月度 · 累计口径",
-    GROUP_ASTOCK: "日 / 月",
 }
 
 GROUP_DESCS = {
     GROUP_LIQUIDITY: "钱贵不贵：看「价」（DR007 偏离、分层利差）与「水位」（超储率）",
     GROUP_HEAT: "经济跑不跑：看「量」（社融）与「温度」（PMI、PPI）",
     GROUP_STRUCTURE: "钱在谁手里：看 M1−M2 剪刀差与分部门存贷款，判断居民/企业是否缩表",
-    GROUP_ASTOCK: "市场热不热：看估值分位（贵不贵）、ERP 赔率与成交额/两融（活不活）",
 }
 
 # 色调 -> 前端配色（前端按 tone 取色）
@@ -313,86 +308,6 @@ INDICATORS: List[Dict[str, Any]] = [
             {"range": "< −3 万亿", "state": "大幅回落，资金回流或被抽离", "tone": "blue"},
         ],
     },
-
-    # ------------------------------------------------------------ ④ A股温度
-    {
-        "key": "astock_valuation",
-        "group": GROUP_ASTOCK,
-        "name": "沪深300 PE / PB",
-        "subtitle": "宽基估值：贵不贵（按十年分位判定）",
-        "unit": "倍",
-        "digits": 2,
-        "source": "auto",
-        "meaning": (
-            "沪深300 指数滚动市盈率（PE-TTM）与市净率（PB），数据复用「股票指标」页的同一份"
-            "估值快照。PE 看盈利定价、PB 看净资产定价，两者一起用可以互相证伪。"
-            "判定不看绝对值，只看十年分位。"
-        ),
-        "guide": (
-            "十年分位 <20% 极冷（便宜）、>80% 极热（贵）。"
-            "⚠ PE 分位偏高但 PB 分位偏低 = 多半是盈利收缩造成的\"假贵\"（分母缩水而不是价格涨），"
-            "这种情况不能按\"贵\"处理。本卡读数展示 PE，PB 与两个分位在卡内附注。"
-        ),
-        "bands": [
-            {"range": "分位 < 20%", "state": "极冷 · 便宜", "tone": "blue"},
-            {"range": "分位 20 ~ 40%", "state": "偏冷", "tone": "cyan"},
-            {"range": "分位 40 ~ 60%", "state": "中性", "tone": "lime"},
-            {"range": "分位 60 ~ 80%", "state": "偏热", "tone": "orange"},
-            {"range": "分位 > 80%", "state": "极热 · 贵", "tone": "red"},
-        ],
-    },
-    {
-        "key": "astock_erp",
-        "group": GROUP_ASTOCK,
-        "name": "ERP 股债性价比",
-        "subtitle": "1/PE − 10 年国债收益率（按分位判定）",
-        "unit": "%",
-        "digits": 2,
-        "source": "auto",
-        "meaning": (
-            "股权风险溢价 ERP = 1/PE − 10 年期国债收益率，衡量\"买股票比买国债多拿多少赔率\"。"
-            "数值越高 = 股票相对债券越便宜。同样复用「股票指标」页的估值快照。"
-        ),
-        "guide": (
-            "看十年分位：>80% 说明赔率仍在好的一侧（偏冷、便宜）；<20% 说明股票相对债券已无"
-            "性价比（偏热）。注意它是\"相对\"指标：无风险利率大幅下行时 ERP 走高只说明赔率改善，"
-            "不等于股票立刻会涨。"
-        ),
-        "bands": [
-            {"range": "分位 < 20%", "state": "贵 · 相对债券无性价比", "tone": "red"},
-            {"range": "分位 20 ~ 40%", "state": "偏贵", "tone": "orange"},
-            {"range": "分位 40 ~ 60%", "state": "中性", "tone": "lime"},
-            {"range": "分位 60 ~ 80%", "state": "偏便宜 · 偏冷", "tone": "cyan"},
-            {"range": "分位 > 80%", "state": "赔率好 · 冷", "tone": "blue"},
-        ],
-    },
-    {
-        "key": "astock_activity",
-        "group": GROUP_ASTOCK,
-        "name": "成交额 / 两融",
-        "subtitle": "情绪活跃度与杠杆水位",
-        "unit": "亿元",
-        "digits": 0,
-        "source": "auto",
-        "meaning": (
-            "两市股票成交金额（沪深交易所官方口径）与融资融券余额占流通市值的比例，"
-            "复用「股票指标」页的同一份数据。成交额回答\"热不热\"，两融回答\"杠杆在不在\"，"
-            "两者必须分开看：热不等于有杠杆支撑。"
-        ),
-        "guide": (
-            "成交额：<7000 亿属地量冰点，2 万亿以上是亢奋区。两融占比：>3.5% 杠杆过热、"
-            "<2.5% 杠杆低迷，看趋势比看点位重要。两者同向放大 = 行情有杠杆支撑；"
-            "成交额高但两融连续回落 = 活跃但杠杆退潮，持续性存疑。"
-        ),
-        "bands": [
-            {"range": "< 7000 亿", "state": "地量 · 冰点", "tone": "blue"},
-            {"range": "7000 ~ 12000 亿", "state": "偏冷", "tone": "cyan"},
-            {"range": "12000 ~ 18000 亿", "state": "中性", "tone": "lime"},
-            {"range": "18000 ~ 25000 亿", "state": "活跃 · 偏热", "tone": "orange"},
-            {"range": "25000 ~ 30000 亿", "state": "亢奋", "tone": "red"},
-            {"range": "> 30000 亿", "state": "极端", "tone": "red"},
-        ],
-    },
 ]
 
 INDICATOR_MAP = {ind["key"]: ind for ind in INDICATORS}
@@ -427,22 +342,19 @@ FALLBACK_DEFAULTS: Dict[str, Any] = {
     PARAM_REVERSE_REPO: {"value": 1.40, "as_of": "兜底默认值"},
 }
 
-# 自动抓取键：akshare 来源 + 央行官网来源 + 股票指标页快照（无手工入口，全部自动）
+# 自动抓取键：akshare 来源 + 央行官网来源（无手工入口，全部自动）
 AK_KEYS = ["dr007_spread", "r001_dr001", "pmi", "m1_m2", "ppi_yoy"]
 PBC_KEYS = ["excess_reserve", "tsf_yoy", "household_dep_loan", "nonbank_deposit",
             PARAM_REVERSE_REPO]
-# ④ A股温度：不重复抓外部接口，直接复用「股票指标」页已落库的快照
-STOCK_KEYS = ["astock_valuation", "astock_erp", "astock_activity"]
-AUTO_KEYS = AK_KEYS + PBC_KEYS + STOCK_KEYS
+AUTO_KEYS = AK_KEYS + PBC_KEYS
 
 # 有效自动来源；库中记录的 source 不在此集合内（如历史遗留的 manual）即视为待刷新
-AUTO_SOURCES = {"akshare", "pbc", "stock_temp"}
+AUTO_SOURCES = {"akshare", "pbc"}
 
 # 数据来源展示标签
 SOURCE_LABELS = {
     "akshare": "akshare",
     "pbc": "央行",
-    "stock_temp": "股票指标",
     "fallback": "默认值",
 }
 
@@ -464,29 +376,14 @@ CHART_KEYS = CHART_DAILY_KEYS + CHART_MONTHLY_KEYS
 # ---------------------------------------------------------------- 状态判定
 
 
-def _pct_of(detail: Optional[Dict[str, Any]], *fields: str) -> Optional[float]:
-    """从 detail 里取第一个可用的分位读数（股票指标页算好的十年分位）。"""
-    for field in fields:
-        raw = (detail or {}).get(field)
-        if raw is None:
-            continue
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def _decide(key: str, value: Optional[float], detail: Optional[Dict[str, Any]] = None):
+def _decide(key: str, value: Optional[float]):
     """按指标阈值把读数判定为 (状态标签, 色调, 严重度等级)。
 
-    资金面：等级 0=最松 → 5=最紧；其余维度：等级 0=最冷/最便宜 → 4=最热/最强。
-    ④A股温度的两项估值指标按「十年分位」判定，分位从 detail 里取（由股票指标页算好）。
+    资金面：等级 0=最松 → 5=最紧；②③：等级 0=最冷/最淤积 → 4=最热/最活化。
     """
     if value is None:
         return None
     v = float(value)
-    detail = detail or {}
 
     if key == "dr007_spread":  # bp
         if v < -20:
@@ -587,48 +484,6 @@ def _decide(key: str, value: Optional[float], detail: Optional[Dict[str, Any]] =
         if v >= -3:
             return ("回落", "cyan", 1)
         return ("大幅回落，资金回流或被抽离", "blue", 0)
-
-    # ---------------- ④ A股温度（估值两项按十年分位判定）
-    if key == "astock_valuation":  # 倍；按 PE 十年分位
-        pct = _pct_of(detail, "PE分位", "分位")
-        if pct is None:
-            return None
-        if pct < 20:
-            return ("极冷 · 便宜", "blue", 0)
-        if pct < 40:
-            return ("偏冷", "cyan", 1)
-        if pct < 60:
-            return ("中性", "lime", 2)
-        if pct < 80:
-            return ("偏热", "orange", 3)
-        return ("极热 · 贵", "red", 4)
-
-    if key == "astock_erp":  # %；分位越高越便宜（越冷）
-        pct = _pct_of(detail, "分位")
-        if pct is None:
-            return None
-        if pct < 20:
-            return ("贵 · 相对债券无性价比", "red", 4)
-        if pct < 40:
-            return ("偏贵", "orange", 3)
-        if pct < 60:
-            return ("中性", "lime", 2)
-        if pct < 80:
-            return ("偏便宜 · 偏冷", "cyan", 1)
-        return ("赔率好 · 冷", "blue", 0)
-
-    if key == "astock_activity":  # 亿元（两市成交额）
-        if v < 7000:
-            return ("地量 · 冰点", "blue", 0)
-        if v < 12000:
-            return ("偏冷", "cyan", 1)
-        if v < 18000:
-            return ("中性", "lime", 2)
-        if v < 25000:
-            return ("活跃 · 偏热", "orange", 3)
-        if v < 30000:
-            return ("亢奋", "red", 4)
-        return ("极端", "red", 4)
 
     return None
 
@@ -772,103 +627,18 @@ def _item(value, as_of, source, detail=None) -> Dict[str, Any]:
     }
 
 
-def _stock_row(stock_rows: Optional[Dict[str, Any]], key: str) -> Optional[Dict[str, Any]]:
-    """从「股票指标」页的快照行里取读数（row 为 StockTempIndicator ORM 对象或字典）。"""
-    row = (stock_rows or {}).get(key)
-    if row is None:
-        return None
-    if isinstance(row, dict):
-        detail_raw, value = row.get("detail"), row.get("value")
-        as_of, source = row.get("as_of"), row.get("source")
-    else:
-        detail_raw = getattr(row, "detail", None)
-        value = getattr(row, "value", None)
-        as_of = getattr(row, "as_of", None)
-        source = getattr(row, "source", None)
-    return {
-        "value": value,
-        "as_of": as_of,
-        "source": source,
-        "detail": load_detail(detail_raw),
-    }
-
-
-def market_temp_items(stock_rows: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """由「股票指标」页的存量快照派生 ④A股温度 的三项读数。
-
-    不重复调外部接口：估值/成交额/两融统一由 stock_temp 模块抓取并落库
-    （stock_temp_indicators 表），这里只做口径转换与合并展示。
-    快照缺失时返回带 error 的条目，页面按「数据缺失」展示并提示去股票指标页刷新。
-    """
-    result: Dict[str, Dict[str, Any]] = {}
-
-    def _fail(key: str, msg: str):
-        result[key] = {
-            "value": None, "as_of": None, "source": "stock_temp",
-            "detail": {}, "error": msg,
-        }
-
-    pe = _stock_row(stock_rows, "hs300_pe")
-    pb = _stock_row(stock_rows, "hs300_pb")
-    erp = _stock_row(stock_rows, "erp")
-    amt = _stock_row(stock_rows, "turnover_amt")
-    margin = _stock_row(stock_rows, "margin")
-
-    if pe and pe["value"] is not None:
-        result["astock_valuation"] = _item(pe["value"], pe["as_of"], "stock_temp", {
-            "PB": pb["value"] if pb else None,
-            "PE分位": pe["detail"].get("分位"),
-            "PB分位": (pb or {}).get("detail", {}).get("分位"),
-            "分位窗口": pe["detail"].get("分位窗口"),
-            "数据源": "股票指标页 · 乐咕乐股沪深300 PE/PB",
-        })
-    else:
-        _fail("astock_valuation", "股票指标页尚无沪深300估值快照，请到「股票指标」页点一次刷新")
-
-    if erp and erp["value"] is not None:
-        result["astock_erp"] = _item(erp["value"], erp["as_of"], "stock_temp", {
-            "10年国债": erp["detail"].get("10Y国债"),
-            "分位": erp["detail"].get("分位"),
-            "分位窗口": erp["detail"].get("分位窗口"),
-            "历史均值": erp["detail"].get("均值"),
-            "数据源": "股票指标页 · 沪深300 PE-TTM ÷ 中债10年国债",
-        })
-    else:
-        _fail("astock_erp", "股票指标页尚无 ERP 快照，请到「股票指标」页点一次刷新")
-
-    if amt and amt["value"] is not None:
-        md = (margin or {}).get("detail") or {}
-        result["astock_activity"] = _item(amt["value"], amt["as_of"], "stock_temp", {
-            "两融余额(万亿)": md.get("两融余额(万亿)"),
-            "两融占流通市值%": (margin or {}).get("value"),
-            "两融近20日变化%": md.get("近20日变化%"),
-            "两融连续回落交易日": md.get("连续回落交易日"),
-            "数据源": "股票指标页 · 交易所成交额 + 两融账户信息",
-        })
-    else:
-        _fail("astock_activity", "股票指标页尚无成交额快照，请到「股票指标」页点一次刷新")
-
-    return result
-
-
 def fetch_auto_values(
     anchor_fallback: Optional[float] = None,
     hints: Optional[Dict[str, Dict[str, Any]]] = None,
-    stock_rows: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """抓取全部自动指标，返回 {key: {value, as_of, source, detail, error}}。
 
     单个指标抓取失败只影响该指标（value=None + error），不影响其他指标。
     anchor_fallback：库中已有的 7 天逆回购利率，抓取失败时兜底。
     hints           ：各指标已落库的 detail，用于央行侧「报告期未变则跳过」省流量。
-    stock_rows      ：股票指标页的快照行（crud.get_stock_temp_indicators），
-                      用于派生 ④A股温度，避免重复抓外部接口。
     """
     hints = hints or {}
     result: Dict[str, Dict[str, Any]] = {}
-
-    # ---------------- ④ A股温度：复用股票指标页快照（不调外部接口）
-    result.update(market_temp_items(stock_rows))
 
     def _fail(key: str, source: str, exc: Exception):
         logger.warning("市场指标抓取失败 [%s]: %s", key, exc)
@@ -1023,14 +793,16 @@ QUADRANTS = [
 ]
 
 MEMORY_LINE = (
-    "钱贵不贵（资金面）→ 经济跑不跑（热度）→ 钱在谁手里（部门结构）→ 市场热不热（A股温度）。"
+    "钱贵不贵（资金面）→ 经济跑不跑（热度）→ 钱在谁手里（部门结构）。"
 )
 
 # 观察哨：从「底部/陷阱」走向全面反转时，最先要看到转向的三个读数
+# 前两项在本页（② 社融、③ 住户贷款）可直接看到；第三项属于 A股 情绪面，
+# 已随 ④A股温度 从本页移出，改在「股票指标」页看（成交额 turnover_amt / 两融 margin）。
 WATCH_LIST = [
     {"key": "tsf_yoy", "label": "社融存量同比企稳（回到 8% 以上）"},
     {"key": "household_dep_loan", "label": "住户贷款累计增量转正（居民重新借钱）"},
-    {"key": "astock_activity", "label": "成交额与两融余额同向放大（情绪有杠杆支撑）"},
+    {"key": "turnover_amt", "label": "成交额与两融余额同向放大（情绪有杠杆支撑）"},
 ]
 
 
@@ -1040,7 +812,7 @@ def _avg(values: List[int]) -> Optional[float]:
 
 
 def compute_combination(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """由四个维度汇总出资金面松紧、经济热度、部门结构与 A股温度，并给出四象限归属。"""
+    """由三个维度汇总出资金面松紧、经济热度与部门结构，并给出四象限归属。"""
     liq_avg = _avg([
         (items.get(k) or {}).get("level")
         for k in ("dr007_spread", "excess_reserve", "r001_dr001")
@@ -1053,10 +825,6 @@ def compute_combination(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     struct_avg = _avg([
         (items.get(k) or {}).get("level")
         for k in ("m1_m2", "household_dep_loan", "nonbank_deposit")
-    ])
-    astock_avg = _avg([
-        (items.get(k) or {}).get("level")
-        for k in ("astock_valuation", "astock_erp", "astock_activity")
     ])
 
     if liq_avg is None:
@@ -1093,15 +861,6 @@ def compute_combination(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         structure = {"label": "中性", "tone": "green", "reason": "活化与缩表信号互有强弱"}
     else:
         structure = {"label": "钱在活化", "tone": "orange", "reason": "剪刀差收敛、资金向金融市场迁移"}
-
-    if astock_avg is None:
-        astock = {"label": "数据不足", "tone": "green", "reason": "A股温度指标缺失"}
-    elif astock_avg < 1.5:
-        astock = {"label": "偏冷 · 便宜", "tone": "blue", "reason": "估值分位低、情绪低迷"}
-    elif astock_avg < 2.5:
-        astock = {"label": "结构性中性", "tone": "lime", "reason": "估值与情绪不在同一侧"}
-    else:
-        astock = {"label": "偏热 · 贵", "tone": "orange", "reason": "估值分位或情绪走热"}
 
     tsf = (items.get("tsf_yoy") or {}).get("value")
     if tsf is None:
@@ -1154,21 +913,19 @@ def compute_combination(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         "heat": heat,
         "credit": credit,
         "structure": structure,
-        "astock": astock,
         "quadrant": quadrant,
         "quadrants": quadrants,
         "memory": MEMORY_LINE,
-        "summary": _summary_text(liquidity, credit, structure, astock, tsf),
+        "summary": _summary_text(liquidity, credit, structure, tsf),
         "watch": WATCH_LIST,
         "liquidity_avg": liq_avg,
         "heat_avg": heat_avg,
         "structure_avg": struct_avg,
-        "astock_avg": astock_avg,
     }
 
 
-def _summary_text(liquidity, credit, structure, astock, tsf) -> str:
-    """一句话综合：按当前四维标签拼出「宽货币 / 紧信用 / 结构 / A股」的定调。"""
+def _summary_text(liquidity, credit, structure, tsf) -> str:
+    """一句话综合：按当前三维标签拼出「宽货币 / 紧信用 / 部门结构」的定调。"""
     segs = []
     if liquidity.get("side") == "松":
         segs.append("宽货币（资金面平稳）")
@@ -1185,7 +942,6 @@ def _summary_text(liquidity, credit, structure, astock, tsf) -> str:
         segs.append(credit.get("label") or "信用待观察")
 
     segs.append("部门结构：%s" % (structure.get("label") or "待观察"))
-    segs.append("A股温度：%s" % (astock.get("label") or "待观察"))
 
     return (" + ".join(segs)
             + " → 盯「社融企稳 + 住户贷款转正 + 成交额与两融同向」，三者共振才是全面反转信号。")
@@ -1201,8 +957,7 @@ def build_items(raw: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         key = ind["key"]
         row = raw.get(key) or {}
         value = row.get("value")
-        detail = row.get("detail") or {}
-        decision = _decide(key, value, detail)
+        decision = _decide(key, value)
         state, tone, level = decision if decision else (None, None, None)
         source = row.get("source") or "fallback"
         items[key] = {
@@ -1230,7 +985,7 @@ def build_items(raw: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
 
 
 def build_response(raw: Dict[str, Dict[str, Any]], params: Dict[str, Any]) -> Dict[str, Any]:
-    """组装接口响应：四个维度的分组指标 + 参数 + 组合解读 + 宏观温度计。"""
+    """组装接口响应：三个维度的分组指标 + 参数 + 组合解读 + 宏观温度计。"""
     items = build_items(raw)
 
     groups = []

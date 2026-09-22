@@ -11,15 +11,16 @@
     <div class="macro-header-text">
         <h1>宏观指标</h1>
         <p class="form-hint">
-            <strong>四个维度 · 12 项读数</strong>：① 资金面（钱贵不贵）② 经济热度（经济跑不跑）
-            ③ 部门结构（钱在谁手里）④ A股温度（市场热不热）。
-            四个维度再由 <strong>宏观温度计</strong>加权合成一个 0-100 的总分
+            <strong>三个维度 · 9 项读数</strong>：① 资金面（钱贵不贵）② 经济热度（经济跑不跑）
+            ③ 部门结构（钱在谁手里）。
+            这些读数再由 <strong>宏观温度计</strong>归成三个子温度计加权合成 0-100 总分
             （资金面 × 25% + 实体热度 × 45% + 信用/部门 × 30%），并给出「温差」看政策到实体的传导。
             资金面看「价」（DR007 偏离、分层利差）与「水位」（超储率）；热度看「量」（社融）与「温度」（PMI、PPI）；
-            部门结构看 M1−M2 与分部门存贷款；A股温度看估值分位、ERP 与成交额/两融。
-            数据取自 akshare、<strong>央行官网</strong>（《货币政策执行报告》/《金融统计数据报告》/《公开市场业务交易公告》）
-            与「股票指标」页快照，<strong>全部自动抓取，无手工录入项</strong>。
-            历史曲线与走势图见 <a href="/macro-trend">宏观趋势</a>。
+            部门结构看 M1−M2 与分部门存贷款。
+            数据取自 akshare 与<strong>央行官网</strong>（《货币政策执行报告》/《金融统计数据报告》/《公开市场业务交易公告》），
+            <strong>全部自动抓取，无手工录入项</strong>。
+            历史曲线与走势图见 <a href="/macro-trend">宏观趋势</a>；A股估值与情绪（PE/PB、ERP、成交额、两融）见
+            <a href="/stock-temp">股票指标</a>。
         </p>
     </div>
     <div class="macro-toolbar">
@@ -147,7 +148,6 @@ function comboHtml(data) {
     const heat = c.heat || {};
     const credit = c.credit || {};
     const struct = c.structure || {};
-    const astock = c.astock || {};
     const quad = c.quadrant || {};
 
     const chip = function (label, obj) {
@@ -174,7 +174,7 @@ function comboHtml(data) {
             <div class="macro-combo-title" style="color:${tone(quad.tone)}">${escapeHtml(quad.title || "—")}${quad.brief ? ` · ${escapeHtml(quad.brief)}` : ""}</div>
         </div>
         <div class="macro-chips">
-            ${chip("资金面", liq)}${chip("经济热度", heat)}${chip("信用", credit)}${chip("部门结构", struct)}${chip("A股温度", astock)}
+            ${chip("资金面", liq)}${chip("经济热度", heat)}${chip("信用", credit)}${chip("部门结构", struct)}
         </div>
         <p class="macro-combo-desc">${escapeHtml(quad.desc || "")}</p>
         ${c.summary ? `<div class="macro-summary"><span class="macro-summary-label">一句话综合</span>${escapeHtml(c.summary)}</div>` : ""}
@@ -208,8 +208,7 @@ function anchorHtml(data) {
 const PLAYBOOK_CORE = [
     { dim: "① 资金面", core: "DR007 对政策利率的偏离", freq: "每天", how: "偏离 ±10bp 内 = 平稳；持续 +50bp = 真紧" },
     { dim: "② 经济热度", core: "PMI + 社融", freq: "每月", how: "PMI 上穿 50、社融回升到 8% 以上 = 回暖" },
-    { dim: "③ 部门结构", core: "M1−M2 剪刀差", freq: "每月", how: "剪刀差连续收窄转正 = 钱开始活起来" },
-    { dim: "④ A股温度", core: "估值分位 + 成交额", freq: "每天 / 月", how: "估值 <20% 分位 + 地量 = 布局区；>80% 分位 + 天量 = 风险区" }
+    { dim: "③ 部门结构", core: "M1−M2 剪刀差", freq: "每月", how: "剪刀差连续收窄转正 = 钱开始活起来" }
 ];
 
 const PLAYBOOK_RULES = [
@@ -221,8 +220,7 @@ const PLAYBOOK_RULES = [
 const PLAYBOOK_SOURCES = [
     { dim: "① 资金面", src: "中国货币网（DR / R 利率）、央行官网《公开市场业务交易公告》（政策利率）；超储率看央行季度《货币政策执行报告》" },
     { dim: "② 经济热度", src: "国家统计局（PMI 每月最后一天、PPI 每月 9 号左右）、央行《金融统计数据报告》（社融，每月 10–15 号）" },
-    { dim: "③ 部门结构", src: "央行《金融统计数据报告》里的「存款分部门」和「贷款分部门」两张表——看住户 / 企业 / 财政 / 非银之间关系的一手数据" },
-    { dim: "④ A股温度", src: "乐咕乐股 / 理杏仁 / 中证指数官网（PE、PB 历史分位）、沪深交易所（成交额）、东方财富数据中心（两融）" }
+    { dim: "③ 部门结构", src: "央行《金融统计数据报告》里的「存款分部门」和「贷款分部门」两张表——看住户 / 企业 / 财政 / 非银之间关系的一手数据" }
 ];
 
 function notesHtml() {
@@ -240,8 +238,8 @@ function notesHtml() {
     return `<section class="macro-notes">
         <h2 class="macro-notes-title">盯盘方法与口径说明</h2>
         <p class="macro-notes-lead">
-            这套清单覆盖了从宏观到市场的完整链路：<b>钱贵不贵（资金面）→ 经济跑不跑（热度）→ 钱在谁手里（部门结构）→ 市场热不热（A股温度）</b>。
-            每周花 10 分钟过一遍这 12 个数字，宏观方向就不会看错。
+            这套清单覆盖了从货币到实体的完整链路：<b>钱贵不贵（资金面）→ 经济跑不跑（热度）→ 钱在谁手里（部门结构）</b>。
+            每周花 10 分钟过一遍这 9 个数字，宏观方向就不会看错。
         </p>
         <div class="macro-note macro-note-wide">
             <h3>一、简化版：每个维度记住一个核心</h3>
@@ -265,7 +263,7 @@ function notesHtml() {
                     <tbody>${srcRows}</tbody>
                 </table>
                 <p class="macro-note-tail">
-                    本页所有读数都由后端定时任务自动抓取（akshare + 央行官网 + 股票指标页快照），
+                    本页所有读数都由后端定时任务自动抓取（akshare + 央行官网），
                     站内只做口径转换与阈值判定，不提供手工录入。
                 </p>
             </div>
@@ -462,7 +460,7 @@ function thermoHtml(data) {
             <h2 class="macro-thermo-title">宏观温度计</h2>
             <p class="macro-thermo-lead">
                 三个子温度计（① 资金面 ② 实体热度 ③ 信用/部门）按权重合成一个 0-100 的总分，
-                分数越高越热。全部读数取自本页四个维度的同一份数据，不额外抓取。
+                分数越高越热。全部读数取自本页三个维度的同一份数据，不额外抓取。
             </p>
             <p class="macro-thermo-formula"><span>模型公式</span>${escapeHtml(t.formula || "")}</p>
         </div>
@@ -483,7 +481,7 @@ function render(data) {
 
     const errors = Object.keys(data.errors || {});
     document.getElementById("macroNotice").innerHTML = errors.length
-        ? `<div class="macro-alert">本次有 ${errors.length} 项自动指标更新失败（${errors.map(escapeHtml).join("、")}），已展示上次成功读数。行情类指标依赖项目 venv 中的 akshare，央行类指标依赖 www.pbc.gov.cn 可访问，A股温度依赖「股票指标」页的快照；可稍后点「刷新数据」重试。</div>`
+        ? `<div class="macro-alert">本次有 ${errors.length} 项自动指标更新失败（${errors.map(escapeHtml).join("、")}），已展示上次成功读数。行情类指标依赖项目 venv 中的 akshare，央行类指标依赖 www.pbc.gov.cn 可访问；可稍后点「刷新数据」重试。</div>`
         : "";
     document.getElementById("macroUpdated").textContent = "更新于 " + (data.updated_at || "—") + (data.refreshed ? `（本次刷新 ${data.refreshed} 项）` : "");
 
