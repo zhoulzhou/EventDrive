@@ -201,7 +201,8 @@ function overviewHtml(groups) {
     const rows = [];
     (groups || []).forEach(function (g) {
         (g.items || []).forEach(function (it, i) {
-            rows.push("<tr>"
+            // 每组首行加 st-ov-start：用一条横向分隔线把四个分类拉开（不靠底色填充）
+            rows.push("<tr" + (i === 0 ? " class=\"st-ov-start\"" : "") + ">"
                 + (i === 0 ? "<td rowspan=\"" + g.items.length + "\" class=\"st-ov-group\">" + escapeHtml(g.title.replace(/^[①②③④]\s*/, "")) + "</td>" : "")
                 + "<td>" + escapeHtml(it.name) + "</td>"
                 + "<td class=\"st-ov-val\" style=\"color:" + (it.missing ? "#9ca3af" : tone(it.tone)) + "\">"

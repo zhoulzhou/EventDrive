@@ -81,7 +81,13 @@
     padding: 0.45rem 0.6rem; border-bottom: 1px solid #eef1f6; white-space: nowrap;
 }
 .st-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid #f4f6fa; color: #334155; vertical-align: middle; }
-.st-ov-group { font-weight: 600; color: #64748b; background: #fafbfd; white-space: nowrap; }
+/* 四个分类用「线」区分：每组首行一条横向分隔线 + 首列竖线，不用底色填充 */
+.st-table tbody tr.st-ov-start td { border-top: 2px solid #dbe2ec; }
+.st-table tbody tr.st-ov-start:first-child td { border-top: none; }
+.st-ov-group {
+    font-weight: 600; color: #475569; background: transparent; white-space: nowrap;
+    border-left: 3px solid #a8b8f0; border-right: 1px solid #eef1f6; padding-left: 0.7rem;
+}
 .st-ov-val { font-size: 1rem; font-weight: 700; white-space: nowrap; }
 .st-ov-unit { font-size: 0.72rem; color: #94a3b8; font-weight: 400; margin-left: 2px; }
 .st-ov-state { font-weight: 600; white-space: nowrap; }
