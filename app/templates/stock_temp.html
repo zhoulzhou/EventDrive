@@ -150,6 +150,90 @@ function methodHtml() {
     }).join("") + "</section>";
 }
 
+/* ---------------- 一句话总结：把三层的分数翻译成人话 ---------------- */
+// 每层的口语描述（分数越高 = 越贵 / 越热闹 / 钱越往进走）
+// 注意：词语都不含主语，靠模板里的「估值/情绪/资金」拼成完整短语
+const SUMMARY_WORDS = {
+    valuation: [[20, "很便宜"], [40, "比较便宜"], [60, "不贵也不便宜"], [80, "偏贵"], [101, "很贵"]],
+    sentiment: [[20, "很冷清"], [40, "偏冷清"], [60, "不温不火"], [80, "偏热闹"], [101, "热过头了"]],
+    capital: [[20, "在往外撤"], [40, "没什么新钱进来"], [60, "进出平平"], [80, "在进场"], [101, "抢筹很凶"]]
+};
+const TOTAL_WORDS = [[20, "很冷"], [40, "偏冷"], [60, "不冷不热"], [80, "偏热"], [101, "很热"]];
+
+function pickWord(table, score) {
+    if (score === null || score === undefined) return "数据不足";
+    const s = Number(score);
+    for (let i = 0; i < table.length; i++) { if (s < table[i][0]) return table[i][1]; }
+    return table[table.length - 1][1];
+}
+
+function heatLevel(score) {
+    if (score === null || score === undefined) return "none";
+    const s = Number(score);
+    if (s < 40) return "cold";
+    if (s > 60) return "hot";
+    return "mid";
+}
+
+// 浅底上直接写高饱和色（lime/cyan/amber）对比度不够，换成同色系深色版
+const DEEP_TONE = {
+    blue: "#2563eb", cyan: "#0e7490", green: "#15803d", lime: "#4d7c0f", amber: "#b45309",
+    orange: "#c2410c", red: "#b91c1c", violet: "#6d28d9", slate: "#475569"
+};
+
+function deepTone(key) { return DEEP_TONE[key] || tone(key); }
+
+function summaryHtml(t) {
+    const byKey = {};
+    (t.layers || []).forEach(function (l) { byKey[l.key] = l; });
+    const lv = byKey.valuation, ls = byKey.sentiment, lc = byKey.capital;
+
+    if (t.value === null || t.value === undefined || !lv || !ls || !lc) {
+        return "<div class=\"st-summary\">"
+            + "<div class=\"st-summary-title\">一句话总结</div>"
+            + "<p class=\"st-summary-main\">三层里还有数据没到位，等补齐后再给结论。</p></div>";
+    }
+
+    const color = deepTone(t.tone);
+    const zone = pickWord(TOTAL_WORDS, t.value);
+    const wv = pickWord(SUMMARY_WORDS.valuation, lv.score);
+    const ws = pickWord(SUMMARY_WORDS.sentiment, ls.score);
+    const wc = pickWord(SUMMARY_WORDS.capital, lc.score);
+    const vL = heatLevel(lv.score), sL = heatLevel(ls.score), cL = heatLevel(lc.score);
+
+    const main = "现在 A 股整体<b>" + zone + "</b>（温度 <b style=\"color:" + color + "\">"
+        + Number(t.value).toFixed(1) + "</b>）：估值<b>" + wv + "</b>、情绪<b>" + ws
+        + "</b>、资金<b>" + wc + "</b>。";
+
+    let read;
+    if (vL === "cold" && cL === "hot") {
+        read = "便宜又有人拿钱进场，是教科书式的底部特征——赔率高，赢在耐心。";
+    } else if (vL === "hot" && cL === "cold") {
+        read = "又贵、资金还不接盘，是最该小心的组合——涨得没底气。";
+    } else if (vL === "cold" && sL === "hot") {
+        read = "便宜加上情绪回暖，是修复行情的样子——弹性好，但先别当成全面牛。";
+    } else if (sL === "hot" && cL !== "hot") {
+        read = "热闹主要是成交额撑起来的，钱没真正跟上——热点轮动快、别指望全面普涨，追高留个心眼。";
+    } else if (vL === "cold" && sL === "cold") {
+        read = "便宜但没人气，典型的磨底期——慢慢买，比抢反弹划算。";
+    } else if (vL === "hot" && sL === "hot" && cL === "hot") {
+        read = "三层一起高温，这种位置「落袋」比「加仓」重要。";
+    } else if (vL === "mid" && sL === "mid" && cL === "mid") {
+        read = "三层都在中间、没有极端信号，属于结构性行情——跟着热点走，不必赌方向。";
+    } else {
+        read = "三层没有一边倒的信号，重点看谁先变——估值定方向、资金定真假。";
+    }
+
+    const spreadTip = (t.spread !== null && t.spread !== undefined && Number(t.spread) >= 25)
+        ? "三层温差 " + Number(t.spread).toFixed(1) + " 度、分歧不小——" : "";
+
+    return "<div class=\"st-summary\">"
+        + "<div class=\"st-summary-title\">一句话总结</div>"
+        + "<p class=\"st-summary-main\">" + main + "</p>"
+        + "<p class=\"st-summary-read\">怎么理解：" + (spreadTip ? "<em>" + spreadTip + "</em>" : "")
+        + read + "</p></div>";
+}
+
 /* ---------------- 综合温度计 ---------------- */
 function gaugeHtml(t) {
     const v = t.value;
@@ -188,6 +272,7 @@ function gaugeHtml(t) {
             + " " + escapeHtml(t.state) + "</div></div>")
         + "</div>"
         + "<div class=\"st-gauge-legend\">" + zones + "</div>"
+        + summaryHtml(t)
         + "<div class=\"st-layer-grid\">" + layers + "</div>"
         + "<div class=\"st-gauge-note\">三层分离度 " + (t.spread === null ? "—" : Number(t.spread).toFixed(1))
         + " pp——差值越大说明「三层在打架」，越要看背离。"
