@@ -18,7 +18,8 @@
             资金面看「价」（DR007 偏离、分层利差）与「水位」（超储率）；热度看「量」（社融）与「温度」（PMI、PPI）；
             部门结构看 M1−M2 与分部门存贷款。
             数据取自 akshare 与<strong>央行官网</strong>（《货币政策执行报告》/《金融统计数据报告》/《公开市场业务交易公告》），
-            <strong>全部自动抓取，无手工录入项</strong>。
+            <strong>全部自动抓取、无手工录入项</strong>，由 ./start.sh 启动的定时任务每日 1 次
+            （北京时间 20:30）抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
             历史曲线与走势图见 <a href="/macro-trend">宏观趋势</a>；A股估值与情绪（PE/PB、ERP、成交额、两融）见
             <a href="/stock-temp">股票指标</a>。
         </p>
@@ -480,10 +481,16 @@ function render(data) {
     TONES = Object.assign({}, LOCAL_TONES, data.tones || {});
 
     const errors = Object.keys(data.errors || {});
-    document.getElementById("macroNotice").innerHTML = errors.length
+    let notice = errors.length
         ? `<div class="macro-alert">本次有 ${errors.length} 项自动指标更新失败（${errors.map(escapeHtml).join("、")}），已展示上次成功读数。行情类指标依赖项目 venv 中的 akshare，央行类指标依赖 www.pbc.gov.cn 可访问；可稍后点「刷新数据」重试。</div>`
         : "";
-    document.getElementById("macroUpdated").textContent = "更新于 " + (data.updated_at || "—") + (data.refreshed ? `（本次刷新 ${data.refreshed} 项）` : "");
+    if (data.stale) {
+        notice += `<div class="macro-alert">数据已 ${data.data_age_hours} 小时未落库（最后更新 ${escapeHtml(data.updated_at)}）。本页读数由 ./start.sh 启动的定时任务抓取，本页自身不抓数据，请确认调度器在运行（日志 logs/scheduler.log）。</div>`;
+    }
+    document.getElementById("macroNotice").innerHTML = notice;
+    document.getElementById("macroUpdated").textContent =
+        "数据更新于 " + (data.updated_at || "—")
+        + (data.refreshed ? `（本次刷新 ${data.refreshed} 项）` : "");
 
     const html = comboHtml(data)
         + thermoHtml(data)

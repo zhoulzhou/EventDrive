@@ -1,6 +1,6 @@
-/* 股票指标 / 股票走势 两页共用样式
+/* 股票指标 / 股票趋势 两页共用样式
  * 由 app/templates/stock_temp.html 拆出：当前读数在 stock_temp.html / 股票指标页，
- * 历史曲线在 stock_trend.html + static/js/stock_charts.js / 股票走势页。
+ * 历史曲线在 stock_trend.html + static/js/stock_charts.js / 股票趋势页。
  */
 
 .st-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; flex-wrap: wrap; }
@@ -155,7 +155,7 @@
 .st-explain p.st-warn { color: #8a6d3b; }
 .st-explain p.st-warn .st-label { color: #b45309; background: rgba(245,158,11,0.16); }
 
-/* ==================== 趋势面板（股票走势页） ==================== */
+/* ==================== 趋势面板（股票趋势页） ==================== */
 .st-panel { background: white; border-radius: 12px; padding: 1.3rem 1.5rem 1.4rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 1.6rem; }
 .st-fig-block { border-radius: 10px; border: 1px solid #e8ebf0; padding: 0.8rem 0.95rem 0.85rem; margin-bottom: 1rem; }
 .st-fig-block:last-child { margin-bottom: 0; }

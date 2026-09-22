@@ -14,12 +14,13 @@
             A 股冷热要分三层看 —— <strong>估值层</strong>（贵不贵）、<strong>情绪层</strong>（亢奋不亢奋）、
             <strong>资金层</strong>（钱进不进），最后合成一个 <strong>0-100 市场温度计</strong>。
             慢变量定方向 · 快变量定情绪 · 资金变量定底气；<strong>全部用历史分位说话</strong>。
-            本页只放<strong>当前读数</strong>；历史曲线与走势图见 <a href="/stock-trend">股票走势</a>。
+            本页只放<strong>当前读数</strong>；历史曲线与走势图见 <a href="/stock-trend">股票趋势</a>。
         </p>
         <p class="form-hint st-src-line">
             数据源：乐咕乐股（PE/PB、破净率、公募仓位、市场宽度）· 沪深交易所官网（成交额、流通市值）·
             中债国债收益率（ERP）· 东财数据中心（两融、重要股东增减持）· 新浪/东财（宽基ETF份额、新基金发行）。
-            <strong>全部 13 项自动抓取，无手工录入项。</strong>
+            <strong>全部 13 项自动抓取、无手工录入项</strong>，由 ./start.sh 启动的定时任务
+            （北京时间 20:30）抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
         </p>
     </div>
     <div class="st-toolbar">
@@ -33,7 +34,7 @@
     <div class="loading">正在加载股票指标…</div>
 </div>
 <div class="st-crosslink">
-    <a href="/stock-trend">历史曲线与走势图在这里：股票走势 →</a>
+    <a href="/stock-trend">历史曲线与走势图在这里：股票趋势 →</a>
 </div>
 {% endblock %}
 
@@ -335,7 +336,7 @@ function notesHtml() {
         + "<ul>"
         + "<li>情绪热 + 资金不进场（ETF 没增、两融不涨）→ <b>虚火</b>，涨不久。</li>"
         + "<li>估值冷 + 资金悄悄进场（ETF 份额持续增）→ <b>底部特征</b>，最值得关注。</li>"
-        + "<li>三层分离度越大越要警惕：以<b>估值定方向</b>、以<b>资金定真假</b>。把三层画成曲线看背离更直观——见 <a href=\"/stock-trend\">股票走势</a>。</li>"
+        + "<li>三层分离度越大越要警惕：以<b>估值定方向</b>、以<b>资金定真假</b>。把三层画成曲线看背离更直观——见 <a href=\"/stock-trend\">股票趋势</a>。</li>"
         + "</ul></div>"
         + "<div class=\"st-note\"><h3>三、构建你自己的温度计时，选这 6 个就够</h3>"
         + "<ul>"
@@ -356,7 +357,7 @@ function notesHtml() {
         + "（如成交额 7000 亿地量 / 2 万亿亢奋、两融占流通市值 3.5%、产业资本 ±100 / −400 亿、分位差 ±20 / ±40pp），"
         + "直接读绝对值档位反而更准，因此分位列留空、状态列给出档位判读。</li>"
         + "<li><b>日频历史</b>：成交额 / 换手率 / 市场宽度 / ETF份额 依赖逐日抓取，本页只展示快照读数；"
-        + "历史曲线与逐日补齐在 <a href=\"/stock-trend\">股票走势</a> 页（「补齐历史数据」默认回溯最近 60 个交易日，之后由定时任务每天滚动补齐）。</li>"
+        + "历史曲线与逐日补齐在 <a href=\"/stock-trend\">股票趋势</a> 页（「补齐历史数据」默认回溯最近 60 个交易日，需要更新或补更长时再点一次；本页与定时任务都不做历史回溯）。</li>"
         + "<li><b>两融占流通市值</b>：流通市值取沪深交易所官方口径（每日更新）；「连续回落交易日」按两融余额逐日比较统计。</li>"
         + "<li><b>结构分化</b>用「价格分位」而非 PE 分位（科创50 上市时间较短，估值序列覆盖不足十年）。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
@@ -368,11 +369,17 @@ function render(data) {
     TONES = Object.assign({}, LOCAL_TONES, data.tones || {});
 
     const errs = Object.keys(data.errors || {});
-    document.getElementById("stNotice").innerHTML = errs.length
+    let notice = errs.length
         ? "<div class=\"st-alert\">本次有 " + errs.length + " 项自动指标更新失败（" + errs.map(escapeHtml).join("、")
           + "），已展示上次成功读数。数据源依赖项目 venv 中的 akshare、交易所官网与东财数据中心；可稍后点「刷新数据」重试。</div>"
         : "";
-    document.getElementById("stUpdated").textContent = "更新于 " + (data.updated_at || "—")
+    if (data.stale) {
+        notice += "<div class=\"st-alert\">数据已 " + data.data_age_hours + " 小时未落库（最后更新 "
+          + escapeHtml(data.updated_at) + "）。本页读数由 ./start.sh 启动的定时任务抓取，本页自身不抓数据，"
+          + "请确认调度器在运行（日志 logs/scheduler.log）。</div>";
+    }
+    document.getElementById("stNotice").innerHTML = notice;
+    document.getElementById("stUpdated").textContent = "数据更新于 " + (data.updated_at || "—")
         + (data.refreshed ? "（本次刷新 " + data.refreshed + " 项）" : "");
 
     document.getElementById("stRoot").innerHTML = methodHtml()

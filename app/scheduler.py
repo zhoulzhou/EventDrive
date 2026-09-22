@@ -17,11 +17,8 @@ from app.crawlers import (
 )
 from app.crawlers.x_twitter import fetch_tweets
 from app.crawlers.market_data import refresh_market_data
-from app.utils.macro_refresh import refresh_snapshot, backfill_history
-from app.utils.stock_temp_refresh import (
-    refresh_snapshot as refresh_stock_temp_snapshot,
-    backfill_history as backfill_stock_temp,
-)
+from app.utils.macro_refresh import refresh_snapshot
+from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
 from app.utils.feishu_notifier import (
     dfcf_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
     doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify,
@@ -34,6 +31,9 @@ from app.utils.deepseek_analyzer import init_deepseek_analyzer, get_deepseek_ana
 logger = logging.getLogger(__name__)
 
 TOKYO_TZ = ZoneInfo("Asia/Tokyo")
+# 数据抓取任务（市场行情 / 宏观指标 / 股票指标）统一用**北京时间**，
+# 时刻由 start_scheduler() 指定；新闻抓取保持原有的 JST 节奏。
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 scheduler = AsyncIOScheduler(timezone=TOKYO_TZ)
 
@@ -165,29 +165,6 @@ async def refresh_macro_indicators():
     log_crawl("=" * 50)
 
 
-async def backfill_macro_history():
-    """回填宏观指标历史序列（默认增量窗口，幂等，可反复执行）。
-
-    历史表条数偏少时会自动升级为全量窗口（见 macro_refresh.SPARSE_HISTORY_ROWS），
-    所以新部署下这个任务也能自己把图表数据攒起来。
-    """
-    log_crawl("开始回填宏观指标历史序列...")
-
-    try:
-        result = await asyncio.to_thread(backfill_history)
-        extra = "（本次升级为全量窗口）" if result.get("escalated") else ""
-        log_crawl(
-            f"宏观指标历史回填完成: 生成 {result['generated']} 条, "
-            f"新增 {result['added']}, 更新 {result['updated']}, "
-            f"累计 {result['history_total']} 条{extra}"
-        )
-        for key, msg in (result.get("errors") or {}).items():
-            log_crawl(f"  ! {key} 回溯失败: {msg}")
-    except Exception as e:
-        log_crawl(f"宏观指标历史回填出错: {str(e)}")
-        logger.error(f"!!! 宏观指标历史回填出错: {e}", exc_info=True)
-
-
 async def refresh_stock_temp():
     """抓取股票指标（A 股冷热三层温度计）快照，写入最新值与历史表。
 
@@ -208,29 +185,6 @@ async def refresh_stock_temp():
         logger.error(f"!!! 股票指标更新出错: {e}", exc_info=True)
 
     log_crawl("=" * 50)
-
-
-async def backfill_stock_temp_history():
-    """回填股票指标历史（各数据源自带历史 + 交易所日频数据滚动窗口）。
-
-    幂等可反复执行；历史表条数偏少时会自动升级为全量窗口
-    （见 stock_temp_refresh.SPARSE_HISTORY_ROWS）。
-    """
-    log_crawl("开始回填股票指标历史序列...")
-
-    try:
-        result = await asyncio.to_thread(backfill_stock_temp)
-        extra = "（本次升级为全量窗口）" if result.get("escalated") else ""
-        log_crawl(
-            f"股票指标历史回填完成: 生成 {result['generated']} 条, "
-            f"新增 {result['added']}, 更新 {result['updated']}, "
-            f"累计 {result['history_total']} 条{extra}"
-        )
-        for key, msg in (result.get("errors") or {}).items():
-            log_crawl(f"  ! {key} 回溯失败: {msg}")
-    except Exception as e:
-        log_crawl(f"股票指标历史回填出错: {str(e)}")
-        logger.error(f"!!! 股票指标历史回填出错: {e}", exc_info=True)
 
 
 async def full_crawl():
@@ -352,8 +306,6 @@ async def full_crawl():
     else:
         log_crawl("X平台未配置，跳过")
 
-    await crawl_market_data()
-
     log_crawl("=" * 50)
     log_crawl(f"所有任务完成! 保存: {total_saved} 条, 分析推送: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
     log_crawl("=" * 50)
@@ -361,6 +313,7 @@ async def full_crawl():
 
 def start_scheduler():
     if not scheduler.running:
+        # 新闻抓取：保持原有节奏（JST 8/12/16/20）
         scheduler.add_job(
             full_crawl,
             trigger=CronTrigger(hour='8,12,16,20', minute=0, timezone=TOKYO_TZ),
@@ -368,47 +321,39 @@ def start_scheduler():
             name='Crawl at 8,12,16,20 JST',
             replace_existing=True
         )
+        # ---- 数据抓取三件套：市场行情 / 宏观指标 / 股票指标 ----
+        # 统一在**北京时间 20:30**（2026-09-22 用户要求），每天各跑一次。
+        # · 市场行情原先还挂在 full_crawl 末尾（跟着新闻一天跑 8 次），已摘出，只由这里触发；
+        # · 宏观 / 股票只抓「当前读数」（顺带把读数变化记进历史表）；趋势页的长历史序列由页面
+        #   「补齐历史数据」按钮触发（POST /api/*/backfill），不在定时任务里回溯；
+        # · 20:30 在 A 股收盘之后，当日日频数据（成交额 / 换手率 / 两融 / 估值）都已落地；
+        # · 三者同一时刻触发，会并发打外部接口（akshare / 交易所官网 / 央行），需要错开就改 minute。
         scheduler.add_job(
             crawl_market_data,
-            trigger=CronTrigger(hour='8,12,16,20', minute=0, timezone=TOKYO_TZ),
-            id='market_crawl_job_daily_4_times',
-            name='Crawl market data at 8,12,16,20 JST',
+            trigger=CronTrigger(hour='20', minute=30, timezone=CN_TZ),
+            id='market_crawl_job',
+            name='Crawl market data at 20:30 CST',
             replace_existing=True
         )
-        # 宏观指标：与新闻/行情同一节奏（JST 8/12/16/20），各错开几分钟避开抓取高峰
         scheduler.add_job(
             refresh_macro_indicators,
-            trigger=CronTrigger(hour='8,12,16,20', minute=5, timezone=TOKYO_TZ),
+            trigger=CronTrigger(hour='20', minute=30, timezone=CN_TZ),
             id='macro_snapshot_job',
-            name='Refresh macro indicators at 8,12,16,20 JST',
+            name='Refresh macro indicators at 20:30 CST',
             replace_existing=True
         )
-        scheduler.add_job(
-            backfill_macro_history,
-            trigger=CronTrigger(hour='8,12,16,20', minute=35, timezone=TOKYO_TZ),
-            id='macro_backfill_job',
-            name='Backfill macro history at 8,12,16,20 JST',
-            replace_existing=True
-        )
-        # 股票指标（三层温度计）：交易日收盘后才有意义，故只在 JST 16/20 两次；
-        # 与宏观指标错开时刻（10 分 / 40 分），避免多个抓取任务同时打外部接口
         scheduler.add_job(
             refresh_stock_temp,
-            trigger=CronTrigger(hour='16,20', minute=10, timezone=TOKYO_TZ),
+            trigger=CronTrigger(hour='20', minute=30, timezone=CN_TZ),
             id='stock_temp_snapshot_job',
-            name='Refresh stock temperature at 16,20 JST',
-            replace_existing=True
-        )
-        scheduler.add_job(
-            backfill_stock_temp_history,
-            trigger=CronTrigger(hour='16,20', minute=40, timezone=TOKYO_TZ),
-            id='stock_temp_backfill_job',
-            name='Backfill stock temperature history at 16,20 JST',
+            name='Refresh stock temperature at 20:30 CST',
             replace_existing=True
         )
         scheduler.start()
         logger.info(
-            "Scheduler started. Crawl + market data + macro indicators at 8,12,16,20 JST (Asia/Tokyo)."
+            "Scheduler started. News crawl at 8,12,16,20 JST; "
+            "market data + macro + stock indicators at 20:30 CST (Asia/Shanghai). "
+            "History backfill is manual only (页面「补齐历史数据」按钮 / POST /api/*/backfill)."
         )
 
 

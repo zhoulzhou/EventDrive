@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}股票走势 - A股冷热三层温度计{% endblock %}
+{% block title %}股票趋势 - A股冷热三层温度计{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="/static/css/stock.css">
@@ -9,11 +9,11 @@
 {% block content %}
 <div class="page-header st-header">
     <div class="st-header-text">
-        <h1>股票走势</h1>
+        <h1>股票趋势</h1>
         <p class="form-hint">
             只看<strong>历史曲线与走势</strong>：估值层（慢变量定方向）/ 情绪层（快变量定情绪）/ 资金层（资金变量定底气）/ 结构分开画，
             每张图都带阈值线与末端最新读数；最后用<strong>温度轨迹</strong>看三层是否在打架。
-            曲线的长短取决于历史回填窗口，日频序列靠逐日抓取滚动补齐。
+            曲线的长短取决于「补齐历史数据」的回溯窗口；本页与定时任务都不做历史回溯，需要更新时手动点一次。
             各指标的<strong>当前读数、阈值分档与判读</strong>见 <a href="/stock-temp">股票指标</a>。
         </p>
         <p class="form-hint st-src-line">

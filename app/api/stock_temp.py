@@ -1,7 +1,7 @@
 """股票指标（A 股冷热三层温度计）接口。
 
-- GET  /api/stock-temp          读取当前指标、分层判读与综合温度计（缓存过期时自动抓取一次）
-- POST /api/stock-temp/refresh  强制重新抓取全部指标
+- GET  /api/stock-temp          读取当前指标、分层判读与综合温度计（**只读库，不再自行抓取**）
+- POST /api/stock-temp/refresh  强制重新抓取全部指标（页面「刷新数据」按钮走这里）
 - GET  /api/stock-temp/series   读取趋势图所需的历史序列 + 重建的月度温度轨迹
 - GET  /api/stock-temp/history  查询任一指标的历史读数（只增不改的历史表）
 - POST /api/stock-temp/backfill 一次性回溯补齐历史数据（让趋势图有数据可画）
@@ -15,15 +15,24 @@
 
 落库为「最新快照 + 历史」两张表（见 app/models.py 的 StockTempIndicator /
 StockTempHistory）。抓取失败的指标保留上一次成功读数并在响应 errors 中提示。
+
+**本页数据全部由定时任务抓取**：`./start.sh` 启动的 `run_scheduler.py` 在
+**北京时间每天 20:30** 触发股票指标任务（抓取实现见 app/utils/stock_temp_refresh.py，与本文件的
+POST /refresh 共用同一份）。GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时的
+（交易所日频数据逐日抓取一次要 5 分钟以上，绝不能挂在页面请求上）。
+
+**「股票趋势」页的长历史序列不由定时任务生成**：定时任务只抓当前读数（顺带把读数
+变化与每日综合温度追加进历史表），历史回溯完全靠页面「补齐历史数据」按钮按需触发
+（POST /api/stock-temp/backfill）。
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app import crud
 from app.api.login import require_auth
@@ -34,26 +43,39 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# 页面「更新于」的展示时区（库中时间戳是 UTC，见 _utcnow）
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
-def _ensure_fresh(db: Session, force: bool = False):
-    """缓存为空或已过期时抓取一次；force=True 时无条件抓取。
+# 超过这个时长没有落库就提示检查调度器。数据抓取任务每天只在**北京 20:30** 跑一次，
+# 正常间隔就是 24 小时，故阈值取 26 小时（留 2 小时缓冲）：既避免误报，
+# 又能在「某天没跑成」的次日晚上及时提示。
+DATA_STALE_HOURS = 26
 
-    返回 (快照更新条数, {失败指标: 原因}, 新增历史条数)。
 
-    抓取实现见 app/utils/stock_temp_refresh.py，与定时任务共用。定时任务已主动刷新，
-    这里的惰性抓取只作兜底：库里还没有可取读数，或缓存超过 MACRO_CACHE_TTL_HOURS。
+def _utcnow() -> datetime:
+    """与库表 server_default=func.now()（SQLite 的 CURRENT_TIMESTAMP，UTC）保持同一基准。"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _data_written_at(db: Session) -> Optional[datetime]:
+    """本页展示的指标最近一次落库时间（UTC，可能为 None）。
+
+    只统计页面真正展示的指标键（st.AUTO_KEYS），避免把库里其他键算进来。
     """
-    if force:
-        return srf.refresh_snapshot(db)
+    keys = set(st.AUTO_KEYS)
+    stamps = [
+        row.updated_at
+        for key, row in crud.get_stock_temp_indicators(db).items()
+        if key in keys and row.updated_at is not None
+    ]
+    return max(stamps) if stamps else None
 
-    rows = crud.get_stock_temp_indicators(db)
-    pending = [k for k in st.AUTO_KEYS if k not in rows]
-    if pending:
-        return srf.refresh_snapshot(db)
 
-    if srf.is_stale(db, settings.MACRO_CACHE_TTL_HOURS):
-        return srf.refresh_snapshot(db)
-    return 0, {}, 0
+def _local_str(ts: Optional[datetime]) -> str:
+    """UTC 时间戳转北京时间字符串（库中时间戳为 UTC naive）。"""
+    if ts is None:
+        return "—"
+    return ts.replace(tzinfo=timezone.utc).astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _load_raw(db: Session) -> dict:
@@ -95,17 +117,31 @@ def _payload(db: Session, refreshed: int, errors: dict, history_added: int = 0) 
     payload["errors"] = errors
     payload["history_added"] = history_added
     payload["history_total"] = crud.count_stock_temp_history(db)
-    payload["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # updated_at 用「快照最近一次落库时间」而不是本次响应时间：本页读数由定时任务抓取
+    # 写入，页面只是读库，报响应时间会让人误以为数据刚刚刷新过。
+    written = _data_written_at(db)
+    payload["updated_at"] = _local_str(written)
+    if written is None:
+        payload["data_age_hours"] = None
+        payload["stale"] = False
+    else:
+        age = (_utcnow() - written).total_seconds() / 3600
+        payload["data_age_hours"] = round(age, 1)
+        payload["stale"] = age >= DATA_STALE_HOURS
     return payload
 
 
 @router.get("/stock-temp")
 def get_stock_temp(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    """返回三层指标读数、阈值判读、指标说明与综合市场温度计。"""
+    """读取库中已有的三层指标读数、阈值判读与综合市场温度计（**只读**）。
+
+    数据由 `./start.sh` 启动的定时任务在**北京时间每天 20:30** 抓取写入；需要立刻更新时
+    走 POST /api/stock-temp/refresh（页面「刷新数据」按钮）。
+    """
     try:
         crud.seed_stock_temp_history_from_snapshot(db)
-        refreshed, errors, history_added = _ensure_fresh(db)
-        return _payload(db, refreshed, errors, history_added)
+        return _payload(db, 0, {})
     except Exception as e:
         logger.error("获取股票指标失败: %s", e, exc_info=True)
         return {"status": "error", "message": str(e)}

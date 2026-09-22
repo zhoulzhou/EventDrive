@@ -1,7 +1,7 @@
 """宏观盯盘清单接口（三个维度 / 9 项指标）。
 
-- GET  /api/macro           读取当前指标与组合解读（缓存过期时自动抓取一次）
-- POST /api/macro/refresh   强制重新抓取全部指标
+- GET  /api/macro           读取当前指标与组合解读（**只读库，不再自行抓取**）
+- POST /api/macro/refresh   强制重新抓取全部指标（页面「刷新数据」按钮走这里）
 - GET  /api/macro/history   查询各指标的历史读数（只增不改的历史表）
 - GET  /api/macro/series    读取「三组一定位」图表面板所需的历史序列
 - POST /api/macro/backfill  一次性回溯补齐历史数据（让趋势图有数据可画）
@@ -17,17 +17,26 @@ A股估值/情绪类读数不在本页，见「股票指标」页（/stock-temp�
 - macro_indicators        ：每个指标一行，保存当前读数（覆盖式，页面读取用）
 - macro_indicator_history ：每次抓到的读数发生变化就追加一行（只增不改，用于回溯）
 
+**本页数据全部由定时任务抓取**：`./start.sh` 启动的 `run_scheduler.py` 在
+**北京时间每天 20:30** 触发宏观指标任务（抓取实现见 app/utils/macro_refresh.py，与本文件的
+POST /refresh 共用同一份）。GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时的；
+要立刻更新就点页面的「刷新数据」按钮（POST /refresh）。
+
+**「宏观趋势」页的长历史序列不由定时任务生成**：定时任务只抓当前读数（顺带把读数
+发生变化的行追加进历史表），历史回溯完全靠页面「补齐历史数据」按钮按需触发
+（POST /api/macro/backfill）。
+
 抓取失败的指标保留上一次成功读数并在响应 errors 中提示，不会清空已有数据，
 也不影响其他指标。
 """
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Dict, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app import crud
 from app.api.login import require_auth
@@ -39,8 +48,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 仍有指标未拿到真实读数时的重试间隔（避免每次打开页面都阻塞在抓取上）
-_RETRY_INTERVAL = timedelta(minutes=10)
+# 页面「更新于」的展示时区（库中时间戳是 UTC，见 _utcnow）
+CN_TZ = ZoneInfo("Asia/Shanghai")
+
+# 超过这个时长没有落库就提示检查调度器。数据抓取任务每天只在**北京 20:30** 跑一次，
+# 正常间隔就是 24 小时，故阈值取 26 小时（留 2 小时缓冲）：既避免误报，
+# 又能在「某天没跑成」的次日晚上及时提示。
+DATA_STALE_HOURS = 26
 
 
 def _utcnow() -> datetime:
@@ -48,40 +62,26 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _ensure_fresh(db: Session, force: bool = False) -> Tuple[int, Dict[str, str], int]:
-    """缓存为空或已过期时抓取一次；force=True 时无条件抓取。
+def _data_written_at(db: Session) -> Optional[datetime]:
+    """本页展示的指标最近一次落库时间（UTC，可能为 None）。
 
-    返回 (快照更新条数, {失败指标: 原因}, 新增历史条数)。
-
-    抓取实现见 app/utils/macro_refresh.py：该模块同时被定时任务复用
-    （见 app/scheduler.py 的宏观指标任务）。定时任务已按配置周期主动刷新，
-    这里的惰性抓取只作兜底：缓存过期或仍有指标没拿到真实读数时才触发。
+    只统计页面真正展示的自动指标键（mi.AUTO_KEYS）：库里可能残留已删功能的孤儿行
+    （如早先的 astock_* 读数），不带键过滤会把它们的时间算进来。
     """
-    if force:
-        return mrf.refresh_snapshot(db)
-
-    rows = crud.get_macro_indicators(db)
-    # 仍未拿到真实读数的指标：库中缺失、来源为兜底默认值，或来源不在自动来源内
-    # （含历史遗留的 manual 记录，会在本轮抓取中被真实读数替换）
-    pending = [
-        k for k in mi.AUTO_KEYS
-        if k not in rows or (rows[k].source or "") not in mi.AUTO_SOURCES
+    keys = set(mi.AUTO_KEYS)
+    stamps = [
+        row.updated_at
+        for key, row in crud.get_macro_indicators(db).items()
+        if key in keys and row.updated_at is not None
     ]
-    last_any = crud.get_macro_last_updated(db)
+    return max(stamps) if stamps else None
 
-    if pending:
-        # 抓不到真实读数时每次开页面都重试会阻塞，故限制重试间隔
-        if last_any is not None and (_utcnow() - last_any) < _RETRY_INTERVAL:
-            logger.info("市场指标仍缺真实读数 %s，距上次尝试不足 %s，跳过本次抓取",
-                        pending, _RETRY_INTERVAL)
-            return 0, {}, 0
-        return mrf.refresh_snapshot(db)
 
-    last = crud.get_macro_last_updated(db, source="akshare")
-    ttl = timedelta(hours=settings.MACRO_CACHE_TTL_HOURS)
-    if last is None or (_utcnow() - last) >= ttl:
-        return mrf.refresh_snapshot(db)
-    return 0, {}, 0
+def _local_str(ts: Optional[datetime]) -> str:
+    """UTC 时间戳转北京时间字符串（库中时间戳为 UTC naive）。"""
+    if ts is None:
+        return "—"
+    return ts.replace(tzinfo=timezone.utc).astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _source_note(detail: dict) -> str:
@@ -157,18 +157,32 @@ def _payload(db: Session, refreshed: int, errors: Dict[str, str], history_added:
     payload["errors"] = errors
     payload["history_added"] = history_added
     payload["history_total"] = crud.count_macro_history(db)
-    payload["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # updated_at 用「快照最近一次落库时间」而不是本次响应时间：本页的读数由定时任务
+    # 抓取写入，页面只是读库，报响应时间会让人误以为数据刚刚刷新过。
+    written = _data_written_at(db)
+    payload["updated_at"] = _local_str(written)
+    if written is None:
+        payload["data_age_hours"] = None
+        payload["stale"] = False
+    else:
+        age = (_utcnow() - written).total_seconds() / 3600
+        payload["data_age_hours"] = round(age, 1)
+        payload["stale"] = age >= DATA_STALE_HOURS
     return payload
 
 
 @router.get("/macro")
 def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    """返回资金面 / 经济热度各项指标、状态判定、指标说明与组合解读。"""
+    """读取库中已有的指标与组合解读（**只读**，不触发抓取）。
+
+    数据由 `./start.sh` 启动的定时任务在**北京时间每天 20:30** 抓取写入；需要立刻更新时
+    走 POST /api/macro/refresh（页面「刷新数据」按钮）。
+    """
     try:
         crud.seed_macro_fallbacks(db, mi.FALLBACK_DEFAULTS)
         crud.seed_macro_history_from_snapshot(db)
-        refreshed, errors, history_added = _ensure_fresh(db)
-        return _payload(db, refreshed, errors, history_added)
+        return _payload(db, 0, {})
     except Exception as e:
         logger.error("获取市场指标失败: %s", e, exc_info=True)
         return {"status": "error", "message": str(e)}
@@ -293,8 +307,8 @@ def backfill_macro(
     这是「让趋势图有数据可画」的动作，可重复执行：按（指标, 数据日期）覆盖写入，
     不会堆重复行。首次执行约需 1~2 分钟（日度区间逐月请求 + 央行社融逐期解析）。
 
-    定时任务每天会用较小的增量窗口自动补最近数据（见 app/scheduler.py），
-    这个接口用于需要立刻全量补齐时手动触发。
+    **这是「宏观趋势」页历史数据的唯一入口**：定时任务只抓当前读数、不做回溯
+    （见 app/scheduler.py），所以趋势图的长序列完全由本接口按需补齐。
     """
     try:
         months_daily = max(1, min(int(months_daily or 24), 60))

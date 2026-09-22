@@ -455,7 +455,13 @@ def upsert_macro_indicator(
 
 
 def upsert_macro_indicators(db: Session, records: List[dict]) -> int:
-    """批量写入市场指标读数。records 形如 [{key, value, as_of, source, detail}]。"""
+    """批量写入市场指标读数。records 形如 [{key, value, as_of, source, detail}]。
+
+    updated_at 显式写 CURRENT_TIMESTAMP：本表是「最新快照」，读数与上次完全相同时也
+    要留下「本次抓取成功落库」的痕迹，页面据此显示「数据更新于 …」并判断定时任务是否
+    还在跑。只靠 onupdate 的话，读数不变时 SQLAlchemy 不会发 UPDATE，时间会一直停在
+    上一次数值变化那天——长假/报告期未变时会被误判成调度器挂了。
+    """
     for rec in records:
         row = get_macro_indicator(db, rec["key"])
         if row is None:
@@ -465,6 +471,7 @@ def upsert_macro_indicators(db: Session, records: List[dict]) -> int:
         row.as_of = rec.get("as_of")
         row.source = rec.get("source", "akshare")
         row.detail = rec.get("detail", "{}")
+        row.updated_at = func.now()
     db.commit()
     return len(records)
 
@@ -744,7 +751,11 @@ def get_stock_temp_indicator(db: Session, key: str) -> Optional[models.StockTemp
 
 
 def upsert_stock_temp_indicators(db: Session, records: List[dict]) -> int:
-    """批量写入股票指标读数。records 形如 [{key, value, as_of, source, detail}]。"""
+    """批量写入股票指标读数。records 形如 [{key, value, as_of, source, detail}]。
+
+    updated_at 显式写 CURRENT_TIMESTAMP，口径与 upsert_macro_indicators 一致：
+    读数没变也要记录「本次抓取落库时间」，页面据此显示「数据更新于 …」。
+    """
     for rec in records:
         row = get_stock_temp_indicator(db, rec["key"])
         if row is None:
@@ -754,6 +765,7 @@ def upsert_stock_temp_indicators(db: Session, records: List[dict]) -> int:
         row.as_of = rec.get("as_of")
         row.source = rec.get("source", "akshare")
         row.detail = rec.get("detail", "{}")
+        row.updated_at = func.now()
     db.commit()
     return len(records)
 

@@ -6,10 +6,12 @@
 - refresh_snapshot() ：抓取全部自动指标，写 macro_indicators（最新快照）
                        与 macro_indicator_history（历史，读数变化才追加）
 - backfill_history() ：按（指标, 数据日期）回溯写入历史序列，幂等可重复执行；
-                       历史表过少时自动升级为全量回溯
+                       历史表过少时自动升级为全量回溯。**只由「宏观趋势」页的
+                       「补齐历史数据」按钮触发，不在定时任务里跑**
 
 定时任务在 app/scheduler.py 注册，由独立进程 run_scheduler.py 执行
-（Web 进程默认不跑调度器，见 settings.START_SCHEDULER）。
+（Web 进程默认不跑调度器，见 settings.START_SCHEDULER）；定时任务只调用
+refresh_snapshot() 抓当前读数，不做历史回溯。
 """
 import logging
 from typing import Any, Dict, Optional, Tuple
@@ -29,8 +31,9 @@ SPARSE_HISTORY_ROWS = 120
 # 全量回溯窗口
 FULL_WINDOWS = {"months_daily": 24, "months_monthly": 60, "tsf_limit": 13, "er_limit": 20}
 
-# 日常增量回溯窗口（只补最近的数据，请求量小，适合每日定时执行）
-# er_limit=0：超储率要逐份下载央行季报 PDF（每份数 MB），不放进日更
+# 直接调用 backfill_history() 且不传窗口时的默认值（只补最近几个月，请求量小）。
+# 页面按钮走 POST /api/macro/backfill，会显式传全量窗口（24 个月日度 / 60 个月月度）。
+# er_limit=0：超储率要逐份下载央行季报 PDF（每份数 MB），默认不回溯
 INCREMENTAL_WINDOWS = {"months_daily": 2, "months_monthly": 3, "tsf_limit": 3, "er_limit": 0}
 
 # 超储率历史少于这个期数时，才在回填里顺带回溯一次（之后靠快照更新最新一期）
@@ -110,13 +113,14 @@ def backfill_history(
 ) -> Dict[str, Any]:
     """回溯历史序列并写入历史表（幂等：按「指标 + 数据日期」覆盖写）。
 
-    默认走增量窗口（只补最近几个月，请求量小），适合每日定时执行；当历史表条数
-    少于 SPARSE_HISTORY_ROWS（新部署、历史被清空）时自动升级为全量窗口，避免
-    定时任务永远只补到最近几个月的数据。
+    触发入口只有页面「补齐历史数据」按钮（POST /api/macro/backfill）；**定时任务
+    不再调用本函数**（见 app/scheduler.py，定时任务只抓当前读数）。不传窗口时走增量
+    窗口（只补最近几个月，请求量小）；当历史表条数少于 SPARSE_HISTORY_ROWS
+    （新部署、历史被清空）时自动升级为全量窗口。
 
     超储率（er_limit）单独处理：它只在央行季报 PDF 正文里，要逐份下载解析
     （每份数 MB、约 5~10 秒）。er_limit=None 时按「已有历史是否够」自动判断——
-    不足 ER_MIN_ROWS 期才回溯一次；补过之后日更只靠快照写入最新一期，不再重复
+    不足 ER_MIN_ROWS 期才回溯一次；补过之后只靠快照抓取写入最新一期，不再重复
     下载几十份 PDF。
 
     返回 {generated, added, updated, counts, errors, history_total, escalated, windows}。

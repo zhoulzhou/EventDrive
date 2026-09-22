@@ -6,13 +6,15 @@
 - refresh_snapshot() ：抓取全部指标的当前读数，写 stock_temp_indicators（最新快照）
                        与 stock_temp_history（历史，读数变化才追加）
 - backfill_history() ：各数据源自带历史的指标直接整段回填；交易所日频数据（成交额 /
-                       换手率 / 流通市值）按最近 N 个交易日逐日补齐，幂等可重复执行
+                       换手率 / 流通市值）按最近 N 个交易日逐日补齐，幂等可重复执行。
+                       **只由「股票趋势」页的「补齐历史数据」按钮触发，不在定时任务里跑**
 
 定时任务在 app/scheduler.py 注册，由独立进程 run_scheduler.py 执行
-（Web 进程默认不跑调度器，见 settings.START_SCHEDULER）。
+（Web 进程默认不跑调度器，见 settings.START_SCHEDULER）；定时任务只调用
+refresh_snapshot() 抓当前读数，不做历史回溯。
 """
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -26,7 +28,8 @@ logger = logging.getLogger(__name__)
 # 历史表条数低于此值时，回填自动升级为全量窗口（新部署 / 历史被清空后自愈）
 SPARSE_HISTORY_ROWS = 300
 
-# 日常增量窗口：交易所数据只补最近几个交易日，产业资本只补最近 2 个月
+# 直接调用 backfill_history() 且不传窗口时的默认值（只补最近几天，请求量小）。
+# 页面按钮走 POST /api/stock-temp/backfill，会显式传窗口（默认 60 个交易日 / 24 个月）。
 INCREMENTAL_WINDOWS = {"exchange_days": 5, "industry_months": 2}
 
 # 手动「补齐历史」的默认窗口
@@ -34,11 +37,6 @@ BACKFILL_WINDOWS = {"exchange_days": 60, "industry_months": 24}
 
 # 全量窗口（历史偏少时自动升级）
 FULL_WINDOWS = {"exchange_days": 90, "industry_months": 36}
-
-
-def _utcnow() -> datetime:
-    """与库表 server_default=func.now()（SQLite 的 CURRENT_TIMESTAMP，UTC）同一基准。"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _snapshot_records(db: Session) -> Dict[str, dict]:
@@ -265,11 +263,3 @@ def backfill_history(
     finally:
         if own:
             db.close()
-
-
-def is_stale(db: Session, ttl_hours: float) -> bool:
-    """快照是否已过期（用于页面惰性兜底抓取）。"""
-    last = crud.get_stock_temp_last_updated(db, source="akshare")
-    if last is None:
-        return True
-    return (_utcnow() - last) >= timedelta(hours=ttl_hours)
