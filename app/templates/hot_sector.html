@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+
+{% block title %}今日热点 - 新闻抓取应用{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="hot-head">
+        <h1>今日热点</h1>
+        <div class="hot-actions">
+            <p class="form-hint" id="metaInfo"></p>
+            <button id="refreshBtn" type="button" class="btn-refresh">刷新数据</button>
+        </div>
+    </div>
+    <p class="form-hint">口径：东方财富概念板块，按当日涨幅为主、主力资金净流入为辅综合排名，取前三。</p>
+</div>
+
+<div id="hotBody">
+    <div class="loading">加载中...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadHotSector(refresh) {
+    const body = document.getElementById('hotBody');
+    body.innerHTML = '<div class="loading">加载中...</div>';
+
+    try {
+        const url = '/api/hot-sector' + (refresh ? '?refresh=1' : '');
+        const response = await fetchWithAuth(url);
+        const data = await response.json();
+
+        if (data.status !== 'ok') {
+            body.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
+            return;
+        }
+
+        const meta = document.getElementById('metaInfo');
+        const cacheTag = data.cached ? ' · 缓存' : '';
+        const reasonTag = data.reason_source === 'llm'
+            ? ` · 归因由 ${data.reason_model || '大模型'} 生成`
+            : ' · 归因为规则归纳（未配置大模型 API Key）';
+        meta.textContent = `数据来源：${data.source} · 更新于：${data.generated_at}${cacheTag}${reasonTag}`;
+
+        body.innerHTML = data.sectors.map(renderSector).join('')
+            + (data.errors && data.errors.length
+                ? `<div class="hot-warn">部分数据获取失败：${data.errors.map(escapeHtml).join('；')}</div>` : '');
+    } catch (error) {
+        body.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
+    }
+}
+
+function pct(value) {
+    if (value == null) return '--';
+    return (value >= 0 ? '+' : '') + value.toFixed(2) + '%';
+}
+
+// A 股惯例：涨红跌绿
+function pctClass(value) {
+    if (value == null) return '';
+    return value >= 0 ? 'up' : 'down';
+}
+
+function renderSector(sector) {
+    const flow = sector.main_net_inflow;
+    const flowText = flow == null ? '--' : (flow >= 0 ? '+' : '') + flow.toFixed(2) + ' 亿';
+
+    const stocks = (sector.stocks || []).map(st => `
+        <tr>
+            <td class="mono">${escapeHtml(st.code || '')}</td>
+            <td>${escapeHtml(st.name || '')}</td>
+            <td class="mono">${st.price == null ? '--' : st.price.toFixed(2)}</td>
+            <td class="mono ${pctClass(st.change_percent)}">${pct(st.change_percent)}</td>
+            <td class="mono">${st.amount == null ? '--' : st.amount.toFixed(2)}</td>
+            <td class="mono">${st.turnover_rate == null ? '--' : st.turnover_rate.toFixed(2) + '%'}</td>
+            <td class="mono">${st.amplitude == null ? '--' : st.amplitude.toFixed(2) + '%'}</td>
+            <td class="mono">${st.pe == null ? '--' : st.pe.toFixed(1)}</td>
+        </tr>
+    `).join('');
+
+    return `
+        <div class="hot-card">
+            <div class="hot-card-head">
+                <span class="hot-rank">No.${sector.rank}</span>
+                <span class="hot-name">${escapeHtml(sector.name)}</span>
+                <span class="hot-code">${escapeHtml(sector.code || '')}</span>
+                <span class="hot-change ${pctClass(sector.change_percent)}">${pct(sector.change_percent)}</span>
+            </div>
+            <div class="hot-stats">
+                <span>主力净流入 <b>${flowText}</b></span>
+                <span>成分股 <b>${sector.up_count} 涨 / ${sector.down_count} 跌</b></span>
+                <span>换手率 <b>${sector.turnover_rate == null ? '--' : sector.turnover_rate.toFixed(2) + '%'}</b></span>
+                <span>领涨股 <b>${escapeHtml(sector.lead_stock || '--')}</b> ${pct(sector.lead_stock_change)}</span>
+            </div>
+            <div class="hot-reason">
+                <span class="hot-reason-label">驱动原因</span>
+                <span>${escapeHtml(sector.reason || '暂无')}</span>
+            </div>
+            <div class="hot-table-wrap">
+                <table class="hot-table">
+                    <thead>
+                        <tr>
+                            <th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th>
+                            <th>成交额(亿)</th><th>换手率</th><th>振幅</th><th>PE(动)</th>
+                        </tr>
+                    </thead>
+                    <tbody>${stocks || '<tr><td colspan="8" class="hot-empty">暂无成分股数据</td></tr>'}</tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+document.getElementById('refreshBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.textContent = '刷新中...';
+    try {
+        await loadHotSector(true);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '刷新数据';
+    }
+});
+
+loadHotSector(false);
+</script>
+
+<style>
+.page-header h1 { margin: 0 0 0.5rem; font-size: 1.35rem; color: #333; }
+.hot-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.hot-actions { display: flex; align-items: center; gap: 0.75rem; }
+.btn-refresh {
+    padding: 0.35rem 1rem;
+    font-size: 0.85rem;
+    border: 1px solid #2563eb;
+    border-radius: 6px;
+    background: #2563eb;
+    color: #fff;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+.btn-refresh:hover { opacity: 0.88; }
+.btn-refresh:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.hot-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.hot-card-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+.hot-rank {
+    background: #2563eb;
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border-radius: 4px;
+}
+.hot-name { font-size: 1.2rem; font-weight: 700; color: #222; }
+.hot-code { font-size: 0.82rem; color: #999; }
+.hot-change { font-size: 1.2rem; font-weight: 700; margin-left: auto; }
+
+.hot-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-top: 0.75rem;
+    font-size: 0.88rem;
+    color: #666;
+}
+.hot-stats b { color: #222; font-weight: 600; }
+
+.hot-reason {
+    margin-top: 0.9rem;
+    padding: 0.75rem 1rem;
+    background: #f7f9fc;
+    border-left: 3px solid #2563eb;
+    border-radius: 0 6px 6px 0;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: #333;
+}
+.hot-reason-label {
+    display: inline-block;
+    margin-right: 0.6rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #2563eb;
+}
+
+.hot-table-wrap { margin-top: 1rem; overflow-x: auto; }
+.hot-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.hot-table th {
+    text-align: right;
+    font-weight: 600;
+    color: #888;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid #e8ecf0;
+    white-space: nowrap;
+}
+.hot-table th:nth-child(1), .hot-table th:nth-child(2) { text-align: left; }
+.hot-table td {
+    text-align: right;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid #f2f5f8;
+    color: #333;
+    white-space: nowrap;
+}
+.hot-table td:nth-child(1), .hot-table td:nth-child(2) { text-align: left; }
+.hot-table tbody tr:hover { background: #fafbfd; }
+.hot-table .mono { font-variant-numeric: tabular-nums; }
+
+/* A 股惯例：涨红跌绿 */
+.up { color: #dc3545; }
+.down { color: #16a34a; }
+.hot-empty { text-align: center !important; color: #999; }
+.hot-warn {
+    padding: 0.7rem 1rem;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: #b45309;
+}
+</style>
+{% endblock %}

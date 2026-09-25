@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation, macro, stock_temp
+from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation, macro, stock_temp, hot_sector
 from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
@@ -108,6 +108,7 @@ app.include_router(finance.router, prefix="/api", tags=["finance"])
 app.include_router(valuation.router, prefix="/api", tags=["valuation"])
 app.include_router(macro.router, prefix="/api", tags=["macro"])
 app.include_router(stock_temp.router, prefix="/api", tags=["stock-temp"])
+app.include_router(hot_sector.router, prefix="/api", tags=["hot-sector"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:
@@ -217,10 +218,19 @@ async def stock_trend_page(request: Request):
     return render_template("stock_trend.html", {"request": request})
 
 
+@app.get("/hot-sector")
+async def hot_sector_page(request: Request):
+    """今日热点：A 股概念板块热点前三 + 驱动原因 + 板块前五个股交易情况（实时抓取）。"""
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("hot_sector.html", {"request": request})
+
+
 _PAGE_LINKS = [
     ("/home", "首页"),
     ("/crawl", "抓取"),
     ("/market", "行情"),
+    ("/hot-sector", "今日热点"),
     ("/index-alarm", "指数预警"),
     ("/finance", "财务"),
     ("/valuation", "估值"),

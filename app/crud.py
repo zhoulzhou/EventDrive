@@ -58,6 +58,19 @@ def get_news_list(
     return query.offset(skip).limit(limit).all()
 
 
+def get_recent_news_titles(db: Session, hours: int = 48, limit: int = 40) -> List[str]:
+    """返回最近 N 小时内的新闻标题（按发布时间倒序），供今日热点的板块归因使用。"""
+    cutoff_time = datetime.now() - timedelta(hours=hours)
+    rows = (
+        db.query(models.News.title)
+        .filter(models.News.publish_time >= cutoff_time)
+        .order_by(desc(models.News.publish_time))
+        .limit(limit)
+        .all()
+    )
+    return [row[0] for row in rows if row[0]]
+
+
 def create_news(db: Session, news: schemas.NewsCreate) -> models.News:
     db_news = models.News(**news.model_dump())
     db.add(db_news)
