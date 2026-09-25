@@ -3,11 +3,12 @@
 - GET /api/hot-sector            读取今日热点（10 分钟内复用内存缓存）
 - GET /api/hot-sector?refresh=1  强制重新抓取（页面「刷新」按钮）
 
-数据抓取走 akshare（东方财富公开接口），**不做定时落库**：热点盘中变化快，
-页面实时抓取更贴合"今日"语义，缓存与强制刷新见 app/utils/hot_sector.py。
+数据抓取走 akshare（东方财富公开接口）。热点盘中变化快，页面打开时实时抓取、
+10 分钟内复用缓存，具体口径与缓存见 app/utils/hot_sector.py。
 
-每次实际抓取（未命中缓存）的结果按 (交易日, 板块) 写入 hot_sector_snapshots 表，
-供后续复盘；命中缓存时不重复写库。
+每次实际抓取（未命中缓存）的结果按 (交易日, 板块) 写入 hot_sector_snapshots 表供后续复盘；
+该「抓取 → 落库」逻辑与定时任务共用 app/utils/hot_sector_refresh.py，
+定时任务在收盘后（北京时间 20:35）补抓一次，保证不开页面也能留下每日复盘记录。
 """
 import logging
 
@@ -15,9 +16,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app import crud
 from app.api.login import require_auth
-from app.utils import hot_sector as hs
+from app.utils.hot_sector_refresh import fetch_and_store_hot_sector
 
 logger = logging.getLogger(__name__)
 
@@ -32,25 +32,7 @@ async def get_hot_sector(
 ):
     """返回今日热点板块（概念板块·涨幅为主+资金为辅综合前三）及驱动原因、板块前五个股。"""
     try:
-        # 近期新闻标题作为大模型归因的素材；库中无新闻时传空列表即可
-        news_titles = crud.get_recent_news_titles(db, hours=48, limit=40)
-        payload = await hs.build_hot_sector_payload(news_titles=news_titles, force=refresh)
-
-        # 只在本次真的抓取了数据时落库（命中缓存的数据上次已写过），失败不影响页面展示
-        if payload.get("status") == "ok" and not payload.get("cached"):
-            try:
-                crud.save_hot_sector_snapshots(
-                    db,
-                    trade_date=payload["trade_date"],
-                    sectors=payload["sectors"],
-                    reason_source=payload.get("reason_source"),
-                    reason_model=payload.get("reason_model"),
-                )
-            except Exception as e:
-                logger.error("今日热点快照落库失败: %s", e, exc_info=True)
-                payload.setdefault("errors", []).append("快照落库失败，本次数据未存档")
-
-        return payload
+        return await fetch_and_store_hot_sector(force=refresh, db=db)
     except Exception as e:
         logger.error("获取今日热点失败: %s", e, exc_info=True)
         return {"status": "error", "message": str(e)}

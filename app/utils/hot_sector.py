@@ -13,7 +13,8 @@
 
 本模块走「页面实时抓取 + 内存缓存」模式（与市场行情/宏观指标的定时落库模式不同）：
 热点盘中变化快，页面打开时按需抓取，10 分钟内复用缓存，页面「刷新」按钮可强制绕过缓存。
-每次实际抓取（非命中缓存）的结果由接口层写入 hot_sector_snapshots 表，供后续复盘。
+抓取结果的落库（按交易日写 hot_sector_snapshots 表，供复盘）抽在 app/utils/hot_sector_refresh.py，
+由页面接口与收盘后定时任务共用。
 """
 import asyncio
 import json
