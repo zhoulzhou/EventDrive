@@ -8,10 +8,13 @@
         <h1>今日热点</h1>
         <div class="hot-actions">
             <p class="form-hint" id="metaInfo"></p>
-            <button id="refreshBtn" type="button" class="btn-refresh">刷新数据</button>
+            <button id="refreshBtn" type="button" class="btn-refresh">刷新盘面</button>
         </div>
     </div>
-    <p class="form-hint">口径：东方财富概念板块，按当日涨幅为主、主力资金净流入为辅综合排名，取前三。</p>
+    <p class="form-hint">
+        口径：东方财富概念板块，按当日涨幅为主、主力资金净流入为辅综合排名，取前三。
+        本页打开时只读取已存档数据（点击「刷新盘面」抓取或收盘后自动抓取），不会自动抓取行情。
+    </p>
 </div>
 
 <div id="hotBody">
@@ -21,33 +24,68 @@
 
 {% block scripts %}
 <script>
-async function loadHotSector(refresh) {
+// 打开页面：只读库中已有的快照，不发任何真实抓取请求
+async function loadSaved() {
     const body = document.getElementById('hotBody');
     body.innerHTML = '<div class="loading">加载中...</div>';
 
     try {
-        const url = '/api/hot-sector' + (refresh ? '?refresh=1' : '');
-        const response = await fetchWithAuth(url);
+        const response = await fetchWithAuth('/api/hot-sector');
         const data = await response.json();
-
-        if (data.status !== 'ok') {
-            body.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
-            return;
-        }
-
-        const meta = document.getElementById('metaInfo');
-        const cacheTag = data.cached ? ' · 缓存' : '';
-        const reasonTag = data.reason_source === 'llm'
-            ? ` · 归因由 ${data.reason_model || '大模型'} 生成`
-            : ' · 归因为规则归纳（未配置 DeepSeek API Key）';
-        meta.textContent = `交易日：${data.trade_date} · 数据来源：${data.source} · 更新于：${data.generated_at}${cacheTag}${reasonTag}`;
-
-        body.innerHTML = data.sectors.map(renderSector).join('')
-            + (data.errors && data.errors.length
-                ? `<div class="hot-warn">部分数据获取失败：${data.errors.map(escapeHtml).join('；')}</div>` : '');
+        renderResult(data, false);
     } catch (error) {
-        body.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
+        showError(error.message);
     }
+}
+
+// 点击「刷新盘面」：抓取最新盘面并落库，再回读展示
+async function refreshMarket() {
+    const body = document.getElementById('hotBody');
+    body.innerHTML = '<div class="loading">正在抓取最新盘面数据...</div>';
+
+    try {
+        const response = await fetchWithAuth('/api/hot-sector/refresh', { method: 'POST' });
+        const data = await response.json();
+        renderResult(data, true);
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+function showError(message) {
+    document.getElementById('hotBody').innerHTML =
+        `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(message || '未知错误')}</p></div>`;
+}
+
+function renderResult(data, justRefreshed) {
+    const meta = document.getElementById('metaInfo');
+    const body = document.getElementById('hotBody');
+
+    if (data.status === 'error') {
+        meta.textContent = '';
+        showError(data.message);
+        return;
+    }
+
+    if (data.status === 'empty') {
+        meta.textContent = '';
+        body.innerHTML = `
+            <div class="hot-empty-state">
+                <h2>暂无热点数据</h2>
+                <p>${escapeHtml(data.message || '点击「刷新盘面」抓取当前盘面数据。')}</p>
+            </div>`;
+        return;
+    }
+
+    const reasonTag = data.reason_source === 'llm'
+        ? ` · 归因由 ${data.reason_model || 'DeepSeek'} 生成`
+        : ' · 归因为规则归纳（未配置 DeepSeek API Key）';
+    const actionTag = justRefreshed ? ' · 刚刚刷新' : '';
+    meta.textContent = `交易日：${data.trade_date} · 数据存档时间：${data.generated_at}${actionTag}${reasonTag}`;
+
+    body.innerHTML = data.sectors.map(renderSector).join('')
+        + (data.errors && data.errors.length
+            ? `<div class="hot-warn">部分数据获取失败：${data.errors.map(escapeHtml).join('；')}</div>` : '');
 }
 
 function pct(value) {
@@ -114,16 +152,16 @@ function renderSector(sector) {
 document.getElementById('refreshBtn').addEventListener('click', async () => {
     const btn = document.getElementById('refreshBtn');
     btn.disabled = true;
-    btn.textContent = '刷新中...';
+    btn.textContent = '抓取中...';
     try {
-        await loadHotSector(true);
+        await refreshMarket();
     } finally {
         btn.disabled = false;
-        btn.textContent = '刷新数据';
+        btn.textContent = '刷新盘面';
     }
 });
 
-loadHotSector(false);
+loadSaved();
 </script>
 
 <style>
@@ -225,5 +263,14 @@ loadHotSector(false);
     font-size: 0.85rem;
     color: #b45309;
 }
+.hot-empty-state {
+    background: #fff;
+    border-radius: 12px;
+    padding: 3rem 1.5rem;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.hot-empty-state h2 { margin: 0 0 0.5rem; font-size: 1.1rem; color: #555; }
+.hot-empty-state p { margin: 0; color: #888; font-size: 0.9rem; }
 </style>
 {% endblock %}

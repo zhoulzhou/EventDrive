@@ -893,3 +893,26 @@ def save_hot_sector_snapshots(
 
     db.commit()
     return len(sectors)
+
+
+def get_latest_hot_sector_snapshot(db: Session):
+    """读取库中最新一个交易日的全部热点板块快照（供「今日热点」页只读展示）。
+
+    返回 (trade_date, rows, fetched_at)：
+    - trade_date：库中最大的交易日（无数据时为 None）
+    - rows      ：该交易日全部板块行，按板块排名正序
+    - fetched_at：该交易日最近一次抓取时间（UTC，与库表 func.now() 同基准）
+    库中无数据时返回 (None, [], None)。
+    """
+    latest_date = db.query(func.max(models.HotSectorSnapshot.trade_date)).scalar()
+    if not latest_date:
+        return None, [], None
+
+    rows = (
+        db.query(models.HotSectorSnapshot)
+        .filter(models.HotSectorSnapshot.trade_date == latest_date)
+        .order_by(models.HotSectorSnapshot.board_rank)
+        .all()
+    )
+    fetched_at = max((r.fetched_at for r in rows if r.fetched_at), default=None)
+    return latest_date, rows, fetched_at

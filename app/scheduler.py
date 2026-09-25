@@ -200,7 +200,7 @@ async def refresh_hot_sector():
     log_crawl("=" * 50)
 
     try:
-        payload = await fetch_and_store_hot_sector(force=True)
+        payload = await fetch_and_store_hot_sector()
         if payload.get("status") != "ok":
             log_crawl(f"今日热点更新失败: {payload.get('message')}")
         else:
@@ -388,8 +388,9 @@ def start_scheduler():
             replace_existing=True
         )
         # ---- 今日热点：北京时间 20:35 抓取当日热点板块并落库 ----
-        # 热点数据本由「今日热点」页实时抓取，但页面不打开就没有存档；这里在收盘后补抓一次，
-        # 保证每个交易日必定留下一条复盘记录（对同一交易日同一板块就地覆盖，取当日最终结果）。
+        # 热点数据只在两个时机写入：用户点页面「刷新盘面」，或本任务。这里在收盘后补抓一次，
+        # 保证每个交易日必定留下一条复盘记录（对同一交易日同一板块就地覆盖，取当日最终结果），
+        # 页面打开时只读库展示，不发外部请求。
         # 排在 20:35 是为了避让 20:30 同时触发的市场行情/宏观/股票三件套，避免并发打外部接口。
         scheduler.add_job(
             refresh_hot_sector,

@@ -11,10 +11,12 @@
 驱动原因：调用大模型 DeepSeek 结合板块数据与近期新闻标题归因；
 未配置 DEEPSEEK_API_KEY 或调用失败时，降级为基于板块数据的规则归纳，保证页面始终可用。
 
-本模块走「页面实时抓取 + 内存缓存」模式（与市场行情/宏观指标的定时落库模式不同）：
-热点盘中变化快，页面打开时按需抓取，10 分钟内复用缓存，页面「刷新」按钮可强制绕过缓存。
-抓取结果的落库（按交易日写 hot_sector_snapshots 表，供复盘）抽在 app/utils/hot_sector_refresh.py，
-由页面接口与收盘后定时任务共用。
+本模块只负责「抓取 + 组装」，不读库也不缓存：
+
+- 页面打开时的只读展示读的是库中快照（app/api/hot_sector.py 的 GET，不发外部请求）；
+- 抓取只由用户点「刷新盘面」（POST /api/hot-sector/refresh）或收盘后定时任务触发；
+- 抓取结果的落库（按交易日写 hot_sector_snapshots 表，供复盘）抽在 app/utils/hot_sector_refresh.py，
+  由页面接口与定时任务共用。
 """
 import asyncio
 import json
@@ -34,15 +36,10 @@ logger = logging.getLogger(__name__)
 TOP_N = 3
 TOP_STOCKS = 5
 
-# 缓存有效期（秒）：热点盘中变化快，10 分钟内的重复打开直接复用
-CACHE_TTL_SECONDS = 600
-
 # 伪板块（非真实题材）过滤：这些概念板块是统计口径聚合板块，不构成"热点题材"
 _EXCLUDE_KEYWORDS = ("昨日", "连板", "融资融券", "转债", "机构重仓")
 
 _client = httpx.AsyncClient(timeout=60, trust_env=False)
-
-_cache: Dict[str, Any] = {"payload": None, "at": 0.0}
 
 
 def _num(value) -> Optional[float]:
@@ -337,28 +334,10 @@ async def generate_reasons(
 # --------------------------------------------------------------------------- #
 # 组装
 # --------------------------------------------------------------------------- #
-def _cache_get() -> Optional[Dict[str, Any]]:
-    payload = _cache.get("payload")
-    if payload is None:
-        return None
-    if (datetime.now().timestamp() - _cache.get("at", 0.0)) > CACHE_TTL_SECONDS:
-        return None
-    return payload
-
-
 async def build_hot_sector_payload(
-    news_titles: Optional[List[str]] = None, force: bool = False
+    news_titles: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """抓取并组装今日热点数据（带内存缓存）。
-
-    force=True 时绕过缓存（页面「刷新」按钮）；抓取过程耗时的部分放到线程池，
-    避免阻塞事件循环。
-    """
-    if not force:
-        cached = _cache_get()
-        if cached is not None:
-            return {**cached, "cached": True}
-
+    """抓取并组装今日热点数据（每次调用都真实抓取，不做缓存）。"""
     errors: List[str] = []
     try:
         boards, flows, trade_date = await asyncio.gather(
@@ -396,12 +375,9 @@ async def build_hot_sector_payload(
         "trade_date": trade_date,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "source": "东方财富 · akshare 实时行情",
-        "cached": False,
         "reason_source": reason_result["source"],
         "reason_model": reason_result["model"],
         "sectors": sectors,
         "errors": errors,
     }
-    _cache["payload"] = payload
-    _cache["at"] = datetime.now().timestamp()
     return payload
