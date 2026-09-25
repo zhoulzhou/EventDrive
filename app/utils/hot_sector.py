@@ -8,11 +8,12 @@
 热度口径（产品要求）：以**当日涨跌幅为主、主力资金净流入为辅**综合排序，取前 3 个概念板块。
 综合评分 = 涨幅排名 × 0.6 + 资金净流入排名 × 0.4（排名越靠前分数越小）。
 
-驱动原因：优先调用大模型（DeepSeek / 豆包，取已配置的那个）结合板块数据与近期新闻标题归因；
-未配置 API Key 或调用失败时，降级为基于板块数据的规则归纳，保证页面始终可用。
+驱动原因：调用大模型 DeepSeek 结合板块数据与近期新闻标题归因；
+未配置 DEEPSEEK_API_KEY 或调用失败时，降级为基于板块数据的规则归纳，保证页面始终可用。
 
 本模块走「页面实时抓取 + 内存缓存」模式（与市场行情/宏观指标的定时落库模式不同）：
 热点盘中变化快，页面打开时按需抓取，10 分钟内复用缓存，页面「刷新」按钮可强制绕过缓存。
+每次实际抓取（非命中缓存）的结果由接口层写入 hot_sector_snapshots 表，供后续复盘。
 """
 import asyncio
 import json
@@ -83,6 +84,23 @@ def fetch_board_stocks(code: str) -> pd.DataFrame:
     import akshare as ak
 
     return ak.stock_board_concept_cons_em(symbol=code)
+
+
+def resolve_trade_date() -> str:
+    """最近一个 A 股交易日（YYYY-MM-DD），用于快照落库按交易日分组；取不到时退化为当日。
+
+    复用股票指标模块已有的交易日历逻辑（akshare 新浪交易日历），避免各页各自维护；
+    该函数内部已兜底，不会抛异常。
+    """
+    try:
+        from app.utils.stock_temp import trading_days_ago
+
+        days = trading_days_ago(1)
+        if days:
+            return days[-1]
+    except Exception as e:
+        logger.warning("获取 A 股交易日失败，快照日期退化为当日: %s", e)
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 # --------------------------------------------------------------------------- #
@@ -190,20 +208,13 @@ def rule_reason(sector: Dict[str, Any]) -> str:
 
 
 def _llm_config() -> Optional[Dict[str, str]]:
-    """选取已配置的大模型（DeepSeek 优先，其次豆包），均兼容 OpenAI chat/completions 协议。"""
+    """驱动原因固定走 DeepSeek（OpenAI 兼容 chat/completions 协议）。"""
     if settings.DEEPSEEK_API_KEY:
         return {
             "label": "DeepSeek",
             "url": "https://api.deepseek.com/v1/chat/completions",
             "key": settings.DEEPSEEK_API_KEY,
             "model": settings.DEEPSEEK_MODEL,
-        }
-    if settings.KB_API_KEY:
-        return {
-            "label": "豆包",
-            "url": f"https://ark.{settings.KB_REGION}.volces.com/api/v3/chat/completions",
-            "key": settings.KB_API_KEY,
-            "model": settings.KB_MODEL_ID,
         }
     return None
 
@@ -279,7 +290,7 @@ async def generate_reasons(
     cfg = _llm_config()
     if not cfg or not sectors:
         if not cfg:
-            logger.info("未配置 DeepSeek/豆包 API Key，热点驱动原因降级为规则归纳")
+            logger.info("未配置 DeepSeek API Key，热点驱动原因降级为规则归纳")
         return fallback
 
     try:
@@ -349,9 +360,10 @@ async def build_hot_sector_payload(
 
     errors: List[str] = []
     try:
-        boards, flows = await asyncio.gather(
+        boards, flows, trade_date = await asyncio.gather(
             asyncio.to_thread(fetch_concept_boards),
             asyncio.to_thread(fetch_concept_fund_flow),
+            asyncio.to_thread(resolve_trade_date),
         )
     except Exception as e:
         logger.error("抓取概念板块数据失败: %s", e, exc_info=True)
@@ -380,6 +392,7 @@ async def build_hot_sector_payload(
 
     payload = {
         "status": "ok",
+        "trade_date": trade_date,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "source": "东方财富 · akshare 实时行情",
         "cached": False,

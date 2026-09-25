@@ -5,6 +5,9 @@
 
 数据抓取走 akshare（东方财富公开接口），**不做定时落库**：热点盘中变化快，
 页面实时抓取更贴合"今日"语义，缓存与强制刷新见 app/utils/hot_sector.py。
+
+每次实际抓取（未命中缓存）的结果按 (交易日, 板块) 写入 hot_sector_snapshots 表，
+供后续复盘；命中缓存时不重复写库。
 """
 import logging
 
@@ -31,7 +34,23 @@ async def get_hot_sector(
     try:
         # 近期新闻标题作为大模型归因的素材；库中无新闻时传空列表即可
         news_titles = crud.get_recent_news_titles(db, hours=48, limit=40)
-        return await hs.build_hot_sector_payload(news_titles=news_titles, force=refresh)
+        payload = await hs.build_hot_sector_payload(news_titles=news_titles, force=refresh)
+
+        # 只在本次真的抓取了数据时落库（命中缓存的数据上次已写过），失败不影响页面展示
+        if payload.get("status") == "ok" and not payload.get("cached"):
+            try:
+                crud.save_hot_sector_snapshots(
+                    db,
+                    trade_date=payload["trade_date"],
+                    sectors=payload["sectors"],
+                    reason_source=payload.get("reason_source"),
+                    reason_model=payload.get("reason_model"),
+                )
+            except Exception as e:
+                logger.error("今日热点快照落库失败: %s", e, exc_info=True)
+                payload.setdefault("errors", []).append("快照落库失败，本次数据未存档")
+
+        return payload
     except Exception as e:
         logger.error("获取今日热点失败: %s", e, exc_info=True)
         return {"status": "error", "message": str(e)}

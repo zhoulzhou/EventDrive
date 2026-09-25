@@ -205,3 +205,39 @@ class FinancialReport(Base):
     interest_expense = Column(Float, nullable=True)  # 利息支出
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class HotSectorSnapshot(Base):
+    """今日热点板块快照：一行 = 某交易日的一个热点概念板块（含驱动原因与板块内前五个股）。
+
+    数据来源：东方财富概念板块（akshare），由「今日热点」页每次实际抓取后落库，供后续复盘。
+    同一交易日同一板块重复抓取时就地更新（保留最新一次，收盘后的数据最完整）。
+
+    - trade_date: 交易日 YYYY-MM-DD（按 A 股交易日历取最近交易日）
+    - main_net_inflow: 当日主力净流入（亿元）
+    - stocks: 板块内当日涨幅前五个股明细（JSON 字符串，含代码/名称/涨跌幅/成交额等）
+    - reason_source: 驱动原因来源，'llm'（DeepSeek 归因）/ 'rule'（规则归纳兜底）
+    - fetched_at: 实际抓取时刻（同一交易日多次抓取用于区分盘中快照）
+    """
+    __tablename__ = "hot_sector_snapshots"
+    __table_args__ = (UniqueConstraint("trade_date", "board_code", name="uq_hot_sector_date_code"),)
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    trade_date = Column(Text, nullable=False, index=True)
+    board_rank = Column(Integer, nullable=True)
+    board_name = Column(Text, nullable=False)
+    board_code = Column(Text, nullable=False)
+    change_percent = Column(Float, nullable=True)
+    main_net_inflow = Column(Float, nullable=True)
+    turnover_rate = Column(Float, nullable=True)
+    up_count = Column(Integer, nullable=True)
+    down_count = Column(Integer, nullable=True)
+    lead_stock = Column(Text, nullable=True)
+    lead_stock_change = Column(Float, nullable=True)
+    reason = Column(Text, nullable=True)
+    reason_source = Column(Text, nullable=True)
+    reason_model = Column(Text, nullable=True)
+    stocks = Column(Text, nullable=True)
+    fetched_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

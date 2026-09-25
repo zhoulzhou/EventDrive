@@ -1,3 +1,4 @@
+import json
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
@@ -845,3 +846,50 @@ def count_stock_temp_history(db: Session, key: Optional[str] = None) -> int:
     if key:
         query = query.filter(models.StockTempHistory.key == key)
     return int(query.scalar() or 0)
+
+
+# ------------------------------------------------------------ 今日热点快照
+
+def save_hot_sector_snapshots(
+    db: Session,
+    trade_date: str,
+    sectors: List[dict],
+    reason_source: Optional[str] = None,
+    reason_model: Optional[str] = None,
+) -> int:
+    """按 (交易日, 板块代码) 更新或插入今日热点板块快照，供后续复盘。
+
+    sectors 为 app/utils/hot_sector.py 组装好的板块列表（含 stocks 明细）。
+    同一交易日同一板块重复抓取时就地覆盖：盘后数据最完整，复盘只看当日最终结果。
+    """
+    for sector in sectors:
+        row = (
+            db.query(models.HotSectorSnapshot)
+            .filter(
+                models.HotSectorSnapshot.trade_date == trade_date,
+                models.HotSectorSnapshot.board_code == sector["code"],
+            )
+            .first()
+        )
+        if row is None:
+            row = models.HotSectorSnapshot(trade_date=trade_date, board_code=sector["code"])
+            db.add(row)
+
+        row.board_rank = sector.get("rank")
+        row.board_name = sector.get("name") or ""
+        row.change_percent = sector.get("change_percent")
+        row.main_net_inflow = sector.get("main_net_inflow")
+        row.turnover_rate = sector.get("turnover_rate")
+        row.up_count = sector.get("up_count")
+        row.down_count = sector.get("down_count")
+        row.lead_stock = sector.get("lead_stock")
+        row.lead_stock_change = sector.get("lead_stock_change")
+        row.reason = sector.get("reason")
+        row.reason_source = reason_source
+        row.reason_model = reason_model
+        row.stocks = json.dumps(sector.get("stocks") or [], ensure_ascii=False)
+        row.fetched_at = func.now()
+        row.updated_at = func.now()
+
+    db.commit()
+    return len(sectors)

@@ -39,8 +39,8 @@ async function loadHotSector(refresh) {
         const cacheTag = data.cached ? ' · 缓存' : '';
         const reasonTag = data.reason_source === 'llm'
             ? ` · 归因由 ${data.reason_model || '大模型'} 生成`
-            : ' · 归因为规则归纳（未配置大模型 API Key）';
-        meta.textContent = `数据来源：${data.source} · 更新于：${data.generated_at}${cacheTag}${reasonTag}`;
+            : ' · 归因为规则归纳（未配置 DeepSeek API Key）';
+        meta.textContent = `交易日：${data.trade_date} · 数据来源：${data.source} · 更新于：${data.generated_at}${cacheTag}${reasonTag}`;
 
         body.innerHTML = data.sectors.map(renderSector).join('')
             + (data.errors && data.errors.length
