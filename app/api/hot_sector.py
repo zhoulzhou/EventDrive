@@ -57,7 +57,6 @@ def _sector_from_row(row) -> dict:
         "name": row.board_name,
         "code": row.board_code,
         "change_percent": row.change_percent,
-        "main_net_inflow": row.main_net_inflow,
         "turnover_rate": row.turnover_rate,
         "up_count": row.up_count,
         "down_count": row.down_count,

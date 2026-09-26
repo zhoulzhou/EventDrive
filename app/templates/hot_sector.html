@@ -12,7 +12,8 @@
         </div>
     </div>
     <p class="form-hint">
-        口径：东方财富概念板块，按当日涨幅为主、主力资金净流入为辅综合排名，取前三。
+        口径：新浪财经概念板块，按当日涨跌幅排序取前三（该数据源无概念级资金流，故不再计资金维度；
+        涨跌家数与换手率由成分股聚合得到）。
         本页打开时只读取已存档数据（点击「刷新盘面」抓取或收盘后自动抓取），不会自动抓取行情。
     </p>
 </div>
@@ -102,9 +103,6 @@ function pctClass(value) {
 }
 
 function renderSector(sector) {
-    const flow = sector.main_net_inflow;
-    const flowText = flow == null ? '--' : (flow >= 0 ? '+' : '') + flow.toFixed(2) + ' 亿';
-
     const stocks = (sector.stocks || []).map(st => `
         <tr>
             <td class="mono">${escapeHtml(st.code || '')}</td>
@@ -123,13 +121,11 @@ function renderSector(sector) {
             <div class="hot-card-head">
                 <span class="hot-rank">No.${sector.rank}</span>
                 <span class="hot-name">${escapeHtml(sector.name)}</span>
-                <span class="hot-code">${escapeHtml(sector.code || '')}</span>
                 <span class="hot-change ${pctClass(sector.change_percent)}">${pct(sector.change_percent)}</span>
             </div>
             <div class="hot-stats">
-                <span>主力净流入 <b>${flowText}</b></span>
                 <span>成分股 <b>${sector.up_count} 涨 / ${sector.down_count} 跌</b></span>
-                <span>换手率 <b>${sector.turnover_rate == null ? '--' : sector.turnover_rate.toFixed(2) + '%'}</b></span>
+                <span>换手率 <b>${sector.turnover_rate == null ? '--' : sector.turnover_rate.toFixed(2) + '%'}</b><span class="hot-stat-note">（成分股均值）</span></span>
                 <span>领涨股 <b>${escapeHtml(sector.lead_stock || '--')}</b> ${pct(sector.lead_stock_change)}</span>
             </div>
             <div class="hot-reason">
@@ -201,6 +197,7 @@ loadSaved();
 }
 .hot-name { font-size: 1.2rem; font-weight: 700; color: #222; }
 .hot-code { font-size: 0.82rem; color: #999; }
+.hot-stat-note { color: #aaa; font-size: 0.76rem; }
 .hot-change { font-size: 1.2rem; font-weight: 700; margin-left: auto; }
 
 .hot-stats {

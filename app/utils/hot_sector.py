@@ -1,13 +1,17 @@
 """今日热点：A 股概念板块热度排名 + 驱动原因 + 板块内前五个股交易情况。
 
-数据源（均为 akshare 封装的东方财富公开接口，无需 Key）：
-- ak.stock_board_concept_name_em()          概念板块实时行情（涨跌幅 / 换手率 / 上涨下跌家数 / 领涨股）
-- ak.stock_sector_fund_flow_rank()          概念板块当日资金流排名（主力净流入净额）
-- ak.stock_board_concept_cons_em(code)      板块成分股实时行情（个股涨跌幅 / 成交额 / 换手率）
+数据源（均为 akshare 封装的新浪公开接口，无需 Key，境外服务器可访问）：
+- ak.stock_sector_spot(indicator="概念")    概念板块行情（涨跌幅 / 公司家数 / 总成交额 / 领涨股）
+- ak.stock_sector_detail(sector=label)      板块成分股行情（个股涨跌幅 / 成交额 / 换手率 / PE / 最高最低）
 
-热度口径（产品要求）：以**当日涨跌幅为主、主力资金净流入为辅**综合排序，取前 3 个概念板块。
-综合评分 = 涨幅排名 × 0.6 + 资金净流入排名 × 0.4（排名越靠前分数越小）。
-资金流接口偶发不可用时自动降级为纯涨幅排名（见 build_hot_sector_payload），不阻塞页面。
+为何不用东方财富：东财 push2.eastmoney.com 对境外机房 IP 直接返回 502（东京服务器实测必失败）。
+同花顺虽有概念资金流（data.10jqka.com.cn，含涨幅+净额），但 akshare 无概念成分股接口，且与新浪的
+概念分类名称重合仅约 15%，无法拼用。故统一改用新浪：板块与成分股同一套分类（label 直接查成分股），
+链路自洽；代价是板块层不提供"主力净流入"。
+
+热度口径：按**当日涨跌幅**排序取前 3 个概念板块。
+（原「涨幅为主 + 主力资金净流入为辅」的资金维度已去除：东京可访问的数据源均无概念级资金流。）
+板块层的涨跌家数与换手率由成分股聚合得到（新浪板块接口不直接提供）。
 
 驱动原因：调用大模型 DeepSeek 结合板块数据与近期新闻标题归因；
 未配置 DEEPSEEK_API_KEY 或调用失败时，降级为基于板块数据的规则归纳，保证页面始终可用。
@@ -61,28 +65,31 @@ def _round(value, digits: int = 2) -> Optional[float]:
     return None if f is None else round(f, digits)
 
 
+def _clean_name(value) -> Optional[str]:
+    """新浪会给出带填充空格的股票名（如「新 华 都」），去掉空格还原。"""
+    if value is None:
+        return None
+    return str(value).replace(" ", "").strip() or None
+
+
 # --------------------------------------------------------------------------- #
 # 抓取
 # --------------------------------------------------------------------------- #
 def fetch_concept_boards() -> pd.DataFrame:
-    """概念板块实时行情：涨跌幅 / 换手率 / 上涨下跌家数 / 领涨股。"""
+    """新浪概念板块行情：涨跌幅 / 公司家数 / 总成交额 / 领涨股。"""
     import akshare as ak
 
-    return ak.stock_board_concept_name_em()
+    return ak.stock_sector_spot(indicator="概念")
 
 
-def fetch_concept_fund_flow() -> pd.DataFrame:
-    """概念板块当日资金流排名：主力净流入净额（元）。"""
+def fetch_board_stocks(label: str) -> pd.DataFrame:
+    """新浪概念板块成分股行情。传 stock_sector_spot 返回的 label（如 gn_smgn）。
+
+    与板块行情是同一套分类，label 可直接作为成分股接口的 node 参数，不需要名称映射。
+    """
     import akshare as ak
 
-    return ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="概念资金流")
-
-
-def fetch_board_stocks(code: str) -> pd.DataFrame:
-    """板块成分股实时行情。传板块代码（BKxxxx）可省去 akshare 内部一次名称映射请求。"""
-    import akshare as ak
-
-    return ak.stock_board_concept_cons_em(symbol=code)
+    return ak.stock_sector_detail(sector=label)
 
 
 def resolve_trade_date() -> str:
@@ -105,10 +112,11 @@ def resolve_trade_date() -> str:
 # --------------------------------------------------------------------------- #
 # 排名与整理
 # --------------------------------------------------------------------------- #
-def pick_top_sectors(boards: pd.DataFrame, flows: pd.DataFrame, n: int = TOP_N) -> List[Dict[str, Any]]:
-    """按「涨幅为主、资金净流入为辅」综合排序，返回前 n 个概念板块。
+def pick_top_sectors(boards: pd.DataFrame, n: int = TOP_N) -> List[Dict[str, Any]]:
+    """按当日涨跌幅降序取前 n 个概念板块。
 
-    仅纳入当日上涨（涨跌幅 > 0）且非伪板块的概念，避免"昨日涨停"这类统计板块占据榜首。
+    仅纳入当日上涨（涨跌幅 > 0）且非聚合口径的概念，避免"昨日涨停"这类统计板块占据榜首。
+    板块层的涨跌家数/换手率新浪不提供，此处先置 0/None，抓到成分股后由 enrich_with_stocks 回填。
     """
     if boards is None or boards.empty:
         return []
@@ -116,67 +124,69 @@ def pick_top_sectors(boards: pd.DataFrame, flows: pd.DataFrame, n: int = TOP_N) 
     df = boards.copy()
     df = df[pd.to_numeric(df["涨跌幅"], errors="coerce") > 0]
     if not df.empty:
-        mask = ~df["板块名称"].astype(str).str.contains("|".join(_EXCLUDE_KEYWORDS), na=False)
+        mask = ~df["板块"].astype(str).str.contains("|".join(_EXCLUDE_KEYWORDS), na=False)
         df = df[mask]
     if df.empty:
         return []
 
-    inflow_col = "今日主力净流入-净额"
-    if flows is not None and not flows.empty and inflow_col in flows.columns:
-        df = df.merge(
-            flows[["名称", inflow_col]], left_on="板块名称", right_on="名称", how="left"
-        )
-    else:
-        df[inflow_col] = None
-
-    # 排名法做量纲归一：涨幅与资金净流入绝对值不可比，先各自排名再加权
-    df["_涨幅排名"] = df["涨跌幅"].rank(ascending=False, method="min")
-    inflow = pd.to_numeric(df[inflow_col], errors="coerce")
-    df["_资金排名"] = inflow.fillna(inflow.min() - 1 if inflow.notna().any() else 0).rank(
-        ascending=False, method="min"
-    )
-    df["_评分"] = df["_涨幅排名"] * 0.6 + df["_资金排名"] * 0.4
-
-    picked = df.nsmallest(n, "_评分")
+    picked = df.sort_values("涨跌幅", ascending=False).head(n)
     sectors = []
     for i, (_, row) in enumerate(picked.iterrows(), start=1):
-        inflow_val = _num(row.get(inflow_col))
         sectors.append({
             "rank": i,
-            "name": row["板块名称"],
-            "code": row["板块代码"],
+            "name": row["板块"],
+            "code": row["label"],  # 新浪板块标识（gn_xxx），成分股接口直接用它
             "change_percent": _round(row["涨跌幅"]),
-            "main_net_inflow": None if inflow_val is None else round(inflow_val / 1e8, 2),  # 元 → 亿元
-            "turnover_rate": _round(row.get("换手率")),
-            "up_count": int(_num(row.get("上涨家数")) or 0),
-            "down_count": int(_num(row.get("下跌家数")) or 0),
-            "lead_stock": row.get("领涨股票"),
-            "lead_stock_change": _round(row.get("领涨股票-涨跌幅")),
+            "turnover_rate": None,  # 成分股聚合回填
+            "up_count": 0,
+            "down_count": 0,
+            "lead_stock": _clean_name(row.get("股票名称")),
+            "lead_stock_change": _round(row.get("个股-涨跌幅")),
         })
     return sectors
 
 
+def enrich_with_stocks(sector: Dict[str, Any], cons: Optional[pd.DataFrame]) -> None:
+    """把板块成分股行情写入 sector：涨幅前 n 个股 + 由成分股聚合出涨跌家数与平均换手率。"""
+    sector["stocks"] = top_stocks(cons, TOP_STOCKS)
+    if cons is None or cons.empty:
+        sector["turnover_rate"] = None
+        return
+
+    pct = pd.to_numeric(cons.get("changepercent"), errors="coerce")
+    sector["up_count"] = int((pct > 0).sum())
+    sector["down_count"] = int((pct < 0).sum())
+
+    turnover = pd.to_numeric(cons.get("turnoverratio"), errors="coerce").dropna()
+    sector["turnover_rate"] = round(float(turnover.mean()), 2) if not turnover.empty else None
+
+
 def top_stocks(cons: pd.DataFrame, n: int = TOP_STOCKS) -> List[Dict[str, Any]]:
-    """板块内按当日涨跌幅降序取前 n 只个股的交易情况。"""
+    """板块内按当日涨跌幅降序取前 n 只个股的交易情况（新浪成分股字段）。"""
     if cons is None or cons.empty:
         return []
 
     df = cons.copy()
-    df["_涨跌幅"] = pd.to_numeric(df["涨跌幅"], errors="coerce")
+    df["_涨跌幅"] = pd.to_numeric(df["changepercent"], errors="coerce")
     df = df[df["_涨跌幅"].notna()].nlargest(n, "_涨跌幅")
 
     stocks = []
     for _, row in df.iterrows():
-        amount = _num(row.get("成交额"))
+        amount = _num(row.get("amount"))
+        high, low, prev_close = _num(row.get("high")), _num(row.get("low")), _num(row.get("settlement"))
+        # 新浪不直接给振幅，用（最高-最低）/昨收 换算
+        amplitude = None
+        if high is not None and low is not None and prev_close:
+            amplitude = round((high - low) / prev_close * 100, 2)
         stocks.append({
-            "code": str(row.get("代码") or ""),
-            "name": row.get("名称"),
-            "price": _round(row.get("最新价")),
-            "change_percent": _round(row.get("涨跌幅")),
+            "code": str(row.get("code") or ""),
+            "name": _clean_name(row.get("name")),
+            "price": _round(row.get("trade")),
+            "change_percent": _round(row.get("changepercent")),
             "amount": None if amount is None else round(amount / 1e8, 2),  # 元 → 亿元
-            "turnover_rate": _round(row.get("换手率")),
-            "amplitude": _round(row.get("振幅")),
-            "pe": _round(row.get("市盈率-动态")),
+            "turnover_rate": _round(row.get("turnoverratio")),
+            "amplitude": amplitude,
+            "pe": _round(row.get("per")),
         })
     return stocks
 
@@ -189,9 +199,8 @@ def rule_reason(sector: Dict[str, Any]) -> str:
     parts = []
     if sector.get("change_percent") is not None:
         parts.append(f"板块今日上涨 {sector['change_percent']}%")
-    if sector.get("main_net_inflow") is not None:
-        flow = sector["main_net_inflow"]
-        parts.append(f"主力净{'流入' if flow >= 0 else '流出'} {abs(flow)} 亿元")
+    if sector.get("turnover_rate") is not None:
+        parts.append(f"成分股平均换手 {sector['turnover_rate']}%")
     if sector.get("up_count") or sector.get("down_count"):
         parts.append(f"成分股 {sector.get('up_count', 0)} 涨 {sector.get('down_count', 0)} 跌")
     if sector.get("lead_stock"):
@@ -221,11 +230,14 @@ def _llm_config() -> Optional[Dict[str, str]]:
 def _build_prompt(sectors: List[Dict[str, Any]], news_titles: List[str]) -> str:
     lines = []
     for s in sectors:
-        lines.append(
-            f"{s['rank']}. {s['name']} | 涨跌幅 {s['change_percent']}% | "
-            f"主力净流入 {s['main_net_inflow']} 亿 | {s['up_count']}涨{s['down_count']}跌 | "
-            f"换手率 {s['turnover_rate']}% | 领涨股 {s['lead_stock']}（{s['lead_stock_change']}%）"
-        )
+        bits = [f"涨跌幅 {s['change_percent']}%"]
+        if s.get("turnover_rate") is not None:
+            bits.append(f"成分股平均换手率 {s['turnover_rate']}%")
+        if s.get("up_count") or s.get("down_count"):
+            bits.append(f"{s.get('up_count', 0)}涨{s.get('down_count', 0)}跌")
+        if s.get("lead_stock"):
+            bits.append(f"领涨股 {s['lead_stock']}（{s.get('lead_stock_change')}%）")
+        lines.append(f"{s['rank']}. {s['name']} | " + " | ".join(bits))
         names = "、".join(
             f"{st['name']}({st['change_percent']}%)" for st in s.get("stocks", []) if st.get("name")
         )
@@ -340,40 +352,32 @@ async def build_hot_sector_payload(
 ) -> Dict[str, Any]:
     """抓取并组装今日热点数据（每次调用都真实抓取，不做缓存）。
 
-    容错口径：涨跌幅是主指标，拿不到即整体失败；资金净流入是"为辅"指标（权重 0.4），
-    数据源（东财资金流接口）偶发返回空响应时降级为纯涨幅排名，只在页面上给出提示，
-    不影响板块与个股展示。
+    概念板块行情拿不到就没有可展示的内容，直接整体失败并给出可行动文案；
+    成分股按板块分别抓取，单个板块失败只影响该板块（其余板块照常展示）。
     """
     errors: List[str] = []
-    boards, flows, trade_date = await asyncio.gather(
+    boards, trade_date = await asyncio.gather(
         asyncio.to_thread(fetch_concept_boards),
-        asyncio.to_thread(fetch_concept_fund_flow),
         asyncio.to_thread(resolve_trade_date),
         return_exceptions=True,
     )
 
-    # 主指标：概念板块行情，失败则无可展示内容
+    # 概念板块行情：拿不到就没有可展示内容
     if isinstance(boards, Exception):
         logger.error("抓取概念板块行情失败: %s", boards, exc_info=boards)
-        # 用户可见文案保持简短可行动，原始异常（含 url/状态码）只进日志
+        # 用户可见文案保持简短可行动，原始异常只进日志
         return {
             "status": "error",
-            "message": "获取概念板块行情失败：东方财富数据源（push2.eastmoney.com）不可达。"
+            "message": "获取概念板块行情失败：新浪财经数据源（money.finance.sina.com.cn）不可达。"
                        "请检查服务器网络/代理，或稍后重试；抓取详情见服务端日志。",
             "detail": str(boards),
         }
-
-    # 辅指标：主力资金净流入，失败则降级（pick_top_sectors 已支持 flows=None，等价于纯涨幅排名）
-    if isinstance(flows, Exception):
-        logger.error("抓取板块资金流失败，本次降级为纯涨幅排名: %s", flows, exc_info=flows)
-        errors.append("主力资金净流入获取失败，本次排名仅按涨幅计算（资金流数据源暂不可用）")
-        flows = None
 
     # resolve_trade_date 内部已兜底，不会抛异常；此处仅作保险
     if isinstance(trade_date, Exception):
         trade_date = datetime.now().strftime("%Y-%m-%d")
 
-    sectors = pick_top_sectors(boards, flows, TOP_N)
+    sectors = pick_top_sectors(boards, TOP_N)
     if not sectors:
         return {"status": "error", "message": "未获取到上涨的概念板块数据（可能为非交易时段或数据源异常）"}
 
@@ -386,9 +390,9 @@ async def build_hot_sector_payload(
         if isinstance(cons, Exception):
             logger.error("抓取板块 %s 成分股失败: %s", sector["name"], cons, exc_info=cons)
             errors.append(f"{sector['name']}: 成分股获取失败")
-            sector["stocks"] = []
+            enrich_with_stocks(sector, None)
             continue
-        sector["stocks"] = top_stocks(cons, TOP_STOCKS)
+        enrich_with_stocks(sector, cons)
 
     reason_result = await generate_reasons(sectors, news_titles or [])
     for sector in sectors:
@@ -398,7 +402,7 @@ async def build_hot_sector_payload(
         "status": "ok",
         "trade_date": trade_date,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "source": "东方财富 · akshare 实时行情",
+        "source": "新浪财经 · akshare 实时行情",
         "reason_source": reason_result["source"],
         "reason_model": reason_result["model"],
         "sectors": sectors,
