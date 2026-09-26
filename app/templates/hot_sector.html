@@ -80,11 +80,8 @@ function renderResult(data, justRefreshed) {
         return;
     }
 
-    const reasonTag = data.reason_source === 'llm'
-        ? ` · 归因由 ${data.reason_model || 'DeepSeek'} 生成`
-        : ' · 归因为规则归纳（未配置 DeepSeek API Key）';
     const actionTag = justRefreshed ? ' · 刚刚刷新' : '';
-    meta.textContent = `交易日：${data.trade_date} · 数据存档时间：${data.generated_at}${actionTag}${reasonTag}`;
+    meta.textContent = `交易日：${data.trade_date} · 数据存档时间：${data.generated_at}${actionTag}`;
 
     body.innerHTML = data.sectors.map(renderSector).join('')
         + (data.errors && data.errors.length

@@ -216,7 +216,7 @@ class HotSectorSnapshot(Base):
     - trade_date: 交易日 YYYY-MM-DD（按 A 股交易日历取最近交易日）
     - main_net_inflow: 当日主力净流入（亿元）
     - stocks: 板块内当日涨幅前五个股明细（JSON 字符串，含代码/名称/涨跌幅/成交额等）
-    - reason_source: 驱动原因来源，'llm'（DeepSeek 归因）/ 'rule'（规则归纳兜底）
+    - reason_source: 驱动原因来源，固定为 'rule'（规则归纳）；历史行可能为 'llm'（早期 DeepSeek 归因，已弃用）
     - fetched_at: 实际抓取时刻（同一交易日多次抓取用于区分盘中快照）
     """
     __tablename__ = "hot_sector_snapshots"

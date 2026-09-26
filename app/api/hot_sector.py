@@ -77,15 +77,11 @@ def _payload_from_db(db: Session) -> dict:
             "sectors": [],
         }
 
-    # 归因来源以最近一次抓取的那行为准（同一交易日整批写入，各行的来源一致）
-    newest = max(rows, key=lambda r: r.fetched_at or datetime.min)
     return {
         "status": "ok",
         "trade_date": trade_date,
         "generated_at": _local_str(fetched_at),
-        "source": "东方财富 · akshare 实时行情（库中快照）",
-        "reason_source": newest.reason_source,
-        "reason_model": newest.reason_model,
+        "source": "新浪财经 · akshare 实时行情（库中快照）",
         "sectors": [_sector_from_row(row) for row in rows],
         "errors": [],
     }

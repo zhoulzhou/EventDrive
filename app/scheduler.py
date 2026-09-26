@@ -207,14 +207,13 @@ async def refresh_hot_sector():
             log_crawl(
                 f"今日热点更新完成: 交易日 {payload.get('trade_date')}, "
                 f"板块 {len(payload.get('sectors', []))} 个, "
-                f"落库 {payload.get('stored_sectors', 0)} 条, "
-                f"归因来源 {payload.get('reason_source')}"
+                f"落库 {payload.get('stored_sectors', 0)} 条"
             )
             for sector in payload.get("sectors", []):
                 log_crawl(
                     f"  - {sector.get('rank')}. {sector.get('name')} "
                     f"{sector.get('change_percent')}% "
-                    f"主力净流入 {sector.get('main_net_inflow')} 亿"
+                    f"成分股 {sector.get('up_count')}涨{sector.get('down_count')}跌"
                 )
             for msg in payload.get("errors") or []:
                 log_crawl(f"  ! {msg}")

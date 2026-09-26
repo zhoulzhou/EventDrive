@@ -13,8 +13,8 @@
 （原「涨幅为主 + 主力资金净流入为辅」的资金维度已去除：东京可访问的数据源均无概念级资金流。）
 板块层的涨跌家数与换手率由成分股聚合得到（新浪板块接口不直接提供）。
 
-驱动原因：调用大模型 DeepSeek 结合板块数据与近期新闻标题归因；
-未配置 DEEPSEEK_API_KEY 或调用失败时，降级为基于板块数据的规则归纳，保证页面始终可用。
+驱动原因：只用规则归纳（app.utils.hot_sector.rule_reason），由板块自身的客观数据拼装。
+（曾接过 DeepSeek 归因，因输出无实质内容已移除，改为固定规则生成。）
 
 本模块只负责「抓取 + 组装」，不读库也不缓存：
 
@@ -24,16 +24,11 @@
   由页面接口与定时任务共用。
 """
 import asyncio
-import json
 import logging
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import httpx
 import pandas as pd
-
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +38,6 @@ TOP_STOCKS = 5
 
 # 伪板块（非真实题材）过滤：这些概念板块是统计口径聚合板块，不构成"热点题材"
 _EXCLUDE_KEYWORDS = ("昨日", "连板", "融资融券", "转债", "机构重仓")
-
-_client = httpx.AsyncClient(timeout=60, trust_env=False)
 
 
 def _num(value) -> Optional[float]:
@@ -195,7 +188,7 @@ def top_stocks(cons: pd.DataFrame, n: int = TOP_STOCKS) -> List[Dict[str, Any]]:
 # 驱动原因
 # --------------------------------------------------------------------------- #
 def rule_reason(sector: Dict[str, Any]) -> str:
-    """规则归纳（无大模型时的兜底）：用板块自身的客观数据拼装一句驱动说明。"""
+    """用板块自身的客观数据拼装一句驱动说明（本页归因只走规则，不调用大模型）。"""
     parts = []
     if sector.get("change_percent") is not None:
         parts.append(f"板块今日上涨 {sector['change_percent']}%")
@@ -215,141 +208,10 @@ def rule_reason(sector: Dict[str, Any]) -> str:
     return "；".join(parts) + "。" if parts else "暂无可用归因数据。"
 
 
-def _llm_config() -> Optional[Dict[str, str]]:
-    """驱动原因固定走 DeepSeek（OpenAI 兼容 chat/completions 协议）。"""
-    if settings.DEEPSEEK_API_KEY:
-        return {
-            "label": "DeepSeek",
-            "url": "https://api.deepseek.com/v1/chat/completions",
-            "key": settings.DEEPSEEK_API_KEY,
-            "model": settings.DEEPSEEK_MODEL,
-        }
-    return None
-
-
-def _build_prompt(sectors: List[Dict[str, Any]], news_titles: List[str]) -> str:
-    lines = []
-    for s in sectors:
-        bits = [f"涨跌幅 {s['change_percent']}%"]
-        if s.get("turnover_rate") is not None:
-            bits.append(f"成分股平均换手率 {s['turnover_rate']}%")
-        if s.get("up_count") or s.get("down_count"):
-            bits.append(f"{s.get('up_count', 0)}涨{s.get('down_count', 0)}跌")
-        if s.get("lead_stock"):
-            bits.append(f"领涨股 {s['lead_stock']}（{s.get('lead_stock_change')}%）")
-        lines.append(f"{s['rank']}. {s['name']} | " + " | ".join(bits))
-        names = "、".join(
-            f"{st['name']}({st['change_percent']}%)" for st in s.get("stocks", []) if st.get("name")
-        )
-        if names:
-            lines.append(f"   板块内涨幅前五：{names}")
-    board_block = "\n".join(lines)
-
-    news_block = "\n".join(f"- {t}" for t in news_titles[:40]) or "（近期无可用新闻标题）"
-
-    return f"""以下是今日 A 股涨幅居前且资金净流入的概念板块（已按综合热度排序）及板块内领涨个股：
-
-【板块数据】
-{board_block}
-
-【最近 48 小时财经新闻标题】
-{news_block}
-
-请为上述每个板块给出 1 段「驱动原因」，说明是什么事件、政策、产业逻辑或资金动向推动其上涨。
-
-要求：
-1. 每个板块只输出一段话，60 字以内，具体、可验证，不要套话和免责声明。
-2. 优先结合上面的新闻标题；若新闻与板块无直接关系，则依据板块数据与领涨个股特征做合理归因。
-3. 不要编造具体的政策名称、事件或数据；无法判断时，直接描述资金与个股表现特征。
-4. 严格输出 JSON，不要任何多余文字：{{"reasons":[{{"name":"板块名","reason":"驱动原因"}}]}}"""
-
-
-def _extract_json(text: str) -> Optional[dict]:
-    """从模型输出中提取 JSON（兼容 ```json 代码块与前后多余文字）。"""
-    if not text:
-        return None
-    cleaned = text.strip()
-    fence = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.S)
-    if fence:
-        cleaned = fence.group(1).strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-    brace = re.search(r"\{.*\}", cleaned, re.S)
-    if brace:
-        try:
-            return json.loads(brace.group(0))
-        except json.JSONDecodeError:
-            return None
-    return None
-
-
-async def generate_reasons(
-    sectors: List[Dict[str, Any]], news_titles: List[str]
-) -> Dict[str, Any]:
-    """生成各板块驱动原因。
-
-    返回 {"reasons": {板块名: 原因}, "source": "llm"/"rule", "model": str|None}。
-    无可用大模型或调用/解析失败时，整体降级为规则归纳。
-    """
-    fallback = {
-        "reasons": {s["name"]: rule_reason(s) for s in sectors},
-        "source": "rule",
-        "model": None,
-    }
-    cfg = _llm_config()
-    if not cfg or not sectors:
-        if not cfg:
-            logger.info("未配置 DeepSeek API Key，热点驱动原因降级为规则归纳")
-        return fallback
-
-    try:
-        resp = await _client.post(
-            cfg["url"],
-            headers={"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"},
-            json={
-                "model": cfg["model"],
-                "messages": [
-                    {"role": "system", "content": "你是 A 股短线热点分析师，只输出 JSON。"},
-                    {"role": "user", "content": _build_prompt(sectors, news_titles)},
-                ],
-                "temperature": 0.4,
-                "stream": False,
-            },
-        )
-        if resp.status_code != 200:
-            logger.error("%s 生成热点归因失败 %s: %s", cfg["label"], resp.status_code, resp.text[:200])
-            return fallback
-
-        content = resp.json()["choices"][0]["message"]["content"]
-        parsed = _extract_json(content)
-        if not parsed or not isinstance(parsed.get("reasons"), list):
-            logger.error("%s 热点归因返回结构异常: %s", cfg["label"], str(content)[:200])
-            return fallback
-
-        reasons = {}
-        for item in parsed["reasons"]:
-            name = str(item.get("name", "")).strip()
-            reason = str(item.get("reason", "")).strip()
-            if name and reason:
-                reasons[name] = reason
-
-        # 模型漏答的板块用规则归纳补上，避免页面出现空白
-        for s in sectors:
-            reasons.setdefault(s["name"], rule_reason(s))
-        return {"reasons": reasons, "source": "llm", "model": f"{cfg['label']} / {cfg['model']}"}
-    except Exception as e:
-        logger.error("生成热点归因异常: %s", e, exc_info=True)
-        return fallback
-
-
 # --------------------------------------------------------------------------- #
 # 组装
 # --------------------------------------------------------------------------- #
-async def build_hot_sector_payload(
-    news_titles: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+async def build_hot_sector_payload() -> Dict[str, Any]:
     """抓取并组装今日热点数据（每次调用都真实抓取，不做缓存）。
 
     概念板块行情拿不到就没有可展示的内容，直接整体失败并给出可行动文案；
@@ -394,17 +256,14 @@ async def build_hot_sector_payload(
             continue
         enrich_with_stocks(sector, cons)
 
-    reason_result = await generate_reasons(sectors, news_titles or [])
     for sector in sectors:
-        sector["reason"] = reason_result["reasons"].get(sector["name"], rule_reason(sector))
+        sector["reason"] = rule_reason(sector)
 
     payload = {
         "status": "ok",
         "trade_date": trade_date,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "source": "新浪财经 · akshare 实时行情",
-        "reason_source": reason_result["source"],
-        "reason_model": reason_result["model"],
         "sectors": sectors,
         "errors": errors,
     }

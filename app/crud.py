@@ -59,19 +59,6 @@ def get_news_list(
     return query.offset(skip).limit(limit).all()
 
 
-def get_recent_news_titles(db: Session, hours: int = 48, limit: int = 40) -> List[str]:
-    """返回最近 N 小时内的新闻标题（按发布时间倒序），供今日热点的板块归因使用。"""
-    cutoff_time = datetime.now() - timedelta(hours=hours)
-    rows = (
-        db.query(models.News.title)
-        .filter(models.News.publish_time >= cutoff_time)
-        .order_by(desc(models.News.publish_time))
-        .limit(limit)
-        .all()
-    )
-    return [row[0] for row in rows if row[0]]
-
-
 def create_news(db: Session, news: schemas.NewsCreate) -> models.News:
     db_news = models.News(**news.model_dump())
     db.add(db_news)
@@ -854,8 +841,7 @@ def save_hot_sector_snapshots(
     db: Session,
     trade_date: str,
     sectors: List[dict],
-    reason_source: Optional[str] = None,
-    reason_model: Optional[str] = None,
+    reason_source: str = "rule",
 ) -> int:
     """按 (交易日, 板块代码) 更新或插入今日热点板块快照，供后续复盘。
 
@@ -878,7 +864,6 @@ def save_hot_sector_snapshots(
         row.board_rank = sector.get("rank")
         row.board_name = sector.get("name") or ""
         row.change_percent = sector.get("change_percent")
-        row.main_net_inflow = sector.get("main_net_inflow")
         row.turnover_rate = sector.get("turnover_rate")
         row.up_count = sector.get("up_count")
         row.down_count = sector.get("down_count")
@@ -886,7 +871,6 @@ def save_hot_sector_snapshots(
         row.lead_stock_change = sector.get("lead_stock_change")
         row.reason = sector.get("reason")
         row.reason_source = reason_source
-        row.reason_model = reason_model
         row.stocks = json.dumps(sector.get("stocks") or [], ensure_ascii=False)
         row.fetched_at = func.now()
         row.updated_at = func.now()

@@ -35,8 +35,7 @@ async def fetch_and_store_hot_sector(db: Optional[Session] = None) -> Dict[str, 
     own_session = db is None
     session = db if db is not None else SessionLocal()
     try:
-        news_titles = crud.get_recent_news_titles(session, hours=48, limit=40)
-        payload = await hs.build_hot_sector_payload(news_titles=news_titles)
+        payload = await hs.build_hot_sector_payload()
 
         if payload.get("status") == "ok":
             try:
@@ -44,8 +43,7 @@ async def fetch_and_store_hot_sector(db: Optional[Session] = None) -> Dict[str, 
                     session,
                     trade_date=payload["trade_date"],
                     sectors=payload["sectors"],
-                    reason_source=payload.get("reason_source"),
-                    reason_model=payload.get("reason_model"),
+                    reason_source="rule",
                 )
             except Exception as e:
                 logger.error("今日热点快照落库失败: %s", e, exc_info=True)
