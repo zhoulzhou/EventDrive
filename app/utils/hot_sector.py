@@ -7,6 +7,7 @@
 
 热度口径（产品要求）：以**当日涨跌幅为主、主力资金净流入为辅**综合排序，取前 3 个概念板块。
 综合评分 = 涨幅排名 × 0.6 + 资金净流入排名 × 0.4（排名越靠前分数越小）。
+资金流接口偶发不可用时自动降级为纯涨幅排名（见 build_hot_sector_payload），不阻塞页面。
 
 驱动原因：调用大模型 DeepSeek 结合板块数据与近期新闻标题归因；
 未配置 DEEPSEEK_API_KEY 或调用失败时，降级为基于板块数据的规则归纳，保证页面始终可用。
@@ -337,17 +338,34 @@ async def generate_reasons(
 async def build_hot_sector_payload(
     news_titles: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """抓取并组装今日热点数据（每次调用都真实抓取，不做缓存）。"""
+    """抓取并组装今日热点数据（每次调用都真实抓取，不做缓存）。
+
+    容错口径：涨跌幅是主指标，拿不到即整体失败；资金净流入是"为辅"指标（权重 0.4），
+    数据源（东财资金流接口）偶发返回空响应时降级为纯涨幅排名，只在页面上给出提示，
+    不影响板块与个股展示。
+    """
     errors: List[str] = []
-    try:
-        boards, flows, trade_date = await asyncio.gather(
-            asyncio.to_thread(fetch_concept_boards),
-            asyncio.to_thread(fetch_concept_fund_flow),
-            asyncio.to_thread(resolve_trade_date),
-        )
-    except Exception as e:
-        logger.error("抓取概念板块数据失败: %s", e, exc_info=True)
-        return {"status": "error", "message": f"抓取概念板块数据失败：{e}"}
+    boards, flows, trade_date = await asyncio.gather(
+        asyncio.to_thread(fetch_concept_boards),
+        asyncio.to_thread(fetch_concept_fund_flow),
+        asyncio.to_thread(resolve_trade_date),
+        return_exceptions=True,
+    )
+
+    # 主指标：概念板块行情，失败则无可展示内容
+    if isinstance(boards, Exception):
+        logger.error("抓取概念板块行情失败: %s", boards, exc_info=boards)
+        return {"status": "error", "message": f"抓取概念板块行情失败：{boards}"}
+
+    # 辅指标：主力资金净流入，失败则降级（pick_top_sectors 已支持 flows=None，等价于纯涨幅排名）
+    if isinstance(flows, Exception):
+        logger.error("抓取板块资金流失败，本次降级为纯涨幅排名: %s", flows, exc_info=flows)
+        errors.append("主力资金净流入获取失败，本次排名仅按涨幅计算（资金流数据源暂不可用）")
+        flows = None
+
+    # resolve_trade_date 内部已兜底，不会抛异常；此处仅作保险
+    if isinstance(trade_date, Exception):
+        trade_date = datetime.now().strftime("%Y-%m-%d")
 
     sectors = pick_top_sectors(boards, flows, TOP_N)
     if not sectors:
