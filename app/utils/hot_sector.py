@@ -355,7 +355,13 @@ async def build_hot_sector_payload(
     # 主指标：概念板块行情，失败则无可展示内容
     if isinstance(boards, Exception):
         logger.error("抓取概念板块行情失败: %s", boards, exc_info=boards)
-        return {"status": "error", "message": f"抓取概念板块行情失败：{boards}"}
+        # 用户可见文案保持简短可行动，原始异常（含 url/状态码）只进日志
+        return {
+            "status": "error",
+            "message": "获取概念板块行情失败：东方财富数据源（push2.eastmoney.com）不可达。"
+                       "请检查服务器网络/代理，或稍后重试；抓取详情见服务端日志。",
+            "detail": str(boards),
+        }
 
     # 辅指标：主力资金净流入，失败则降级（pick_top_sectors 已支持 flows=None，等价于纯涨幅排名）
     if isinstance(flows, Exception):

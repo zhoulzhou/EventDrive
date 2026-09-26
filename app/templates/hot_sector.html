@@ -52,9 +52,11 @@ async function refreshMarket() {
     }
 }
 
-function showError(message) {
+function showError(message, detailText) {
+    const detail = detailText
+        ? `<p class="hot-error-detail">${escapeHtml(detailText)}</p>` : '';
     document.getElementById('hotBody').innerHTML =
-        `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(message || '未知错误')}</p></div>`;
+        `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(message || '未知错误')}</p>${detail}</div>`;
 }
 
 function renderResult(data, justRefreshed) {
@@ -63,7 +65,7 @@ function renderResult(data, justRefreshed) {
 
     if (data.status === 'error') {
         meta.textContent = '';
-        showError(data.message);
+        showError(data.message, data.detail);
         return;
     }
 
@@ -272,5 +274,13 @@ loadSaved();
 }
 .hot-empty-state h2 { margin: 0 0 0.5rem; font-size: 1.1rem; color: #555; }
 .hot-empty-state p { margin: 0; color: #888; font-size: 0.9rem; }
+.hot-error-detail {
+    margin: 0.75rem auto 0 !important;
+    max-width: 640px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem !important;
+    color: #999 !important;
+    word-break: break-all;
+}
 </style>
 {% endblock %}
