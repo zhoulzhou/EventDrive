@@ -236,8 +236,8 @@ _PAGE_LINKS = [
     ("/valuation", "估值"),
     ("/macro", "宏观指标"),
     ("/macro-trend", "宏观趋势"),
-    ("/stock-temp", "股票指标"),
-    ("/stock-trend", "股票趋势"),
+    ("/stock-temp", "股市热度"),
+    ("/stock-trend", "热度趋势"),
 ]
 
 
