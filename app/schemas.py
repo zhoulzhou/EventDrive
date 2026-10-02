@@ -62,6 +62,8 @@ class CompanyValuationBase(BaseModel):
     base_profit: Optional[float] = None
     forecast_years: Optional[int] = None
     growth_forecast: Optional[float] = None
+    transition_years: Optional[int] = None
+    growth_transition: Optional[float] = None
     growth_perpetual: Optional[float] = None
     discount_rate: Optional[float] = None
     current_market_value: Optional[float] = None
