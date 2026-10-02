@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ class ValuationInput(BaseModel):
     growth_forecast: float  # 预测期增长率（%）
     growth_perpetual: float  # 永续增长率（%）
     discount_rate: float  # 折现率（%）
+    current_market_value: Optional[float] = None  # 当前市值（亿元），仅用于记录展示，不参与计算
 
     @field_validator("company_name")
     @classmethod
@@ -92,6 +94,11 @@ async def calculate_valuation(
                 growth_forecast=round(input.growth_forecast, 2),
                 growth_perpetual=round(input.growth_perpetual, 2),
                 discount_rate=round(input.discount_rate, 2),
+                current_market_value=(
+                    round(input.current_market_value, 2)
+                    if input.current_market_value is not None
+                    else None
+                ),
                 enterprise_value=round(value, 2),
             ),
         )

@@ -64,6 +64,7 @@ class CompanyValuationBase(BaseModel):
     growth_forecast: Optional[float] = None
     growth_perpetual: Optional[float] = None
     discount_rate: Optional[float] = None
+    current_market_value: Optional[float] = None
     enterprise_value: Optional[float] = None
 
 

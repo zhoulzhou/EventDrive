@@ -61,5 +61,12 @@ def ensure_schema_compatibility(engine=engine):
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE financial_reports ADD COLUMN stock_name TEXT"))
                 print("[database] financial_reports 表已补充 stock_name 列")
+
+        if inspector.has_table("company_valuations"):
+            columns = {col["name"] for col in inspector.get_columns("company_valuations")}
+            if "current_market_value" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE company_valuations ADD COLUMN current_market_value FLOAT"))
+                print("[database] company_valuations 表已补充 current_market_value 列")
     except Exception as e:
         print(f"[database] 表结构检测失败: {e}")

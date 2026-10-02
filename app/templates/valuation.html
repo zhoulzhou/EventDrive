@@ -33,6 +33,10 @@
         <label>折现率（%）</label>
         <input type="number" id="discountRate" step="0.1" placeholder="如9">
     </div>
+    <div class="input-group">
+        <label>当前市值（亿元）</label>
+        <input type="number" id="currentMarketValue" step="0.01" placeholder="如21000（不参与计算，仅记录）">
+    </div>
 
     <div id="warning" class="warning"></div>
 
@@ -62,12 +66,13 @@
                 <th>预测增长率（%）</th>
                 <th>永续增长率（%）</th>
                 <th>折现率（%）</th>
+                <th>当前市值（亿元）</th>
                 <th>企业价值（亿元）</th>
                 <th>操作</th>
             </tr>
         </thead>
         <tbody id="historyBody">
-            <tr><td colspan="10" class="history-empty">加载中...</td></tr>
+            <tr><td colspan="11" class="history-empty">加载中...</td></tr>
         </tbody>
     </table>
 </div>
@@ -88,6 +93,8 @@ async function calculateValue() {
     const growthForecast = parseFloat(document.getElementById('growthForecast').value);
     const growthPerpetual = parseFloat(document.getElementById('growthPerpetual').value);
     const discountRate = parseFloat(document.getElementById('discountRate').value);
+    const currentMarketValueRaw = document.getElementById('currentMarketValue').value.trim();
+    const currentMarketValue = currentMarketValueRaw === '' ? null : parseFloat(currentMarketValueRaw);
     const warning = document.getElementById('warning');
 
     warning.textContent = '';
@@ -115,7 +122,8 @@ async function calculateValue() {
                 forecast_years: forecastYears,
                 growth_forecast: growthForecast,
                 growth_perpetual: growthPerpetual,
-                discount_rate: discountRate
+                discount_rate: discountRate,
+                current_market_value: currentMarketValue
             })
         });
         const data = await response.json();
@@ -142,7 +150,7 @@ async function loadHistory() {
         renderHistory(data.history || []);
     } catch (error) {
         const body = document.getElementById('historyBody');
-        body.innerHTML = '<tr><td colspan="10" class="history-empty">历史记录加载失败</td></tr>';
+        body.innerHTML = '<tr><td colspan="11" class="history-empty">历史记录加载失败</td></tr>';
     }
 }
 
@@ -152,7 +160,7 @@ function renderHistory(history) {
     historyBody.innerHTML = '';
 
     if (!history.length) {
-        historyBody.innerHTML = '<tr><td colspan="10" class="history-empty">暂无计算记录</td></tr>';
+        historyBody.innerHTML = '<tr><td colspan="11" class="history-empty">暂无计算记录</td></tr>';
         return;
     }
 
@@ -167,6 +175,7 @@ function renderHistory(history) {
             <td>${Number(item.growth_forecast).toFixed(1)}</td>
             <td>${Number(item.growth_perpetual).toFixed(1)}</td>
             <td>${Number(item.discount_rate).toFixed(1)}</td>
+            <td>${item.current_market_value === null || item.current_market_value === undefined ? '-' : Number(item.current_market_value).toFixed(2)}</td>
             <td>${Number(item.enterprise_value).toFixed(2)}</td>
             <td><button class="btn btn-danger btn-mini" onclick="deleteRecord(${item.id})">删除</button></td>
         `;
@@ -208,7 +217,7 @@ async function clearHistory() {
 
 // 重置输入框
 function resetInputs() {
-    ['companyName', 'baseProfit', 'forecastYears', 'growthForecast', 'growthPerpetual', 'discountRate']
+    ['companyName', 'baseProfit', 'forecastYears', 'growthForecast', 'growthPerpetual', 'discountRate', 'currentMarketValue']
         .forEach(function (id) { document.getElementById(id).value = ''; });
     document.getElementById('warning').textContent = '';
     document.getElementById('enterpriseValue').textContent = '0.00';

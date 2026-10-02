@@ -81,6 +81,7 @@ class CompanyValuation(Base):
     growth_forecast = Column(Float, nullable=False)  # 预测期增长率（%）
     growth_perpetual = Column(Float, nullable=False)  # 永续增长率（%）
     discount_rate = Column(Float, nullable=False)  # 折现率（%）
+    current_market_value = Column(Float, nullable=True)  # 当前市值（亿元），仅用于记录展示，不参与计算
     enterprise_value = Column(Float, nullable=False)  # 企业整体价值（亿元）
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
