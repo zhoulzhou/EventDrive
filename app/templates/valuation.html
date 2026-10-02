@@ -17,21 +17,25 @@
         <label>基期净利润（亿元）</label>
         <input type="number" id="baseProfit" step="0.01" placeholder="如577（茅台）">
     </div>
-    <div class="input-group">
-        <label>高增长期年限（年）</label>
-        <input type="number" id="forecastYears" step="1" min="1" placeholder="如3">
+    <div class="input-row">
+        <div class="input-group">
+            <label>高增长期年限（年）</label>
+            <input type="number" id="forecastYears" step="1" min="1" placeholder="如3">
+        </div>
+        <div class="input-group">
+            <label>放缓期年限（年）</label>
+            <input type="number" id="transitionYears" step="1" min="0" placeholder="如3">
+        </div>
     </div>
-    <div class="input-group">
-        <label>高增长期增长率（%）</label>
-        <input type="number" id="growthForecast" step="0.1" placeholder="如40">
-    </div>
-    <div class="input-group">
-        <label>放缓期年限（年）</label>
-        <input type="number" id="transitionYears" step="1" min="0" placeholder="如3">
-    </div>
-    <div class="input-group">
-        <label>放缓期增长率（%）</label>
-        <input type="number" id="growthTransition" step="0.1" placeholder="如12">
+    <div class="input-row">
+        <div class="input-group">
+            <label>高增长期增长率（%）</label>
+            <input type="number" id="growthForecast" step="0.1" placeholder="如40">
+        </div>
+        <div class="input-group">
+            <label>放缓期增长率（%）</label>
+            <input type="number" id="growthTransition" step="0.1" placeholder="如12">
+        </div>
     </div>
     <div class="input-group">
         <label>永续增长率（%）</label>
@@ -286,6 +290,11 @@ function resetInputs() {
     -moz-appearance: textfield;
     appearance: textfield;
 }
+/* 并排两列：高增长期与放缓期参数成对展示 */
+.input-row { display: flex; gap: 1.25rem; }
+.input-row .input-group { flex: 1; margin: 0.9rem 0; }
+.input-row .input-group label { width: 150px; }
+.input-row .input-group input { max-width: none; }
 .btn-group { display: flex; gap: 0.75rem; margin: 1.25rem 0; }
 .btn-group .btn { flex: 1; }
 .btn { padding: 0.6rem 1.2rem; border: none; border-radius: 8px; font-size: 0.95rem; cursor: pointer; }
@@ -333,6 +342,8 @@ function resetInputs() {
     .input-group { flex-direction: column; align-items: flex-start; }
     .input-group label { width: auto; }
     .input-group input { width: 100%; max-width: 100%; }
+    .input-row { flex-direction: column; gap: 0; }
+    .input-row .input-group label { width: auto; }
 }
 </style>
 {% endblock %}
