@@ -1,5 +1,6 @@
 import html
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
@@ -10,8 +11,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation, macro, stock_temp, hot_sector
-from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
+from app.api import news, crawl, login, market, index_alarm, finance, valuation, macro, stock_temp, hot_sector
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
 
@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 
 print("=" * 60)
-print("🚀 新闻抓取应用正在启动...")
+print("🚀 市场总览应用正在启动...")
 print("=" * 60)
 
 ensure_schema_compatibility(engine)
@@ -41,32 +41,8 @@ elif index_alarm.ensure_index_data_loaded():
 else:
     print("✅ 指数预警数据已存在,直接使用数据库缓存")
 
-init_all_notifiers(
-    nyt_url=settings.NYT_FEISHU_WEBHOOK_URL or "",
-    nyt_keyword=settings.NYT_FEISHU_KEYWORD,
-    bbc_url=settings.BBC_FEISHU_WEBHOOK_URL or "",
-    bbc_keyword=settings.BBC_FEISHU_KEYWORD,
-    dfcf_url=settings.DFCF_FEISHU_WEBHOOK_URL or "",
-    dfcf_keyword=settings.DFCF_FEISHU_KEYWORD,
-    kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
-    kb_keyword=settings.KB_KEYWORD,
-    openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",
-    openrouter_keyword=settings.OPENROUTER_KEYWORD,
-    deepseek_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL or "",
-    deepseek_keyword=settings.DEEPSEEK_KEYWORD,
-    x_url=settings.X_FEISHU_WEBHOOK_URL or "",
-    x_keyword=settings.X_FEISHU_KEYWORD,
-)
-print("✅ 飞书推送初始化完成")
-if settings.DEEPSEEK_FEISHU_WEBHOOK_URL:
-    print(f"  - DeepSeek 飞书推送: ✅ (关键词: {settings.DEEPSEEK_KEYWORD})")
-if settings.KB_FEISHU_WEBHOOK_URL:
-    print(f"  - 豆包飞书推送: ✅ (关键词: {settings.KB_KEYWORD})")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await start_notifier()
     if settings.START_SCHEDULER:
         start_scheduler()
         jobs = sched_instance.get_jobs()
@@ -80,7 +56,6 @@ async def lifespan(app: FastAPI):
     if settings.START_SCHEDULER:
         stop_scheduler()
         print("🛑 定时任务调度器已停止")
-    await shutdown_notifier()
 
 
 app = FastAPI(
@@ -92,15 +67,32 @@ app = FastAPI(
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates_dir = BASE_DIR / "app" / "templates"
 jinja_env = Environment(loader=FileSystemLoader(str(templates_dir)))
+# 静态资源缓存击穿的时间戳：进程启动瞬间生成，所有页面通过 {{ static_ver }} 取用，
+# 服务重启一次 = 全部 CSS/JS 的 URL 变化，浏览器必然重新拉取。
+jinja_env.globals["static_ver"] = int(time.time())
 
 static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """给静态资源加上 no-store，避免浏览器长期缓存旧的 CSS/JS。
+
+    默认的 StaticFiles 只发 ETag、不发 Cache-Control，浏览器在「离线可用/刷新」等
+    策略下可能继续用旧副本，改完样式却看不到变化（这轮宏观温度计布局调整就踩到过）。
+    这里明确要求每次回源校验，改完刷新即生效；文件都是本地磁盘读，开销可忽略。
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+        return resp
+
+
+app.mount("/static", _NoCacheStaticFiles(directory=str(static_dir)), name="static")
 
 app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(crawl.router, prefix="/api", tags=["crawl"])
-app.include_router(backup.router, prefix="/api", tags=["backup"])
-app.include_router(feishu.router, prefix="/api", tags=["feishu"])
 app.include_router(login.router, prefix="/api", tags=["login"])
 app.include_router(market.router, prefix="/api", tags=["market"])
 app.include_router(index_alarm.router, prefix="/api", tags=["index-alarm"])

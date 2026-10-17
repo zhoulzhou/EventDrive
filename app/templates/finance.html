@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}财务指标 - 新闻抓取应用{% endblock %}
+{% block title %}财务指标 - 市场总览{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -23,7 +23,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/echarts.min.js?v={{ static_ver or 0 }}"></script>
 <script>
 let charts = [];
 

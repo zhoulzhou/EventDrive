@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}新闻列表 - 新闻抓取应用{% endblock %}
+{% block title %}新闻列表 - 市场总览{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -9,13 +9,14 @@
         <input type="text" id="searchInput" placeholder="搜索新闻..." class="search-input">
         <select id="sourceFilter" class="filter-select">
             <option value="">全部来源</option>
-            <option value="财联社头条">财联社头条</option>
             <option value="东方财富">东方财富</option>
-            <option value="纽约时报最新资讯">纽约时报最新资讯</option>
-            <option value="纽约时报精选">纽约时报精选</option>
-            <option value="BBC新闻">BBC新闻</option>
+            <option value="同花顺">同花顺</option>
+            <option value="新浪财经">新浪财经</option>
         </select>
-        <button id="feishuPushBtn" class="btn btn-primary" onclick="pushToFeishu()">📤 推送到飞书</button>
+        <label class="today-only-label">
+            <input type="checkbox" id="todayOnly" checked>
+            仅看当日
+        </label>
     </div>
 </div>
 
@@ -35,8 +36,9 @@ async function loadNews(page = 1) {
     currentPage = page;
     const search = document.getElementById('searchInput').value;
     const source = document.getElementById('sourceFilter').value;
+    const todayOnly = document.getElementById('todayOnly').checked;
 
-    let url = `/api/news?skip=${(page - 1) * pageSize}&limit=${pageSize}`;
+    let url = `/api/news?skip=${(page - 1) * pageSize}&limit=${pageSize}&today_only=${todayOnly}`;
     if (search) url += `&include_keywords=${encodeURIComponent(search)}`;
     if (source) url += `&source=${encodeURIComponent(source)}`;
 
@@ -116,31 +118,7 @@ function escapeHtml(text) {
 
 document.getElementById('searchInput').addEventListener('input', debounce(() => loadNews(1), 300));
 document.getElementById('sourceFilter').addEventListener('change', () => loadNews(1));
-
-async function pushToFeishu() {
-    const btn = document.getElementById('feishuPushBtn');
-    btn.disabled = true;
-    btn.textContent = '推送中...';
-
-    try {
-        const response = await fetchWithAuth('/api/feishu/push', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await response.json();
-
-        if (data.success) {
-            alert('✅ ' + data.message);
-        } else {
-            alert('❌ ' + data.message);
-        }
-    } catch (error) {
-        alert('❌ 推送失败: ' + error.message);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '📤 推送到飞书';
-    }
-}
+document.getElementById('todayOnly').addEventListener('change', () => loadNews(1));
 
 function debounce(func, wait) {
     let timeout;

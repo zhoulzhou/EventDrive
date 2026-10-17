@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}热度趋势 - A股冷热三层温度计{% endblock %}
+{% block title %}热度趋势 - 市场总览{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="/static/css/stock.css">
+<link rel="stylesheet" href="/static/css/stock.css?v={{ static_ver or 0 }}">
 {% endblock %}
 
 {% block content %}
@@ -11,9 +11,9 @@
     <div class="st-header-text">
         <h1>热度趋势</h1>
         <p class="form-hint">
-            只看<strong>历史曲线与走势</strong>：估值层（慢变量定方向）/ 情绪层（快变量定情绪）/ 资金层（资金变量定底气）/ 结构分开画，
-            每张图都带阈值线与末端最新读数；最后用<strong>温度轨迹</strong>看三层是否在打架。
-            曲线的长短取决于「补齐历史数据」的回溯窗口；本页与定时任务都不做历史回溯，需要更新时手动点一次。
+            只看<strong>各指标的历史曲线</strong>：估值层（慢变量定方向）/ 情绪层（快变量定情绪）/ 资金层（资金变量定底气）/ 结构分开画，
+            每张图都带阈值线与末端最新读数。
+            <strong>曲线从现在开始逐日积累</strong>：定时任务每天收盘抓一次并写入历史表，积累得越久曲线越长，不再回溯补历史。
             各指标的<strong>当前读数、阈值分档与判读</strong>见 <a href="/stock-temp">股市热度</a>。
         </p>
         <p class="form-hint st-src-line">
@@ -23,7 +23,6 @@
     </div>
     <div class="st-toolbar">
         <span id="stTrendUpdated" class="st-updated">加载中…</span>
-        <button id="stBackfill" class="btn btn-secondary">补齐历史数据</button>
         <button id="stTrendReload" class="btn btn-primary">刷新图表</button>
     </div>
 </div>
@@ -38,6 +37,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/echarts.min.js"></script>
-<script src="/static/js/stock_charts.js"></script>
+<script src="/static/js/echarts.min.js?v={{ static_ver or 0 }}"></script>
+<script src="/static/js/stock_charts.js?v={{ static_ver or 0 }}"></script>
 {% endblock %}

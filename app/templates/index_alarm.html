@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}指数预警 - 新闻抓取应用{% endblock %}
+{% block title %}指数预警 - 市场总览{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -25,7 +25,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/echarts.min.js?v={{ static_ver or 0 }}"></script>
 <script>
 const META = {
     "NASDAQCOM": {"name": "纳斯达克100指数", "unit": "点", "color": "#5470c6"},

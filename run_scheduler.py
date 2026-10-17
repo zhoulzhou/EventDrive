@@ -11,12 +11,8 @@
 import asyncio
 import signal
 import logging
-from app.config import settings
 from app.database import Base, engine, ensure_schema_compatibility
 from app.scheduler import start_scheduler, stop_scheduler, scheduler
-from app.utils.feishu_notifier import (
-    init_all_notifiers, start_notifier, shutdown_notifier
-)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,26 +44,6 @@ async def _main_async():
         except NotImplementedError:
             pass
 
-    logger.info("初始化飞书推送器...")
-    init_all_notifiers(
-        nyt_url=settings.NYT_FEISHU_WEBHOOK_URL or "",
-        nyt_keyword=settings.NYT_FEISHU_KEYWORD,
-        bbc_url=settings.BBC_FEISHU_WEBHOOK_URL or "",
-        bbc_keyword=settings.BBC_FEISHU_KEYWORD,
-        dfcf_url=settings.DFCF_FEISHU_WEBHOOK_URL or "",
-        dfcf_keyword=settings.DFCF_FEISHU_KEYWORD,
-        kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
-        kb_keyword=settings.KB_KEYWORD,
-        openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",
-        openrouter_keyword=settings.OPENROUTER_KEYWORD,
-        deepseek_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL or "",
-        deepseek_keyword=settings.DEEPSEEK_KEYWORD,
-        x_url=settings.X_FEISHU_WEBHOOK_URL or "",
-        x_keyword=settings.X_FEISHU_KEYWORD,
-    )
-    await start_notifier()
-    logger.info("飞书推送器已启动")
-
     logger.info("启动APScheduler调度器...")
     start_scheduler()
     logger.info("APScheduler调度器已启动 (新闻 JST 8/12/16/20; 市场行情/宏观指标/股票指标 北京时间 20:30; 今日热点 20:35)")
@@ -81,8 +57,6 @@ async def _main_async():
 
     logger.info("正在关闭调度器...")
     stop_scheduler()
-    logger.info("正在关闭飞书推送器...")
-    await shutdown_notifier()
     logger.info("调度器已优雅退出")
 
 

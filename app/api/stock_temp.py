@@ -2,9 +2,9 @@
 
 - GET  /api/stock-temp          读取当前指标、分层判读与综合温度计（**只读库，不再自行抓取**）
 - POST /api/stock-temp/refresh  强制重新抓取全部指标（页面「刷新数据」按钮走这里）
-- GET  /api/stock-temp/series   读取趋势图所需的历史序列 + 重建的月度温度轨迹
+- GET  /api/stock-temp/series   读取趋势图所需的历史序列 + 每日综合温度打卡
 - GET  /api/stock-temp/history  查询任一指标的历史读数（只增不改的历史表）
-- POST /api/stock-temp/backfill 一次性回溯补齐历史数据（让趋势图有数据可画）
+- POST /api/stock-temp/backfill 回溯补齐历史（**页面已无入口**，仅备必要时手动调用）
 
 13 项指标全部自动获取，无手工录入入口：
 - 乐咕乐股：沪深300 PE/PB、破净率、公募仓位、市场宽度
@@ -16,14 +16,15 @@
 落库为「最新快照 + 历史」两张表（见 app/models.py 的 StockTempIndicator /
 StockTempHistory）。抓取失败的指标保留上一次成功读数并在响应 errors 中提示。
 
-**本页数据全部由定时任务抓取**：`./start.sh` 启动的 `run_scheduler.py` 在
-**北京时间每天 20:30** 触发股票指标任务（抓取实现见 app/utils/stock_temp_refresh.py，与本文件的
-POST /refresh 共用同一份）。GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时的
-（交易所日频数据逐日抓取一次要 5 分钟以上，绝不能挂在页面请求上）。
+**本页数据全部由定时任务抓取**：定时任务在**北京时间每天 16:00** 触发股票指标任务
+（抓取实现见 app/utils/stock_temp_refresh.py，与本文件的 POST /refresh 共用同一份）。
+GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时的（交易所日频数据逐日抓取一次
+要5 分钟以上，绝不能挂在页面请求上）。
 
-**「股票趋势」页的长历史序列不由定时任务生成**：定时任务只抓当前读数（顺带把读数
-变化与每日综合温度追加进历史表），历史回溯完全靠页面「补齐历史数据」按钮按需触发
-（POST /api/stock-temp/backfill）。
+**「热度趋势」页的数据从现在开始逐日积累，不做历史回溯**：定时任务每次抓取都会把各
+指标读数与当日综合温度打卡（key="temperature"，detail 含三层温度与分离度）写进历史表，
+/series 只读库返回并按日画曲线。页面已删除「补齐历史数据」按钮，也没有实时重建逻辑 ——
+曲线长短取决于启用天数，这是预期行为。
 """
 import logging
 from datetime import datetime, timezone
@@ -46,7 +47,7 @@ router = APIRouter()
 # 页面「更新于」的展示时区（库中时间戳是 UTC，见 _utcnow）
 CN_TZ = ZoneInfo("Asia/Shanghai")
 
-# 超过这个时长没有落库就提示检查调度器。数据抓取任务每天只在**北京 20:30** 跑一次，
+# 超过这个时长没有落库就提示检查调度器。数据抓取任务每天只在**北京 16:00** 跑一次，
 # 正常间隔就是 24 小时，故阈值取 26 小时（留 2 小时缓冲）：既避免误报，
 # 又能在「某天没跑成」的次日晚上及时提示。
 DATA_STALE_HOURS = 26
@@ -136,7 +137,7 @@ def _payload(db: Session, refreshed: int, errors: dict, history_added: int = 0) 
 def get_stock_temp(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     """读取库中已有的三层指标读数、阈值判读与综合市场温度计（**只读**）。
 
-    数据由 `./start.sh` 启动的定时任务在**北京时间每天 20:30** 抓取写入；需要立刻更新时
+    数据由 `./start.sh` 启动的定时任务在**北京时间每天 16:00** 抓取写入；需要立刻更新时
     走 POST /api/stock-temp/refresh（页面「刷新数据」按钮）。
     """
     try:
@@ -165,15 +166,20 @@ def get_stock_temp_series(
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
 ):
-    """返回趋势面板所需的历史序列，以及按月度重建的三层温度轨迹。
+    """返回趋势面板所需的历史序列，以及**从历史表读取的每日综合温度**。
 
     - series      ：{指标键: [{as_of, value, source}, ...]}，时间正序
-    - temperature ：{monthly: [{as_of, valuation, sentiment, capital, total}]}
+    - temperature ：{daily: [{as_of, total, valuation, sentiment, capital, spread}]}
     - counts      ：各指标可用点数，前端据此决定画什么
+
+    「热度趋势」页只展示各指标曲线，数据**全部来自历史表**、从现在开始逐日积累
+    （定时任务每天收盘抓一次写入），不再做历史回溯、不再实时重建。
+    综合温度取每次刷新写入的打卡记录（key="temperature"），三层温度从其 detail 解析。
     """
     try:
         per_key = max(10, min(int(per_key or 6000), 20000))
-        grouped = crud.get_stock_temp_history_series(db, st.CHART_KEYS, per_key_limit=per_key)
+        chart_keys = list(st.CHART_KEYS) + ["temperature"]
+        grouped = crud.get_stock_temp_history_series(db, chart_keys, per_key_limit=per_key)
 
         series = {}
         counts = {}
@@ -186,15 +192,31 @@ def get_stock_temp_series(
             series[key] = pts
             counts[key] = len(pts)
 
-        temp = st.reconstruct_temperature({
-            k: [{"as_of": p["as_of"], "value": p["value"]} for p in v]
-            for k, v in series.items()
-        })
+        daily = []
+        for r in grouped.get("temperature") or []:
+            if r.value is None or not r.as_of:
+                continue
+            d = st.load_detail(r.detail) or {}
+            row = {"as_of": r.as_of, "total": r.value}
+            for field in st.TEMP_TRACK_KEYS:
+                if field == "total":
+                    continue
+                v = d.get(st.TEMP_LAYER_NAMES.get(field, ""))
+                row[field] = v if isinstance(v, (int, float)) else None
+            spread = d.get("三层分离度(pp)")
+            row["spread"] = spread if isinstance(spread, (int, float)) else None
+            daily.append(row)
 
         return {
             "status": "ok",
             "series": series,
-            "temperature": temp,
+            "temperature": {
+                "daily": daily,
+                "note": (
+                    "综合温度为每次收盘刷新时写入的打卡记录，三层温度取自同一记录的明细。"
+                    "自启用起逐日积累，样本少时仅供参考。"
+                ),
+            },
             "counts": counts,
             "total": sum(counts.values()),
         }
@@ -254,11 +276,13 @@ def backfill_stock_temp(
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
 ):
-    """一次性回溯补齐历史数据（让趋势图有数据可画）。
+    """回溯补齐历史数据。
+
+    ⚠️ **「热度趋势」页已改为「只展示从现在开始积累的曲线」，页面不再提供该入口**
+    （原「补齐历史数据」按钮已删除）。保留本接口仅为必要时手动补数据用；正常情况下
+    历史数据由定时任务每天收盘抓取时逐日写入，不需要回溯。
 
     可重复执行：按（指标, 数据日期）覆盖写入，不会堆重复行。
-    交易所日频数据需逐日请求（每个交易日 2 次），exchange_days=60 约需 2~3 分钟；
-    各数据源自带历史的指标（PE/PB/ERP/破净率/两融/公募仓位/新基金）几乎瞬时完成。
     """
     try:
         exchange_days = max(0, min(int(exchange_days or 60), 250))

@@ -25,13 +25,25 @@ def get_news_list(
     limit: int = 100,
     source: Optional[str] = None,
     include_keywords: Optional[List[str]] = None,
-    exclude_keywords: Optional[List[str]] = None
+    exclude_keywords: Optional[List[str]] = None,
+    today_only: bool = False,
+    all_history: bool = False
 ) -> List[models.News]:
     query = db.query(models.News)
-    
-    cutoff_time = datetime.now() - timedelta(hours=24)
-    query = query.filter(models.News.publish_time >= cutoff_time)
-    
+
+    if all_history:
+        # 查询全部历史（含导入的历史库数据），不做时间过滤。
+        # 仅供显式请求历史时使用，首页默认仍走当日 / 最近 24 小时。
+        pass
+    elif today_only:
+        # 首页默认只展示当日新闻：按自然日（服务器本地时间 00:00 起）过滤。
+        # 用范围查询而非 func.date(publish_time)，避免对列套函数导致无法走索引。
+        start_of_day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        query = query.filter(models.News.publish_time >= start_of_day)
+    else:
+        cutoff_time = datetime.now() - timedelta(hours=24)
+        query = query.filter(models.News.publish_time >= cutoff_time)
+
     if source:
         query = query.filter(models.News.source == source)
     

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}抓取控制 - 新闻抓取应用{% endblock %}
+{% block title %}抓取控制 - 市场总览{% endblock %}
 
 {% block content %}
 <div class="finance-crawl">
@@ -50,13 +50,6 @@
 </div>
 
 <div class="finance-crawl">
-    <h2>数据库备份</h2>
-    <p class="form-hint">把当前数据库复制到项目 backup/ 目录(按时间戳保留多个备份), 你可在本地提交到 git</p>
-    <button id="backupDbBtn" class="btn btn-secondary" style="margin-bottom:1.25rem;">备份数据库</button>
-    <div id="backupResult" class="backup-result"></div>
-</div>
-
-<div class="finance-crawl">
     <h2>新闻抓取</h2>
     <p class="form-hint">立即开始抓取所有来源的最新新闻</p>
     <button id="startCrawlBtn" class="btn btn-primary" style="margin-bottom:1rem;">开始抓取</button>
@@ -91,10 +84,6 @@
 .log-item {
     padding: 2px 0;
     border-bottom: 1px solid #f0f2f5;
-}
-
-.backup-result {
-    margin-bottom: 1.25rem;
 }
 
 .log-item:last-child {
@@ -418,32 +407,5 @@ async function runFinanceQuery() {
 document.getElementById('finFetchBtn').addEventListener('click', runFinanceFetch);
 document.getElementById('finQueryBtn').addEventListener('click', runFinanceQuery);
 finPopulateYears();
-
-// ===== 本地数据库备份 =====
-async function backupDb() {
-    const btn = document.getElementById('backupDbBtn');
-    const box = document.getElementById('backupResult');
-    btn.disabled = true;
-    btn.textContent = '备份中...';
-    box.innerHTML = '<div class="loading">正在复制数据库到 backup/ 目录, 请稍候...</div>';
-
-    try {
-        const response = await fetchWithAuth('/api/backup/db', { method: 'POST' });
-        const data = await response.json();
-
-        if (data.success) {
-            box.innerHTML = `<div class="log-success"><b>✅ ${escapeHtml(data.message)}</b></div>`;
-        } else {
-            box.innerHTML = `<div class="log-error"><b>❌ ${escapeHtml(data.message)}</b></div>`;
-        }
-    } catch (error) {
-        box.innerHTML = `<div class="log-error"><b>❌ 备份失败: ${escapeHtml(error.message)}</b></div>`;
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '备份数据库';
-    }
-}
-
-document.getElementById('backupDbBtn').addEventListener('click', backupDb);
 </script>
 {% endblock %}

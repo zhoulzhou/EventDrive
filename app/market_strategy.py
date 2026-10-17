@@ -109,6 +109,11 @@ def advance(db: Session, symbol: str, value: float, date: str) -> bool:
     if strategy is None:
         return False  # 未配置策略，不推进
 
+    # 仅配置了 thresholds 的指标（如 VIXCLS 按绝对值分级）不参与峰值回撤推进，
+    # 这类配置没有 red_pct，直接读取会抛 KeyError。
+    if strategy.get("red_pct") is None:
+        return False
+
     state = crud.get_market_strategy_state(db, symbol)
     red_pct = strategy["red_pct"] / 100.0  # 转为小数
 
@@ -181,6 +186,10 @@ def compute_drawdown(
 
     strategy = _get_strategy(symbol)
     if strategy is None:
+        return result
+
+    # 仅配置了 thresholds 的指标（如 VIXCLS）走绝对值分级，不参与峰值回撤计算
+    if strategy.get("red_pct") is None:
         return result
 
     # 峰值以持久化状态为准（动态策略演进后的真实峰值）；无状态时退回固定峰值配置

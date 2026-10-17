@@ -253,9 +253,13 @@ function marksFor(dates, vals, color, latestText, fmt) {
 }
 function lineSeries(name, vals, color, o) {
     o = o || {};
+    // 点数很少时（历史刚开始积累，可能只有 1 个点）必须显示 symbol：
+    // ECharts 的 line 系列 symbol:"none" 在单点时不画线也不画点，图表会整片空白，
+    // 用户看到的就是「有数据却什么都没有」。
+    const sparse = Array.isArray(vals) && vals.filter(function (v) { return v !== null; }).length < 2;
     return Object.assign({
         name: name, type: "line", data: vals,
-        smooth: false, symbol: "none",
+        smooth: false, symbol: sparse ? "circle" : "none", symbolSize: sparse ? 6 : 0,
         lineStyle: { width: o.width || 1.7, color: color, type: o.dash ? "dashed" : "solid" },
         itemStyle: { color: color }
     }, o.extra || {});
@@ -264,7 +268,7 @@ function lineSeries(name, vals, color, o) {
 /* ---------------- ① 资金松紧：DR007 偏离 ---------------- */
 function drawDr007(bag, steps) {
     const rows = pick(bag, "dr007_spread");
-    if (rows.length < 2) { chartEmpty("mpDr007", "暂无日度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (!rows.length) { chartEmpty("mpDr007", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const ma5 = movingAvg(vals, 5);
@@ -316,7 +320,7 @@ function drawDr007(bag, steps) {
 /* ---------------- ① 资金松紧：R001 − DR001 ---------------- */
 function drawR001(bag) {
     const rows = pick(bag, "r001_dr001");
-    if (rows.length < 2) { chartEmpty("mpR001", "暂无日度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (!rows.length) { chartEmpty("mpR001", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -364,7 +368,7 @@ function drawR001(bag) {
 /* ---------------- ① 资金松紧：超储率（季末·水位） ---------------- */
 function drawExcessReserve(bag) {
     const rows = pick(bag, "excess_reserve");
-    if (rows.length < 2) { chartEmpty("mpER", "暂无季度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (!rows.length) { chartEmpty("mpER", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -410,7 +414,7 @@ function drawExcessReserve(bag) {
 /* ---------------- ② 信用扩张：社融存量同比 ---------------- */
 function drawTsf(bag) {
     const rows = pick(bag, "tsf_yoy");
-    if (rows.length < 2) { chartEmpty("mpTsf", "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (!rows.length) { chartEmpty("mpTsf", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -448,17 +452,38 @@ function drawTsf(bag) {
 /* ---------------- ② 信用扩张：M1、M2 双线 + 剪刀差填充 ---------------- */
 function drawM1M2(bag) {
     const m1 = pick(bag, "m1_yoy"), m2 = pick(bag, "m2_yoy"), sp = pick(bag, "m1_m2");
-    const axis = (m1.length >= 2 ? m1 : m2).map(function (r) { return r.as_of; });
-    if (axis.length < 2) { chartEmpty("mpM1M2", "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    // 时间轴取「三条序列里最长的一条」：m1_yoy / m2_yoy 可能尚未单独入库（库里通常只存
+    // 剪刀差 m1_m2），原来用 `m1.length >= 2 ? m1 : m2` 判断，m1 为空时会退回同样为空的
+    // m2，导致明明有剪刀差数据却画不出图。
+    const axisSrc = [m1, m2, sp].filter(function (r) { return r.length; })
+        .sort(function (a, b) { return b.length - a.length; })[0] || [];
+    const axis = axisSrc.map(function (r) { return r.as_of; });
+    if (!axis.length) {
+        chartEmpty("mpM1M2", "暂无月度序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）");
+        return;
+    }
 
     const a1 = alignTo(axis, m1), a2 = alignTo(axis, m2), asp = alignTo(axis, sp);
     const pairs = axis.map(function (_, i) { return [a1[i], a2[i]]; });
     const both = pairs.filter(function (p) { return p[0] !== null && p[1] !== null; });
-    if (both.length < 2) { chartEmpty("mpM1M2", "M1 / M2 序列不足，点右上角「补齐历史数据」回溯"); return; }
+    // 成对值（M1 与 M2 同时有）至少要 1 个才画得出剪刀差；只有单边时仍画已有的那条线
+    if (!both.length && !asp.filter(function (v) { return v !== null; }).length) {
+        chartEmpty("mpM1M2", "M1 / M2 序列不足，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）");
+        return;
+    }
 
+    // Y 轴范围：优先用成对值（M1/M2 都有）撑开；若只有单边序列，则用该序列 + 剪刀差兜底，
+    // 否则 both 为空时 Math.min.apply(null, []) 会得到 Infinity，把整张图压扁。
+    const singles = a1.concat(a2).filter(function (v) { return v !== null; })
+        .concat(asp.filter(function (v) { return v !== null; }));
     const flat = both.reduce(function (a, p) { return a.concat(p); }, []);
-    const yMin = Math.floor(Math.min.apply(null, flat) - 1);
-    const yMax = Math.ceil(Math.max.apply(null, flat) + 1);
+    const pool = flat.length ? flat : singles;
+    if (!pool.length) {
+        chartEmpty("mpM1M2", "M1 / M2 序列不足，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）");
+        return;
+    }
+    const yMin = Math.floor(Math.min.apply(null, pool) - 1);
+    const yMax = Math.ceil(Math.max.apply(null, pool) + 1);
 
     const spread = asp.map(function (v) { return v === null ? 0 : v; });
     const lastSpread = spread[spread.length - 1];
@@ -531,7 +556,7 @@ function drawM1M2(bag) {
 /* ---------------- ③ 景气温度：PMI ---------------- */
 function drawPmi(bag) {
     const rows = pick(bag, "pmi");
-    if (rows.length < 2) { chartEmpty("mpPmi", "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (!rows.length) { chartEmpty("mpPmi", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -575,7 +600,7 @@ function drawPmi(bag) {
 /* ---------------- ③ 景气温度：PPI 同比 ---------------- */
 function drawPpi(bag) {
     const rows = pick(bag, "ppi_yoy");
-    if (rows.length < 2) { chartEmpty("mpPpi", "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (!rows.length) { chartEmpty("mpPpi", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -617,183 +642,6 @@ function drawPpi(bag) {
     mount("mpPpi", opt);
 }
 
-/* ---------------- 归一化叠加（z-score，滚动 12 月） ---------------- */
-function drawZScore(bag, months) {
-    const pmiRows = pick(bag, "pmi");
-    if (pmiRows.length < 8) { chartEmpty("mpZscore", "月度序列不足，点右上角「补齐历史数据」回溯"); return; }
-    const axis = pmiRows.slice(-months).map(function (r) { return r.as_of; });
-
-    const defs = [
-        { key: "dr007_spread", name: "DR007 偏离", color: CH.blue, rows: monthlyAvg(pick(bag, "dr007_spread")), unit: "bp" },
-        { key: "tsf_yoy", name: "社融存量同比", color: CH.green, rows: pick(bag, "tsf_yoy"), unit: "%" },
-        { key: "pmi", name: "制造业 PMI", color: CH.orange, rows: pmiRows, unit: "" },
-        { key: "ppi_yoy", name: "PPI 同比", color: CH.lime, rows: pick(bag, "ppi_yoy"), unit: "%" }
-    ];
-
-    const series = defs.map(function (d) {
-        const z = zSeries(d.rows, 12, 6);
-        d.z = alignTo(axis, z, "value");
-        d.raw = alignTo(axis, z, "raw");
-        return {
-            name: d.name, type: "line", data: d.z, symbol: "none",
-            connectNulls: false,
-            lineStyle: { width: 1.8, color: d.color },
-            itemStyle: { color: d.color }
-        };
-    });
-
-    const opt = {
-        animationDuration: 260,
-        grid: { left: 42, right: 24, top: 38, bottom: 26 },
-        legend: {
-            top: 2, left: 0, itemWidth: 14, itemHeight: 2,
-            textStyle: { color: CH.sub, fontSize: 11 },
-            data: defs.map(function (d) { return d.name; })
-        },
-        tooltip: {
-            trigger: "axis", confine: true,
-            axisPointer: { lineStyle: { color: CH.axis } },
-            backgroundColor: "rgba(255,255,255,0.97)",
-            borderColor: "#e2e8f0", borderWidth: 1, padding: [8, 11],
-            textStyle: { color: CH.ink, fontSize: 12, lineHeight: 18 },
-            formatter: function (p) {
-                const i = p[0].dataIndex;
-                let s = "<b>" + escapeHtml(axis[i]) + "</b>（z-score ／ 原始值）<br>";
-                defs.forEach(function (d) {
-                    const zv = d.z[i], rv = d.raw[i];
-                    if (zv === null || zv === undefined) { s += '<span style="color:' + CH.sub + '">' + escapeHtml(d.name) + "：无数据</span><br>"; return; }
-                    s += '<span style="color:' + d.color + '">●</span> ' + escapeHtml(d.name) + "：<b>"
-                        + (zv > 0 ? "+" : "") + num(zv, 2) + "</b> ／ " + (rv > 0 ? "+" : "") + num(rv, 1) + d.unit + "<br>";
-                });
-                return s;
-            }
-        },
-        xAxis: {
-            type: "category", data: axis, boundaryGap: false,
-            axisLine: { lineStyle: { color: CH.axis } }, axisTick: { show: false },
-            axisLabel: { color: CH.sub, fontSize: 10 }, splitLine: { show: false }
-        },
-        yAxis: {
-            type: "value", scale: true, name: "σ", nameTextStyle: { color: CH.sub, fontSize: 10 },
-            axisLine: { show: false }, axisTick: { show: false },
-            axisLabel: { color: CH.sub, fontSize: 10 },
-            splitLine: { lineStyle: { color: CH.grid } }
-        },
-        series: series.map(function (s, idx) {
-            if (idx !== 0) return s;
-            return Object.assign(s, {
-                markLine: {
-                    silent: true, symbol: "none",
-                    lineStyle: { color: CH.slate, width: 1.1, type: "dashed" },
-                    label: { position: "insideStartTop", color: CH.slate, textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5, fontSize: 10, formatter: "均值 0σ" },
-                    data: [{ yAxis: 0 }]
-                }
-            });
-        })
-    };
-    mount("mpZscore", opt);
-}
-
-/* ---------------- ④ 全局定位：资金 × 热度 四象限 ---------------- */
-function drawQuadrant(bag) {
-    const drM = monthlyAvg(pick(bag, "dr007_spread"));
-    const pmiRows = pick(bag, "pmi");
-    if (drM.length < 3 || pmiRows.length < 3) { chartEmpty("mpQuad", "日度/月度序列不足，点右上角「补齐历史数据」回溯"); return; }
-    const pmiMap = {};
-    pmiRows.forEach(function (r) { pmiMap[r.as_of] = Number(r.value); });
-
-    const pts = drM.filter(function (r) { return pmiMap[r.as_of] !== undefined; })
-        .map(function (r) { return { as_of: r.as_of, x: Number(r.value), y: pmiMap[r.as_of] }; })
-        .slice(-36);
-    if (pts.length < 3) { chartEmpty("mpQuad", "资金面与景气的重叠月份不足（社融/PMI 回溯范围有限）"); return; }
-
-    const xs = pts.map(function (p) { return p.x; }), ys = pts.map(function (p) { return p.y; });
-    const xMin = Math.min(Math.min.apply(null, xs) - 5, -10), xMax = Math.max(Math.max.apply(null, xs) + 5, 10);
-    const yMin = Math.min(Math.min.apply(null, ys) - 0.5, 48.5), yMax = Math.max(Math.max.apply(null, ys) + 0.5, 51.5);
-
-    const quadArea = function (ax, ay, bx, by, color, text) {
-        return [
-            {
-                xAxis: ax, yAxis: ay,
-                itemStyle: { color: withAlpha(color, 0.10) },
-                label: { show: true, position: "insideTopLeft", distance: 8, color: withAlpha(color, 0.95), fontSize: 11, fontWeight: 600, lineHeight: 15, formatter: text }
-            },
-            { xAxis: bx, yAxis: by }
-        ];
-    };
-
-    const last = pts[pts.length - 1];
-    const opt = {
-        animationDuration: 300,
-        grid: { left: 46, right: 20, top: 26, bottom: 40 },
-        tooltip: {
-            trigger: "item", confine: true,
-            backgroundColor: "rgba(255,255,255,0.97)",
-            borderColor: "#e2e8f0", borderWidth: 1, padding: [8, 11],
-            textStyle: { color: CH.ink, fontSize: 12, lineHeight: 18 },
-            formatter: function (p) {
-                const pt = pts[p.dataIndex];
-                if (!pt) return "";
-                const side = (pt.x <= 0 ? "资金松" : "资金紧") + " + " + (pt.y >= 50 ? "热度高" : "热度低");
-                const nameMap = { "资金松 + 热度高": "复苏", "资金紧 + 热度高": "过热", "资金松 + 热度低": "流动性陷阱", "资金紧 + 热度低": "滞胀" };
-                return "<b>" + escapeHtml(pt.as_of) + "</b><br>"
-                    + "资金面（DR007 偏离月均）：<b>" + signed(pt.x, 1) + " bp</b><br>"
-                    + "景气（制造业 PMI）：<b>" + num(pt.y, 1) + "</b><br>"
-                    + "象限：<b>" + escapeHtml(nameMap[side] || side) + "</b>";
-            }
-        },
-        xAxis: {
-            type: "value", min: xMin, max: xMax, name: "资金面（越左越松 → 越右越紧，bp）",
-            nameLocation: "middle", nameGap: 24, nameTextStyle: { color: CH.sub, fontSize: 10 },
-            axisLine: { lineStyle: { color: CH.axis } }, axisTick: { show: false },
-            axisLabel: { color: CH.sub, fontSize: 10 },
-            splitLine: { lineStyle: { color: CH.grid } }
-        },
-        yAxis: {
-            type: "value", min: yMin, max: yMax, name: "景气 PMI（下冷 → 上热）",
-            nameTextStyle: { color: CH.sub, fontSize: 10 },
-            axisLine: { show: false }, axisTick: { show: false },
-            axisLabel: { color: CH.sub, fontSize: 10 },
-            splitLine: { lineStyle: { color: CH.grid } }
-        },
-        series: [{
-            type: "line", data: pts.map(function (p) { return [p.x, p.y]; }),
-            symbol: "circle", symbolSize: 6,
-            lineStyle: { width: 1.6, color: withAlpha(CH.slate, 0.75), type: "solid" },
-            itemStyle: { color: CH.slate, borderColor: "#fff", borderWidth: 1 },
-            markArea: {
-                silent: true,
-                data: [
-                    quadArea(xMin, 50, 0, yMax, CH.blue, "复苏\n松 + 热"),
-                    quadArea(0, 50, xMax, yMax, CH.orange, "过热\n紧 + 热"),
-                    quadArea(xMin, yMin, 0, 50, CH.cyan, "流动性陷阱\n松 + 冷"),
-                    quadArea(0, yMin, xMax, 50, CH.red, "滞胀\n紧 + 冷")
-                ]
-            },
-            markLine: {
-                silent: true, symbol: "none",
-                lineStyle: { color: CH.ink, width: 1.1, opacity: 0.55 },
-                label: { show: false },
-                data: [{ xAxis: 0 }, { yAxis: 50 }]
-            },
-            markPoint: {
-                silent: true,
-                data: [{
-                    coord: [last.x, last.y], value: last.y,
-                    symbol: "circle", symbolSize: 11,
-                    itemStyle: { color: CH.ink, borderColor: "#fff", borderWidth: 2 },
-                    label: {
-                        show: true, position: "right", distance: 6,
-                        color: CH.ink, fontSize: 11, fontWeight: 600,
-                        formatter: "当前 " + last.as_of
-                    }
-                }]
-            }
-        }]
-    };
-    mount("mpQuad", opt);
-}
-
 /* ---------------- 面板骨架与说明文字 ---------------- */
 function panelChart(title, note, id) {
     return '<div class="mp-fig">'
@@ -812,8 +660,8 @@ function panelHtml() {
     return '<section class="mp-wrap">'
         + '<div class="mp-head">'
         + "<h2>宏观监测面板 · 三组一定位</h2>"
-        + '<p class="form-hint">日度 / 月度 / 季度分开 · 每个面板 = 主图 + 辅图 + 判读 · 最后用四象限定位全局。'
-        + "阈值线与色带已内置，落在哪条泳道直接读；当前值、极值都标在图上。</p>"
+        + '<p class="form-hint">日度 / 月度 / 季度分开 · 每个面板 = 主图 + 辅图 + 判读。'
+        + "阈值线与色带已内置，落在哪条泳道直接读；当前值、极值都标在图上。<b>曲线从现在开始逐日积累</b>，不再回溯补历史。</p>"
         + "</div>"
         + '<div class="mp-grid">'
         + panelCard("mp-liq", "① 资金松紧", "日度 / 季度", [
@@ -830,23 +678,6 @@ function panelHtml() {
             panelChart("辅图 · PPI 同比", "0 轴 + −3/−2/0/2/5% 分档带", "mpPpi")
         ], "PMI 上穿 50 且 PPI 连续回升 = 复苏确认")
         + "</div>"
-        + '<div class="mp-wide mp-quad">'
-        + panelChart("④ 全局定位 · 资金 × 热度 四象限", "月度快照，连成轨迹看迁徙", "mpQuad")
-        + '<div class="mp-quad-side">'
-        + '<div class="mp-quad-cycle">经典轮动：<b>复苏 → 过热 → 滞胀 → 流动性陷阱 → 复苏</b></div>'
-        + "<ul>"
-        + "<li><b>左上 · 复苏</b>（松 + 热）：钱多且景气回升，风险资产最佳环境</li>"
-        + "<li><b>右上 · 过热</b>（紧 + 热）：政策收紧或通胀压制，股债双杀风险</li>"
-        + "<li><b>左下 · 流动性陷阱</b>（松 + 冷）：宽货币没进实体，资产荒、长债利率低位</li>"
-        + "<li><b>右下 · 滞胀</b>（紧 + 冷）：最差组合，衰退叠加流动性收缩</li>"
-        + "</ul>"
-        + '<div class="mp-quad-watch">观察哨：<b>PMI 上穿 50</b> 与 <b>社融存量同比企稳</b>——这两个是离开「流动性陷阱」进入复苏的必要条件。</div>'
-        + "</div></div>"
-        + '<div class="mp-wide">'
-        + panelChart("归一化叠加 · 跨量纲共振检测", "各指标滚动 12 月 z-score 同图；悬停可同时看到 z-score 与原始数值", "mpZscore")
-        + '<div class="mp-znote">z-score =（当期值 − 滚动 12 月均值）／ 滚动 12 月标准差。'
-        + "四条线同时抬头 = 全面回暖；相互背离 = 结构性矛盾。原始数值只在悬停提示里给出，避免同图量纲失真。</div>"
-        + "</div>"
         + "</section>";
 }
 
@@ -858,7 +689,7 @@ function notesHtml() {
         + "<h3>一、组合三原则</h3>"
         + "<ol>"
         + "<li><b>频率对齐</b>：日度（DR007 / R001 / GC001）一张图，月度（社融 / PMI / PPI / M1）一张图，季度（超储率）单独。混频率 = 看不清。</li>"
-        + "<li><b>量纲配对</b>：同量纲直接叠（DR007 vs 政策利率）；不同量纲先转成利差 / 偏离度 / 剪刀差 / z-score 再叠。</li>"
+        + "<li><b>量纲配对</b>：同量纲直接叠（DR007 vs 政策利率）；不同量纲先转成利差 / 偏离度 / 剪刀差再叠。</li>"
         + "<li><b>领先验证</b>：信用（社融、M1−M2）领先实体 2-3 个季度，用于<b>预判</b>；PMI / PPI 是<b>同步确认</b>。两者背离时，以信用为方向、以景气验证。</li>"
         + "</ol></div>"
         + '<div class="mp-note">'
@@ -867,17 +698,10 @@ function notesHtml() {
         + "<li><b>偏离度图</b>（资金面首选）：不裸画两条线让人自己算差，直接画 DR007 − 7天逆回购利率单线 + 0 轴 + ±20bp 色带 + 5 日均线。高于 0 越多越紧、低于 0 越多越松，一眼定生死。</li>"
         + "<li><b>阈值带图</b>（区间类指标首选）：给指标画「泳道」。社融背景分三段色带（&lt;8% 收缩 / 8~10% 中性 / &gt;12% 宽信用）；R001−DR001 画 15 / 30 / 50bp 三条横线；PPI 画 −3 / 0 / 2 / 5% 四档带。泳道比裸线强在<b>阈值内置，不用记</b>。</li>"
         + "<li><b>双线 + 剪刀差填充</b>（配对指标首选）：M1、M2 两条线，中间差值用面积填充，M1&gt;M2 绿色、M1&lt;M2 红色。剪刀差的「转正 / 转负」比两条线的绝对值信息量大得多。</li>"
-        + "<li><b>归一化叠加</b>（跨量纲共振检测）：把 DR007 偏离、社融、PMI、PPI 各算 z-score 画进同一张图，看共振：同时抬头 = 全面回暖，背离 = 结构性矛盾。原始数值标注在提示里，z-score 只负责同图，数值负责精确。</li>"
         + "</ol></div>"
         + '<div class="mp-note">'
-        + "<h3>三、四象限定位</h3>"
-        + "<ul>"
-        + "<li>X 轴 = 资金面（DR007 偏离度，左松右紧）；Y 轴 = PMI 或 PPI（下冷上热）。</li>"
-        + "<li>每月一个点，连成轨迹。经典轮动：复苏 → 过热 → 滞胀 → 流动性陷阱 → 复苏。</li>"
-        + "<li>当前落在「资金平稳、热度磨底」的位置——离复苏象限（左上）只差 PMI 上穿 50 与社融企稳，这两个就是观察哨。</li>"
-        + "</ul></div>"
         + '<div class="mp-note">'
-        + "<h3>四、让图「明显」的 6 个细节</h3>"
+        + "<h3>三、让图「明显」的细节</h3>"
         + "<ol>"
         + "<li><b>阈值线永远画上</b>：50、±10bp、15/30/50bp、8/10/12%、0 轴——没有锚的图等于没画。</li>"
         + "<li><b>当前值和极值直接标在图上</b>（高峰、低谷、最新点），不靠鼠标悬停。</li>"
@@ -900,8 +724,6 @@ function drawCharts(d) {
     drawM1M2(bag);
     drawPmi(bag);
     drawPpi(bag);
-    drawZScore(bag, 36);
-    drawQuadrant(bag);
     Object.keys(chartReg).forEach(function (k) { chartReg[k].resize(); });
 }
 
@@ -915,32 +737,10 @@ async function loadSeries(force) {
         drawCharts(d);
         setTrendMeta(d, false);
     } catch (error) {
-        ["mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi", "mpZscore", "mpQuad"].forEach(function (id) {
+        ["mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"].forEach(function (id) {
             chartEmpty(id, "历史序列加载失败：" + error.message);
         });
         setTrendMeta(null, true);
-    }
-}
-
-async function runBackfill() {
-    const btn = document.getElementById("macroBackfill");
-    if (!window.confirm("将回溯补齐各指标的历史数据（日度逐月请求 + 央行社融逐期解析 + 超储率的季度报告 PDF 逐份下载，首次约需 3~4 分钟）。\n已存在的记录按「指标 + 数据日期」覆盖更新，不会产生重复行。\n超储率历史补足后不会再重复下载。\n\n继续？")) return;
-    btn.disabled = true;
-    btn.textContent = "回溯中…（约 3~4 分钟）";
-    try {
-        const response = await fetchWithAuth("/api/macro/backfill", { method: "POST" });
-        const d = await response.json();
-        if (d.status !== "ok") throw new Error(d.message || "回溯失败");
-        const lines = Object.keys(d.counts || {}).map(function (k) { return "  " + k + "：" + d.counts[k] + " 条"; });
-        alert("回溯完成\n生成 " + d.generated + " 条（新增 " + d.added + " / 更新 " + d.updated + "）\n"
-            + lines.join("\n")
-            + (Object.keys(d.errors || {}).length ? "\n\n未完成：" + JSON.stringify(d.errors) : ""));
-        await loadSeries(true);
-    } catch (error) {
-        alert("回溯失败：" + error.message);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "补齐历史数据";
     }
 }
 
@@ -967,18 +767,23 @@ function nowClock() {
     return p(n.getHours()) + ":" + p(n.getMinutes()) + ":" + p(n.getSeconds());
 }
 
-// 顶部时间戳 + 历史偏少时的「补齐历史数据」提示
+// 顶部时间戳 + 样本偏少时的积累提示
 function setTrendMeta(d, failed) {
     const meta = document.getElementById("trendUpdated");
     if (!meta) return;
     if (failed) { meta.textContent = "历史序列读取失败"; return; }
     const s = seriesStats(d);
-    meta.textContent = "数据更新于 " + nowClock() + " · 历史 " + s.total + " 条 · 最新数据 " + s.latest;
+    meta.textContent = "读取于 " + nowClock() + " · 已积累 " + s.total + " 条 · 最新数据 " + s.latest;
     const notice = document.getElementById("trendNotice");
     if (!notice) return;
-    notice.innerHTML = s.total < 200
-        ? '<div class="macro-alert">历史序列偏少（' + s.total + ' 条），曲线可能很短。可点「补齐历史数据」回溯：日度逐月请求 + 央行社融逐期解析 + 超储率季度报告 PDF 逐份下载，首次约 3~4 分钟；一律按「指标 + 数据日期」覆盖写入，不会堆重复行。</div>'
-        : "";
+    notice.innerHTML = s.total === 0
+        ? '<div class="macro-alert">历史数据已清空，正从现在开始积累。定时任务每天收盘抓取各指标读数写入历史表，'
+          + "曲线会逐日变长；如需立刻写入一批数据，可到「宏观指标」页点「刷新数据」。</div>"
+        : (s.total < 30
+            ? '<div class="macro-alert">目前已积累 ' + s.total + ' 个数据点，曲线尚短。定时任务每天收盘会自动追加，'
+              + "无需手动操作。注意各指标频率不同：日度（DR007 / R001）逐日累积，月度（社融 / M1-M2 / PMI / PPI）每月一点，"
+              + "季度（超储率）每季一点，所以月度和季度指标需要等更久才有明显曲线。</div>"
+            : "");
 }
 
 function trendBoot() {
@@ -989,7 +794,6 @@ function trendBoot() {
     loadSeries(false);
 }
 
-document.getElementById("macroBackfill").addEventListener("click", runBackfill);
 document.getElementById("macroTrendReload").addEventListener("click", function () { loadSeries(true); });
 
 window.addEventListener("resize", debounce(function () {

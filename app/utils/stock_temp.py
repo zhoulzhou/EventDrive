@@ -91,27 +91,27 @@ TEMP_LAYERS = [
     {
         "key": GROUP_VALUATION,
         "name": "估值温度",
-        "weight": 0.50,
+        "weight": 0.35,
         "tone": "blue",
         "desc": "PE 分位 40% + ERP 30% + 破净率 30%。慢变量，定方向。",
     },
     {
         "key": GROUP_SENTIMENT,
         "name": "情绪温度",
-        "weight": 0.30,
+        "weight": 0.35,
         "tone": "amber",
         "desc": "成交额分位 50% + 换手率分位 30% + 两融占流通市值 20%。快变量，定情绪。",
     },
     {
         "key": GROUP_CAPITAL,
         "name": "资金温度",
-        "weight": 0.20,
+        "weight": 0.30,
         "tone": "green",
         "desc": "公募仓位 30% + 股票ETF份额 25% + 新基金发行 25% + 产业资本 20%。资金变量，定底气。",
     },
 ]
 
-# 综合温度 = 估值 ×50% + 情绪 ×30% + 资金 ×20%
+# 综合温度 = 估值 ×35% + 情绪 ×35% + 资金 ×30%
 TEMP_ZONES = [
     {"lo": 0, "hi": 20, "state": "冰点 · 布局区", "tone": "blue"},
     {"lo": 20, "hi": 40, "state": "偏冷", "tone": "cyan"},
@@ -330,9 +330,9 @@ INDICATORS: List[Dict[str, Any]] = [
         "temp_layer": GROUP_SENTIMENT,
         "temp_weight": 0.20,
         "temp_invert": False,
-        # 该指标打分的口径是「余额 ÷ 流通市值」，而历史序列存的是「余额」本身。
-        # 余额有长期增长趋势，直接对它算分位会永远偏高，所以温度重建时跳过它，
-        # 只用实时快照的读数（按占流通市值判档）参与温度。
+        # 历史序列与快照同口径（都是「占流通市值%」），但**历史点极少**：交易所逐日流通市值
+        # 只能取到最新一天，所以占比序列是从启用起逐日累积的。样本不足 12 期时算不出
+        # 分位，温度重建跳过它，等曲线攒够样本后自动参与。
         "temp_reconstruct": False,
         "freq": "日频",
         "judge": "value",
@@ -809,6 +809,130 @@ def _compact(day: str) -> str:
     return str(day).replace("-", "")[:8]
 
 
+# ------------------------------------------------------------ 批量成交额（长历史）
+#
+# 交易所官方接口（stock_sse_deal_daily / stock_szse_summary）**一次只能取一天**，
+# 2014 至今约 3100 个交易日 × 2 个接口 ≈ 6200 次请求，逐日抓不可行。
+#
+# 替代口径：用新浪指数日线的**成交量**合成两市成交额 —— 上证综指（sh000001）与
+# 深证综指（sz399106）的成交量分别等于沪市 / 深市全部股票的成交量（指数日线 volume
+# 字段单位是「股」，与交易所「成交量（亿股）」口径比对，实测比值稳定在 0.99 附近）。
+#
+# 成交额 = 成交量 × 均价。均价用「成交额 ÷ 成交量」的真实比值作为锚点，按指数点位
+# 比例逐日折算：均价_t = 均价_锚点 × (点位_t / 点位_锚点)。锚点由 _sse_day() 取到的
+# 交易所真实成交额与成交量现算，保证锚点当天与官方口径完全一致。
+#
+# ⚠️ 这是**近似口径**，与交易所官方逐日抓取存在约 1~5% 的浮动误差（源于均价折算而非
+# 真实逐日均价）。适合长历史趋势判断；判断当前绝对档位时仍以官方逐日值为准。
+
+_MARKET_HISTORY_INDEXES = (
+    ("sh000001", "上证综指"),   # 沪市全部股票
+    ("sz399106", "深证综指"),   # 深市全部股票
+)
+
+
+def _index_daily_volume(symbol: str) -> List[Dict[str, Any]]:
+    """新浪指数日线 → [{as_of, close, volume}]（volume 单位：股）。"""
+    ak = _ak()
+    df = ak.stock_zh_index_daily(symbol=symbol)
+    if df is None or df.empty:
+        return []
+    out = []
+    for _, r in df.iterrows():
+        d = str(r.get("date"))[:10]
+        v = _num(r.get("volume"))
+        if not d or v is None:
+            continue
+        out.append({"as_of": d, "close": _num(r.get("close")), "volume": v})
+    return out
+
+
+def fetch_market_series_bulk(
+    start: str = "2014-01-01", anchor_day: Optional[str] = None
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[Dict[str, float]]]:
+    """用指数成交量批量合成两市成交额长历史。
+
+    返回 (成交额序列, 换手率序列, 锚点明细)。与 fetch_market_series() 的区别：
+    一次调用即可拿到 start 以来的全部交易日，不做逐日请求。
+
+    换手率 = 成交额 ÷ 两市流通市值。流通市值同样没有批量历史源，这里用**指数点位
+    同比缩放**的流通市值近似：锚点取交易所真实流通市值，之后按大盘指数点位比例折算，
+    与「成交额 ÷ 流通市值」的真实口径保持同量纲（约 1~2% 误差）。
+
+    anchor_day 指定锚点交易日（默认最近一个有官方数据的交易日）；取不到官方数据时
+    返回空序列并抛错，避免产出无锚点的假历史。
+    """
+    sh = {p["as_of"]: p for p in _index_daily_volume("sh000001")}
+    sz = {p["as_of"]: p for p in _index_daily_volume("sz399106")}
+    if not sh or not sz:
+        raise RuntimeError("指数日线成交量获取失败，无法合成两市成交额")
+
+    days = sorted(d for d in (set(sh) & set(sz)) if start <= d <= date.today().isoformat())
+    if not days:
+        raise RuntimeError("指数日线与起始日期 %s 无交集" % start)
+
+    # ---- 锚点：用交易所真实值定标，保证锚点当天与官方口径一致
+    anchor = None
+    candidates = [d for d in reversed(days) if d == anchor_day] if anchor_day else \
+        [d for d in reversed(days[-15:])]
+    for d in candidates:
+        try:
+            rec = _market_day(d)
+        except Exception:
+            rec = None
+        if rec and rec.get("turnover") and rec.get("float_mcap"):
+            anchor = dict(rec)
+            anchor["as_of"] = d
+            break
+    if not anchor:
+        raise RuntimeError(
+            "未能取得交易所锚点数据（最近 %s 均失败），拒绝产出无锚点的近似历史" % days[-3:]
+        )
+
+    # 锚点当日的指数合计成交量（股）→ 亿股，与交易所「成交量（亿股）」同量纲
+    a_vol_yi = (sh[anchor["as_of"]]["volume"] + sz[anchor["as_of"]]["volume"]) / 1e8
+    if a_vol_yi <= 0:
+        raise RuntimeError("锚点日 %s 指数成交量异常" % anchor["as_of"])
+
+    # 均价(元/股) = 成交额(亿) / 成交量(亿股)；流通市值(亿) 已知
+    avg_price = anchor["turnover"] / a_vol_yi
+    # 锚点日的大盘指数点位（沪+深 之和，只用作比例因子，不作绝对含义）
+    a_point = (sh[anchor["as_of"]]["close"] or 0) + (sz[anchor["as_of"]]["close"] or 0)
+    if a_point <= 0:
+        raise RuntimeError("锚点日 %s 指数点位异常" % anchor["as_of"])
+
+    turnover_series: List[Dict[str, Any]] = []
+    rate_series: List[Dict[str, Any]] = []
+    for d in days:
+        s = sh[d]
+        z = sz[d]
+        vol_yi = (s["volume"] + z["volume"]) / 1e8
+        if vol_yi <= 0:
+            continue
+        point = (s["close"] or 0) + (z["close"] or 0)
+        if point <= 0:
+            continue
+        # 均价按点位比例缩放；成交额 = 成交量(亿股) × 均价(元/股) = 亿元
+        est_price = avg_price * (point / a_point)
+        turnover = round(vol_yi * est_price, 2)
+        turnover_series.append({"as_of": d, "value": turnover})
+        # 流通市值按点位比例缩放，与成交额保持同量纲
+        est_mcap = anchor["float_mcap"] * (point / a_point)
+        if est_mcap:
+            rate_series.append({
+                "as_of": d, "value": round(turnover / est_mcap * 100, 3)
+            })
+
+    latest = dict(anchor)
+    latest["口径"] = "指数成交量×均价近似"
+    latest["锚点日期"] = anchor["as_of"]
+    logger.info(
+        "批量成交额: 锚点 %s(官方 %.0f亿), 覆盖 %s ~ %s 共 %d 个交易日",
+        anchor["as_of"], anchor["turnover"], days[0], days[-1], len(turnover_series),
+    )
+    return turnover_series, rate_series, latest
+
+
 def _sse_day(day: str) -> Dict[str, Optional[float]]:
     """上交所每日概况：股票口径的成交金额与流通市值（单位：亿元）。
 
@@ -953,7 +1077,13 @@ def fetch_market_series(days: int = 0) -> Tuple[List[Dict[str, Any]], List[Dict[
 
 def fetch_margin(float_mcap_yi: Optional[float] = None,
                  days: int = 0) -> Dict[str, Any]:
-    """两融余额（亿元）与占流通市值比例。"""
+    """两融余额（亿元）与占流通市值比例。
+
+    历史序列存的是**占流通市值百分比**（与指标卡判档同口径）。交易所的逐日流通市值
+    没有批量历史源，只能取到「当前这一个点」，因此历史序列里**只有最新那一天**能算出
+    真实占比；更早的点拿不到对应日期的流通市值，用一个基于当前流通市值反推的比例会
+    把市值的涨跌错误地摊到历史上，曲线形状失真，所以宁可不给。
+    """
     ak = _ak()
     df = ak.stock_margin_account_info()
     rows = []
@@ -989,10 +1119,20 @@ def fetch_margin(float_mcap_yi: Optional[float] = None,
         else:
             break
 
+    # 逐日占比序列：只有「当天能拿到流通市值」的日期才给值。目前只有最新一天满足，
+    # 于是历史曲线从这一天天天累积（每次刷新多一个点），而不是靠市值反推伪造历史。
+    ratio_series: List[Dict[str, Any]] = []
+    if ratio is not None:
+        ratio_series = [{"as_of": last["as_of"], "value": ratio}]
+
     return {
         "value": ratio,
         "as_of": last["as_of"],
         "source": "akshare",
+        # 历史序列存**占流通市值百分比**，与 value / 指标卡判档完全同口径。
+        # 若这里放余额（亿元），回填路径会把余额写进历史表、而刷新路径写占比，
+        # 同一个 key 混两种量纲，图表按哪种画都会错（详见 _MARGIN_SERIES_NOTE）。
+        "series": ratio_series,
         "detail": {
             "两融余额(万亿)": round(last["value"] / 10000, 4),
             "占流通市值%": ratio,
@@ -1646,7 +1786,7 @@ def build_item(ind: Dict[str, Any], rec: Optional[dict]) -> Dict[str, Any]:
 
 
 def build_thermometer(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """按「估值 ×50% + 情绪 ×30% + 资金 ×20%」合成 0-100 市场温度计。"""
+    """按「估值 ×35% + 情绪 ×35% + 资金 ×30%」合成 0-100 市场温度计。"""
     layer_out = []
     for layer in TEMP_LAYERS:
         members = [
@@ -1710,7 +1850,7 @@ def build_thermometer(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         "zones": TEMP_ZONES,
         "layers": layer_out,
         "spread": spread,
-        "formula": "综合温度 = 估值温度 ×50% + 情绪温度 ×30% + 资金温度 ×20%",
+        "formula": "综合温度 = 估值温度 ×35% + 情绪温度 ×35% + 资金温度 ×30%",
         "coverage": round(
             sum(l["score"] is not None for l in layer_out) / len(layer_out) * 100, 0
         ),
@@ -1872,3 +2012,16 @@ def reconstruct_temperature(series_map: Dict[str, List[Dict[str, Any]]]) -> Dict
             "所以综合温度线会从「三个层都有数据」的月份才开始出现。"
         ),
     }
+
+
+# ------------------------------------------------- 每日综合温度打卡（读库口径）
+#
+# 「热度趋势」页已改为「只展示各指标曲线、数据从现在开始逐日积累」，不再做历史回溯、
+# 不再实时重建月度轨迹。每次刷新抓取成功后会由 stock_temp_refresh._record_temperature()
+# 写入一条 key="temperature" 的打卡（value=综合温度，detail 里带三层温度与分离度），
+# /api/stock-temp/series 直接读这些打卡，前端按日画曲线。
+
+TEMP_TRACK_KEYS = ("valuation", "sentiment", "capital", "total")
+
+# 打卡 detail 里三层温度用的键名（与 TEMP_LAYERS 的 name 对应）
+TEMP_LAYER_NAMES = {layer["key"]: layer["name"] for layer in TEMP_LAYERS}

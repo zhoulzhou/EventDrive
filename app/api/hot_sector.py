@@ -9,7 +9,7 @@
 
 数据有两个写入时机，页面读到的就是其中之一：
 1. 用户点「刷新盘面」（POST /refresh）；
-2. 收盘后定时任务（北京时间 20:35，见 app/scheduler.py），保证不开页面也能留下每日复盘记录。
+2. 收盘后定时任务（北京时间 16:00，见 app/scheduler.py），保证不开页面也能留下每日复盘记录。
 """
 import json
 import logging

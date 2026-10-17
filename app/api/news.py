@@ -16,6 +16,8 @@ def get_news_list(
     source: Optional[str] = None,
     include_keywords: Optional[str] = None,
     exclude_keywords: Optional[str] = None,
+    today_only: bool = Query(True, description="仅返回当日新闻；false 时回退为最近 24 小时"),
+    all_history: bool = Query(False, description="返回全部历史（含导入的历史库数据），不做时间过滤"),
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth)
 ):
@@ -28,10 +30,12 @@ def get_news_list(
         exclude_kw_list = [kw.strip() for kw in exclude_keywords.split(",") if kw.strip()]
     
     news_list = crud.get_news_list(
-        db, skip=skip, limit=limit, 
+        db, skip=skip, limit=limit,
         source=source,
         include_keywords=include_kw_list,
-        exclude_keywords=exclude_kw_list
+        exclude_keywords=exclude_kw_list,
+        today_only=today_only,
+        all_history=all_history
     )
     return news_list
 

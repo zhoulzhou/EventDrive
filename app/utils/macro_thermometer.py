@@ -295,17 +295,38 @@ def _derive_credit_metrics(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
-def _collect_metrics(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def _collect_metrics(items: Dict[str, Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """收集各分项的读数与**数据日期**。
+
+    返回 (metrics, dates)：metrics 是 {key: value}，dates 是 {key: as_of}。
+    日期随读数一起透传到 components，前端才能在表格里显示「这条读数是哪天的」——
+    宏观指标频率混杂（日度 DR007、月度社融/PMI、季度超储率），不给日期容易把
+    不同期的数据误当成同一时点比较。
+    """
     metrics: Dict[str, Any] = {}
+    dates: Dict[str, str] = {}
     for spec in SUB_INDICES:
         for comp in spec["components"]:
             if comp["from"] == "item":
-                metrics[comp["key"]] = (items.get(comp["key"]) or {}).get("value")
-    metrics.update(_derive_credit_metrics(items))
-    return metrics
+                item = items.get(comp["key"]) or {}
+                metrics[comp["key"]] = item.get("value")
+                if item.get("as_of"):
+                    dates[comp["key"]] = str(item["as_of"])
+    derived = _derive_credit_metrics(items)
+    metrics.update({k: v for k, v in derived.items() if k != "_detail"})
+    # _detail 是派生过程的口径说明（当月/累计、分母等），要透传给页面的「取数与口径」表
+    metrics["_detail"] = derived.get("_detail") or {}
+    # 派生指标（住户贷款增量 / 存款占比）的日期取自分部门明细里的当期月份
+    split = ((items.get("household_dep_loan") or {}).get("detail") or {}).get("分部门明细") or {}
+    if split.get("as_of"):
+        for key in ("household_loan_mom", "corp_deposit_share", "nonbank_deposit_share"):
+            if derived.get(key) is not None:
+                dates[key] = str(split["as_of"])
+    return metrics, dates
 
 
-def _sub_index(spec: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, Any]:
+def _sub_index(spec: Dict[str, Any], metrics: Dict[str, Any],
+               dates: Dict[str, str]) -> Dict[str, Any]:
     """算一个子温度计：分项打分 + 按可用权重归一化。"""
     components = []
     used_weight = 0.0
@@ -324,6 +345,7 @@ def _sub_index(spec: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, Any]:
             "unit": comp["unit"],
             "digits": comp["digits"],
             "raw": raw,
+            "as_of": dates.get(comp["key"]),
             "score": None if score is None else round(score, 1),
             "zone": zone_of(score),
             "anchor_text": comp["anchor_text"],
@@ -365,8 +387,8 @@ def _spread_of(spread: Optional[float]) -> Dict[str, Any]:
 
 def compute_thermometer(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """合成宏观温度计。items 为 build_items() 的产出（含 value / detail）。"""
-    metrics = _collect_metrics(items)
-    subs = [_sub_index(spec, metrics) for spec in SUB_INDICES]
+    metrics, dates = _collect_metrics(items)
+    subs = [_sub_index(spec, metrics, dates) for spec in SUB_INDICES]
 
     available = {s["key"]: s["score"] for s in subs if s["score"] is not None}
     used_weight = sum(COMPOSITE_WEIGHTS[k] for k in available)

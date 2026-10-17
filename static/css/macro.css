@@ -320,6 +320,9 @@
     padding: 0.85rem 1rem;
 }
 .macro-note-wide { margin-bottom: 1rem; }
+/* 分项表有 6 列（含 190px 的锚点列），窄屏下横向滚动，避免挤成竖排 */
+.macro-tb-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.macro-tb-scroll .macro-table { min-width: 560px; }
 .macro-note h3 { font-size: 0.9rem; color: #333; margin-bottom: 0.6rem; }
 .macro-note-tail { font-size: 0.76rem; color: #9aa3af; line-height: 1.7; margin-top: 0.55rem; }
 .macro-note-tail b { color: #555; }
@@ -386,25 +389,40 @@
 }
 
 /* 总分 + 刻度条 */
+/* 总分值与色带改为上下两行：温度计整体独占一行，不再与总分值并排挤在一行里 */
 .macro-thermo-top {
     display: grid;
-    grid-template-columns: minmax(180px, 220px) 1fr;
-    gap: 1.4rem;
-    align-items: center;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    align-items: start;
     margin-bottom: 1.3rem;
 }
-.macro-thermo-score-line { display: flex; align-items: baseline; gap: 0.3rem; }
+/* 单列布局下，总分值独占一行：数字与判读并排左对齐，铺满整行宽度 */
+.macro-thermo-score {
+    display: flex;
+    align-items: center;
+    gap: 1.1rem;
+    flex-wrap: wrap;
+}
+.macro-thermo-score-line { display: flex; align-items: baseline; gap: 0.3rem; flex-shrink: 0; }
 .macro-thermo-num { font-size: 3.2rem; font-weight: 700; line-height: 1; }
 .macro-thermo-max { font-size: 0.95rem; color: #9aa3af; }
 .macro-thermo-reading {
     display: inline-block;
-    margin-top: 0.55rem;
+    margin-top: 0;
     font-size: 0.9rem;
     font-weight: 600;
     border-radius: 20px;
     padding: 0.2rem 0.75rem;
 }
-.macro-thermo-reading-hint { font-size: 0.78rem; color: #7b8496; margin-top: 0.4rem; line-height: 1.6; }
+.macro-thermo-reading-hint {
+    font-size: 0.78rem;
+    color: #7b8496;
+    margin-top: 0;
+    line-height: 1.6;
+    flex: 1 1 16rem;
+    min-width: 0;
+}
 
 .macro-thermo-scale-wrap { min-width: 0; }
 .macro-thermo-scale { position: relative; height: 26px; }
@@ -482,6 +500,14 @@
 .macro-thermo-breakdown { display: grid; grid-template-columns: 1fr; gap: 1rem; margin-bottom: 1.15rem; }
 .macro-thermo-bd-score { font-size: 0.95rem; font-weight: 700; margin-left: 0.4rem; }
 .macro-thermo-tb-score { font-weight: 700; white-space: nowrap; }
+/* 数据日期列：日度显示 YYYY-MM-DD、月度/季度显示 YYYY-MM，悬停给完整原文 */
+.macro-tb-datecell { white-space: nowrap; }
+.macro-tb-date {
+    color: #4b5563;
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+}
 .macro-tb-anchor { color: #6b7280; font-size: 0.74rem; white-space: normal; min-width: 190px; }
 .macro-tb-missing td { color: #b0b7c3; }
 .macro-thermo-tb-miss { font-size: 0.74rem; color: #b45309; line-height: 1.7; margin-top: 0.4rem; }
@@ -514,8 +540,8 @@
 .macro-thermo-bandlabel { flex: 0 0 auto; min-width: 86px; }
 
 @media (max-width: 760px) {
-    .macro-thermo-top { grid-template-columns: 1fr; gap: 1rem; }
     .macro-thermo-num { font-size: 2.6rem; }
     .macro-thermo-bandrange { min-width: 60px; }
     .macro-thermo-bandlabel { min-width: 0; }
+    .macro-thermo-score { gap: 0.7rem; }
 }

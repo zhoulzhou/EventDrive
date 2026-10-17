@@ -250,6 +250,7 @@ def backfill_history(
             "股票指标回填: 生成 %d 条, 新增 %d, 更新 %d, 失败 %s",
             len(records), written["added"], written["updated"], errors,
         )
+
         return {
             "generated": len(records),
             "added": written["added"],

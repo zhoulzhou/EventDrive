@@ -1,13 +1,12 @@
 from .base import BaseCrawler, NewsItem
 from .eastmoney_depth import EastmoneyDepthCrawler
-from .nytimes import NYTCrawler, NYTDepthCrawler
-from .bbc import BBCCrawler
+from .ths import THSNewsCrawler
+from .sina import SinaNewsCrawler
 
 __all__ = [
     "BaseCrawler",
     "NewsItem",
     "EastmoneyDepthCrawler",
-    "NYTCrawler",
-    "NYTDepthCrawler",
-    "BBCCrawler"
+    "THSNewsCrawler",
+    "SinaNewsCrawler",
 ]

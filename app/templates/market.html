@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}市场行情 - 新闻抓取应用{% endblock %}
+{% block title %}市场行情 - 市场总览{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -37,7 +37,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/static/js/chart.umd.min.js?v={{ static_ver or 0 }}"></script>
 <script>
 async function loadMarket() {
     const grid = document.getElementById('marketGrid');
@@ -163,9 +163,21 @@ const crossLinePlugin = {
 
 async function renderAllHistory(items) {
     const empty = document.getElementById('historyEmpty');
+    // 图表库未就绪时给出明确提示（此前依赖外部 CDN，加载失败会表现为「曲线一直空白」，
+    // 用户看不出是数据问题还是脚本问题；现已改成本地库，这里只作兜底）。
+    if (typeof Chart === 'undefined') {
+        empty.style.display = 'flex';
+        empty.textContent = '图表库加载失败，请刷新页面重试';
+        return;
+    }
+    if (!items || !items.length) {
+        empty.style.display = 'flex';
+        empty.textContent = '暂无历史数据';
+        return;
+    }
     const results = await Promise.all(items.map(item =>
         fetchWithAuth(`/api/market/history?symbol=${encodeURIComponent(item.symbol)}`).then(r => r.json())
-    ).concat([Promise.resolve({ status: 'ok' })]));
+    ));
     const series = results.filter(d => d.status === 'ok' && d.points && d.points.length);
     // 各 symbol 的 10% 回撤事件（峰值日期/值 + 低点日期/值），供图表标记
     const eventsMap = {};

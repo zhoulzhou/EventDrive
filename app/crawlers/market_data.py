@@ -24,13 +24,38 @@ import httpx
 from app.database import SessionLocal
 from app import crud, schemas
 from app.market_strategy import advance
+from app.utils.anti_crawl import get_limiter, RateLimitExceeded
 
 logger = logging.getLogger(__name__)
 
 # 美东时区：用于判断美股是否开盘
 US_EASTERN = ZoneInfo("America/New_York")
 
-_client = httpx.AsyncClient(timeout=20)
+# follow_redirects=True：部分数据源（如 CBOE）已把 cdn.cboe.com 迁移到 cdn-api.cboe.com，
+# 旧地址会返回 307 重定向；不跟随重定向会直接抛 HTTPStatusError 导致该指标抓不到。
+_client = httpx.AsyncClient(timeout=20, follow_redirects=True)
+
+
+async def _get_limited(url: str, **kwargs) -> httpx.Response:
+    """带限流的异步 GET：申请令牌 -> 发请求 -> 成功/失败回报限流器。
+
+    所有外部数据源（FRED / CBOE / Treasury / Nasdaq）都走这里，统一受
+    限流器约束：同一 host 强制最小请求间隔、单次任务请求数封顶、
+    失败指数退避、每日配额封顶。
+    """
+    limiter = get_limiter()
+    await limiter.acquire_async(url)
+    try:
+        response = await _client.get(url, **kwargs)
+        response.raise_for_status()
+    except RateLimitExceeded:
+        raise
+    except Exception as e:
+        cool = limiter.report_failure(url)
+        logger.error(f"请求 {url} 失败: {e}（退避 {cool:.0f}s）", exc_info=True)
+        raise
+    limiter.report_success(url)
+    return response
 
 
 def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
@@ -108,7 +133,8 @@ def _is_us_market_open(today: date) -> bool:
 
 # 各数据源端点
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
-VIX_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+# CBOE 已把数据域名迁移到 cdn-api.cboe.com；旧域名 cdn.cboe.com 会 307 重定向到此。
+VIX_URL = "https://cdn-api.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
 TREASURY_URL = (
     "https://home.treasury.gov/resource-center/data-chart-center/"
     "interest-rates/daily-treasury-rates.csv/{year}/all"
@@ -147,8 +173,10 @@ def _parse_ymd(value: str) -> str:
 async def _fetch_fred(symbol: str) -> Dict[str, Any]:
     """抓取 FRED 序列，取 CSV 最后一行（最新日期），date 已是 YYYY-MM-DD。"""
     try:
-        response = await _client.get(FRED_URL, params={"id": symbol})
-        response.raise_for_status()
+        response = await _get_limited(FRED_URL, params={"id": symbol})
+    except RateLimitExceeded as e:
+        logger.warning(f"FRED {symbol} 触发限流，跳过: {e}")
+        return {"value": None, "date": None}
     except Exception as e:
         logger.error(f"获取 FRED 序列 {symbol} 失败: {e}", exc_info=True)
         return {"value": None, "date": None}
@@ -175,8 +203,10 @@ async def _fetch_fred(symbol: str) -> Dict[str, Any]:
 async def _fetch_vix() -> Dict[str, Any]:
     """抓取 CBOE VIX 官方历史 CSV，取行尾（最新交易日）的 CLOSE 值。"""
     try:
-        response = await _client.get(VIX_URL)
-        response.raise_for_status()
+        response = await _get_limited(VIX_URL)
+    except RateLimitExceeded as e:
+        logger.warning(f"CBOE VIX 触发限流，跳过: {e}")
+        return {"value": None, "date": None}
     except Exception as e:
         logger.error(f"获取 CBOE VIX 失败: {e}", exc_info=True)
         return {"value": None, "date": None}
@@ -221,8 +251,10 @@ async def _fetch_nasdaq() -> Dict[str, Any]:
     从 primaryData 取 lastSalePrice 与 lastTradeTimestamp。需要浏览器 UA，否则会被拒绝。
     """
     try:
-        response = await _client.get(NASDAQ_URL, headers=NASDAQ_HEADERS)
-        response.raise_for_status()
+        response = await _get_limited(NASDAQ_URL, headers=NASDAQ_HEADERS)
+    except RateLimitExceeded as e:
+        logger.warning(f"Nasdaq NDX 触发限流，跳过: {e}")
+        return {"value": None, "date": None}
     except Exception as e:
         logger.error(f"获取 Nasdaq NDX 失败: {e}", exc_info=True)
         return {"value": None, "date": None}
@@ -250,8 +282,10 @@ async def _fetch_treasury(column: str) -> Dict[str, Any]:
     year = datetime.now().year
     url = TREASURY_URL.format(year=year)
     try:
-        response = await _client.get(url)
-        response.raise_for_status()
+        response = await _get_limited(url)
+    except RateLimitExceeded as e:
+        logger.warning(f"Treasury 收益率 {column} 触发限流，跳过: {e}")
+        return {"value": None, "date": None}
     except Exception as e:
         logger.error(f"获取 Treasury收益率 {column} 失败: {e}", exc_info=True)
         return {"value": None, "date": None}
@@ -375,6 +409,18 @@ async def refresh_market_data() -> Dict[str, Any]:
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "source": "跳过(美股休市)",
         }
+
+    # 标记一次完整抓取任务：重置各 host 的单次计数
+    limiter = get_limiter()
+    for series in SERIES:
+        limiter.begin_run(
+            {
+                "nasdaq": NASDAQ_URL,
+                "cboe": VIX_URL,
+                "treasury": TREASURY_URL,
+                "fred": FRED_URL,
+            }[series["source"]]
+        )
 
     items = await fetch_fred_prices()
     await asyncio.to_thread(save_market_prices, items)

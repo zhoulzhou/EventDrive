@@ -3,15 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}新闻抓取应用{% endblock %}</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <title>{% block title %}市场总览{% endblock %}</title>
+    {# 静态资源统一带 v=启动时间戳：服务每次重启即生成新 URL，浏览器必然回源，
+       避免改了 CSS/JS 却因浏览器缓存看不到变化（配合 main.py 的 no-store 头双保险） #}
+    <link rel="stylesheet" href="/static/css/style.css?v={{ static_ver or 0 }}">
     {% block head %}{% endblock %}
 </head>
 <body>
     <nav class="navbar">
         <div class="container">
             <div class="navbar-brand">
-                <a href="/home">新闻抓取</a>
+                <a href="/home">市场总览</a>
             </div>
             <div class="navbar-menu">
                 <a href="/home" class="nav-link">首页</a>
@@ -38,11 +40,11 @@
 
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2026 新闻抓取应用. All rights reserved.</p>
+            <p>&copy; 2026 市场总览. All rights reserved.</p>
         </div>
     </footer>
 
-    <script src="/static/js/main.js"></script>
+    <script src="/static/js/main.js?v={{ static_ver or 0 }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

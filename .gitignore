@@ -84,3 +84,6 @@ run_crawl*.py
 check_news.py
 sqlite_query.py
 api_response.json
+
+# WorkBuddy 发布工具生成的本地标记文件（含本机绝对路径，不应入库）
+.wbapp_*.genie

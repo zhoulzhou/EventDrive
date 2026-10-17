@@ -3,8 +3,8 @@
 - GET  /api/macro           读取当前指标与组合解读（**只读库，不再自行抓取**）
 - POST /api/macro/refresh   强制重新抓取全部指标（页面「刷新数据」按钮走这里）
 - GET  /api/macro/history   查询各指标的历史读数（只增不改的历史表）
-- GET  /api/macro/series    读取「三组一定位」图表面板所需的历史序列
-- POST /api/macro/backfill  一次性回溯补齐历史数据（让趋势图有数据可画）
+- GET  /api/macro/series    读取各指标的历史序列（热度趋势页用）
+- POST /api/macro/backfill  回溯补齐历史（**页面已无入口**，仅备必要时手动调用）
 
 三个维度（每维 3 项），全部自动获取、无手工录入：
 - ① 资金面      akshare：DR007 偏离、R001−DR001；央行：超储率
@@ -18,7 +18,7 @@ A股估值/情绪类读数不在本页，见「股票指标」页（/stock-temp�
 - macro_indicator_history ：每次抓到的读数发生变化就追加一行（只增不改，用于回溯）
 
 **本页数据全部由定时任务抓取**：`./start.sh` 启动的 `run_scheduler.py` 在
-**北京时间每天 20:30** 触发宏观指标任务（抓取实现见 app/utils/macro_refresh.py，与本文件的
+**北京时间每天 16:00** 触发宏观指标任务（抓取实现见 app/utils/macro_refresh.py，与本文件的
 POST /refresh 共用同一份）。GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时的；
 要立刻更新就点页面的「刷新数据」按钮（POST /refresh）。
 
@@ -51,7 +51,7 @@ router = APIRouter()
 # 页面「更新于」的展示时区（库中时间戳是 UTC，见 _utcnow）
 CN_TZ = ZoneInfo("Asia/Shanghai")
 
-# 超过这个时长没有落库就提示检查调度器。数据抓取任务每天只在**北京 20:30** 跑一次，
+# 超过这个时长没有落库就提示检查调度器。数据抓取任务每天只在**北京 16:00** 跑一次，
 # 正常间隔就是 24 小时，故阈值取 26 小时（留 2 小时缓冲）：既避免误报，
 # 又能在「某天没跑成」的次日晚上及时提示。
 DATA_STALE_HOURS = 26
@@ -176,7 +176,7 @@ def _payload(db: Session, refreshed: int, errors: Dict[str, str], history_added:
 def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     """读取库中已有的指标与组合解读（**只读**，不触发抓取）。
 
-    数据由 `./start.sh` 启动的定时任务在**北京时间每天 20:30** 抓取写入；需要立刻更新时
+    数据由 `./start.sh` 启动的定时任务在**北京时间每天 16:00** 抓取写入；需要立刻更新时
     走 POST /api/macro/refresh（页面「刷新数据」按钮）。
     """
     try:
@@ -302,13 +302,13 @@ def backfill_macro(
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
 ):
-    """一次性回溯补齐历史数据（日度均值/月度序列），写入历史表。
+    """回溯补齐历史数据（日度均值/月度序列），写入历史表。
 
-    这是「让趋势图有数据可画」的动作，可重复执行：按（指标, 数据日期）覆盖写入，
-    不会堆重复行。首次执行约需 1~2 分钟（日度区间逐月请求 + 央行社融逐期解析）。
+    ⚠️ **「宏观趋势」页已改为「只展示从现在开始积累的曲线」，页面不再提供该入口**
+    （原「补齐历史数据」按钮已删除）。保留本接口仅为必要时手动补数据用；正常情况下
+    历史数据由定时任务每天收盘抓取时逐日写入，不需要回溯。
 
-    **这是「宏观趋势」页历史数据的唯一入口**：定时任务只抓当前读数、不做回溯
-    （见 app/scheduler.py），所以趋势图的长序列完全由本接口按需补齐。
+    可重复执行：按（指标, 数据日期）覆盖写入，不会堆重复行。首次执行约需 1~2 分钟。
     """
     try:
         months_daily = max(1, min(int(months_daily or 24), 60))

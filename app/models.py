@@ -244,3 +244,23 @@ class HotSectorSnapshot(Base):
     fetched_at = Column(DateTime, nullable=False, server_default=func.now())
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class CrawlLog(Base):
+    """抓取任务日志：每轮调度 / 手动触发写入一条，便于复盘与排查。"""
+
+    __tablename__ = "crawl_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    # 任务标识：news / market / macro / stock_temp / hot_sector / finance / all
+    task = Column(Text, nullable=False, index=True)
+    # 轮次：morning(10:00) / close(16:00) / manual(手动触发)
+    session = Column(Text, nullable=True, index=True)
+    # 数据域：东方财富 / 同花顺 / 新浪财经 / market / macro / ...
+    source = Column(Text, nullable=True)
+    # 本次该来源抓取到的条数
+    item_count = Column(Integer, nullable=False, default=0)
+    status = Column(Text, nullable=False, default="ok")  # ok / failed / skipped
+    error_message = Column(Text, nullable=True)
+    duration = Column(Integer, nullable=False, default=0)  # 秒
+    crawl_time = Column(DateTime, nullable=False, index=True, server_default=func.now())

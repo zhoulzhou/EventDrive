@@ -8,7 +8,7 @@
 
 两个调用方：
 - Web 接口 POST /api/hot-sector/refresh（页面「刷新盘面」按钮），复用请求的 db 会话；
-- 收盘后定时任务（北京时间 20:35，见 app/scheduler.py），保证不开页面也能留下每日记录。
+- 收盘后定时任务（北京时间 16:00，见 app/scheduler.py），保证不开页面也能留下每日记录。
 
 定时任务由独立进程 run_scheduler.py 执行。抓取本身是异步的（akshare 阻塞调用已在线程池内
 执行），因此这里保持 async，定时任务直接 await 即可，不需要再套 to_thread。

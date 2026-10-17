@@ -18,6 +18,13 @@ def _get_int(name: str, default: int) -> int:
         return default
 
 
+def _get_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
 class Settings:
     APP_NAME: str = os.getenv("APP_NAME", "EventDrive")
     APP_VERSION: str = os.getenv("APP_VERSION", "1.0.0")
@@ -34,45 +41,27 @@ class Settings:
     MIN_DELAY: int = _get_int("MIN_DELAY", 2)
     MAX_DELAY: int = _get_int("MAX_DELAY", 5)
 
+    # ---- 抓取限流（防止频繁抓取 / 单次抓取过多触发来源方风控）----
+    # 同一 host 两次请求之间的最小间隔（秒），令牌桶按 host 独立计量
+    RATE_LIMIT_MIN_INTERVAL: float = _get_float("RATE_LIMIT_MIN_INTERVAL", 3.0)
+    # 令牌桶容量：允许的突发请求数
+    RATE_LIMIT_BURST: int = _get_int("RATE_LIMIT_BURST", 3)
+    # 每个 host 每天最多请求次数，0 表示不限制
+    RATE_LIMIT_DAILY_QUOTA: int = _get_int("RATE_LIMIT_DAILY_QUOTA", 200)
+    # 单次抓取任务内，单个 host 最多发起几次请求
+    RATE_LIMIT_MAX_REQS_PER_RUN: int = _get_int("RATE_LIMIT_MAX_REQS_PER_RUN", 12)
+    # 同一 host 两次「完整抓取任务」之间的最小间隔（秒），跨轮次冷却
+    RATE_LIMIT_RUN_COOLDOWN: float = _get_float("RATE_LIMIT_RUN_COOLDOWN", 300.0)
+    # 失败后的退避基数（秒）：连续失败按 base * 2^n 增长并封顶
+    RATE_LIMIT_BACKOFF_BASE: float = _get_float("RATE_LIMIT_BACKOFF_BASE", 60.0)
+    RATE_LIMIT_BACKOFF_MAX: float = _get_float("RATE_LIMIT_BACKOFF_MAX", 1800.0)
+    # 触发限流后是否跳过抓取（true=直接放弃本轮，false=等待到冷却结束）
+    RATE_LIMIT_SKIP_ON_EXCEED: bool = _get_bool("RATE_LIMIT_SKIP_ON_EXCEED", True)
+    # 单个「任务级」每日最多执行次数（用于 akshare 等内部封装、无法逐请求插桩的来源）
+    TASK_DAILY_QUOTA: int = _get_int("TASK_DAILY_QUOTA", 8)
+
     DATA_DIR: Path = BASE_DIR / "data"
     LOGS_DIR: Path = BASE_DIR / "logs"
-
-    FEISHU_WEBHOOK_URL: str = os.getenv("FEISHU_WEBHOOK_URL", "")
-    FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
-    FEISHU_KEYWORD: str = os.getenv("FEISHU_KEYWORD", "头条")
-
-    NYT_API_KEY: str = os.getenv("NYT_API_KEY", "")
-    NYT_FEISHU_WEBHOOK_URL: str = os.getenv("NYT_FEISHU_WEBHOOK_URL", "")
-    NYT_FEISHU_KEYWORD: str = os.getenv("NYT_FEISHU_KEYWORD", "HOT")
-
-    BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "")
-    BBC_FEISHU_KEYWORD: str = os.getenv("BBC_FEISHU_KEYWORD", "HOT")
-
-    DFCF_FEISHU_WEBHOOK_URL: str = os.getenv("DFCF_FEISHU_WEBHOOK_URL", "")
-    DFCF_FEISHU_KEYWORD: str = os.getenv("DFCF_FEISHU_KEYWORD", "头条")
-
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-    OPENROUTER_FEISHU_WEBHOOK_URL: str = os.getenv("OPENROUTER_FEISHU_WEBHOOK_URL", "")
-    OPENROUTER_KEYWORD: str = os.getenv("OPENROUTER_KEYWORD", "Talk")
-
-    KB_API_KEY: str = os.getenv("KB_API_KEY", "")
-    KB_MODEL_ID: str = os.getenv("KB_MODEL_ID", "doubao-1-5-pro-256k-250115")
-    KB_REGION: str = os.getenv("KB_REGION", "cn-beijing")
-    KB_FEISHU_WEBHOOK_URL: str = os.getenv("KB_FEISHU_WEBHOOK_URL", "")
-    KB_KEYWORD: str = os.getenv("KB_KEYWORD", "Talk")
-
-    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
-    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
-    DEEPSEEK_FEISHU_WEBHOOK_URL: str = os.getenv("DEEPSEEK_FEISHU_WEBHOOK_URL", "")
-    DEEPSEEK_KEYWORD: str = os.getenv("DEEPSEEK_KEYWORD", "深度分析")
-
-    X_B_T: str = os.getenv("X_B_T", "")
-    X_FEISHU_WEBHOOK_URL: str = os.getenv("X_FEISHU_WEBHOOK_URL", "")
-    X_FEISHU_KEYWORD: str = os.getenv("X_FEISHU_KEYWORD", "X推文")
-    X_MAX_RESULTS: int = _get_int("X_MAX_RESULTS", 5)
-    X_MONTH_MAX_LIMIT: int = _get_int("X_MONTH_MAX_LIMIT", 190)
-    X_DAY_MAX_LIMIT: int = _get_int("X_DAY_MAX_LIMIT", 6)
-    X_LIST_ID: str = os.getenv("X_LIST_ID", "")
 
     START_SCHEDULER: bool = _get_bool("START_SCHEDULER", False)
     # CSV 更新后置 1 可强制重导 index_history 表
@@ -81,13 +70,9 @@ class Settings:
     # 市场指标自动抓取缓存有效期（小时）。超过则下次打开页面重新抓取
     MACRO_CACHE_TTL_HOURS: float = float(os.getenv("MACRO_CACHE_TTL_HOURS", "12"))
 
-    # 数据库本地备份目录(纳入 git 管理, 备份文件按时间戳命名)
-    DB_BACKUP_DIR: Path = BASE_DIR / "backup"
-
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.LOGS_DIR.mkdir(exist_ok=True)
-        self.DB_BACKUP_DIR.mkdir(exist_ok=True)
 
 
 settings = Settings()
