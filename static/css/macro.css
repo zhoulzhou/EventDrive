@@ -500,6 +500,8 @@
 .macro-thermo-breakdown { display: grid; grid-template-columns: 1fr; gap: 1rem; margin-bottom: 1.15rem; }
 .macro-thermo-bd-score { font-size: 0.95rem; font-weight: 700; margin-left: 0.4rem; }
 .macro-thermo-tb-score { font-weight: 700; white-space: nowrap; }
+/* 状态列：与单项分同色（同一冷热段位），措辞和股市热度页一致，便于横向对照 */
+.macro-tb-state { font-weight: 600; white-space: nowrap; }
 /* 数据日期列：日度显示 YYYY-MM-DD、月度/季度显示 YYYY-MM，悬停给完整原文 */
 .macro-tb-datecell { white-space: nowrap; }
 .macro-tb-date {

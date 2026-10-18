@@ -27,8 +27,9 @@ GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时�
 曲线长短取决于启用天数，这是预期行为。
 """
 import logging
+import threading
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -51,6 +52,58 @@ CN_TZ = ZoneInfo("Asia/Shanghai")
 # 正常间隔就是 24 小时，故阈值取 26 小时（留 2 小时缓冲）：既避免误报，
 # 又能在「某天没跑成」的次日晚上及时提示。
 DATA_STALE_HOURS = 26
+
+# ---------------------------------------------------------------- 后台刷新
+#
+# 云沙箱反代硬超时 60s，而带限流节流的完整抓取要 60s+，同步执行必然 504。
+# 因此「刷新数据」按钮改为：点火后台线程 → 立即返回 → 页面下次读库即为新数据。
+# _refresh_status 让页面能查询「是否还在跑 / 上次结果如何」。
+_refresh_status: Dict[str, Any] = {"running": False, "last_result": None}
+
+
+def _kick_stock_temp_refresh() -> bool:
+    """启动一个后台刷新线程。返回 False 表示已有任务在跑（未重复启动）。"""
+    if _refresh_status.get("running"):
+        return False
+    _refresh_status["running"] = True
+    _refresh_status["started_at"] = datetime.now().isoformat()
+    _refresh_status.pop("error", None)
+
+    def _worker():
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            crud.seed_stock_temp_history_from_snapshot(db)
+            refreshed, errors, history_added = srf.refresh_snapshot(db)
+            payload = _payload(db, refreshed, errors, history_added)
+            _refresh_status["last_result"] = {
+                "refreshed": refreshed,
+                "errors": errors or {},
+                "history_added": history_added,
+                "thermometer": (payload.get("thermometer") or {}).get("value"),
+            }
+            logger.info("股票指标后台刷新完成: %d 项, 失败 %d 项",
+                        refreshed, len(errors or {}))
+        except Exception as e:
+            logger.error("后台刷新股票指标失败: %s", e, exc_info=True)
+            _refresh_status["error"] = str(e)
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+            _refresh_status["running"] = False
+            _refresh_status["finished_at"] = datetime.now().isoformat()
+
+    threading.Thread(target=_worker, name="stock-temp-refresh", daemon=True).start()
+    return True
+
+
+@router.get("/stock-temp/refresh-status")
+def refresh_status(auth: bool = Depends(require_auth)):
+    """查询后台刷新进度（running / 上次结果 / 错误）。"""
+    return dict(_refresh_status)
 
 
 def _utcnow() -> datetime:
@@ -149,15 +202,82 @@ def get_stock_temp(db: Session = Depends(get_db), auth: bool = Depends(require_a
 
 
 @router.post("/stock-temp/refresh")
-def refresh_stock_temp(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    """强制重新抓取全部指标（与定时任务走同一实现）。"""
+async def refresh_stock_temp(auth: bool = Depends(require_auth)):
+    """强制重新抓取全部指标。
+
+    **立即返回、后台执行**：legulegu 有速率限制（实测连续 6~7 次请求即 429），
+    为躲开限流，5 个 legulegu 接口必须串行且保持 ≥6s 间隔，一轮完整抓取约 60s+
+    （含 akshare 内部每次为拿 csrf 额外发的页面请求）。而云沙箱的反向代理
+    **硬超时 60 秒**，同步执行必然 504。
+
+    所以这里只「点火」就返回：落库由后台线程完成，页面下次请求即可读到新数据
+    （updated_at 会刷新，可据此判断是否已跑完）。
+    """
+    started = _kick_stock_temp_refresh()
+    if not started:
+        return {
+            "status": "running",
+            "message": "已有一个刷新任务在执行中，请稍候（上一轮通常需 1 分钟左右）",
+        }
+    return {
+        "status": "started",
+        "message": "已开始后台抓取，约 1 分钟后完成；页面会自动显示新读数",
+    }
+
+
+@router.post("/stock-temp/refresh-sync")
+def refresh_stock_temp_sync(db: Session = Depends(get_db),
+                            auth: bool = Depends(require_auth)):
+    """同步刷新（供本地/脚本调用）。⚠ 线上有 60s 网关超时，线上别用这个。
+
+    保留它是为了本地调试与「补齐历史」等需要拿到完整结果的场景。
+    """
     try:
         crud.seed_stock_temp_history_from_snapshot(db)
         refreshed, errors, history_added = srf.refresh_snapshot(db)
-        return _payload(db, refreshed, errors, history_added)
+        payload = _payload(db, refreshed, errors, history_added)
+        _refresh_status.update({
+            "running": False, "last_result": payload,
+            "finished_at": datetime.now().isoformat(),
+        })
+        return payload
     except Exception as e:
         logger.error("刷新股票指标失败: %s", e, exc_info=True)
+        _refresh_status.update({"running": False, "error": str(e)})
         return {"status": "error", "message": str(e)}
+
+
+@router.post("/stock-temp/probe")
+def probe_sources(auth: bool = Depends(require_auth)):
+    """诊断用：直接探测各外部数据源在本运行环境下的可达性。
+
+    「刷新数据」报legulegu 相关错误时，用它区分两种可能：
+      - status 非 200 / 连不上      → 网络或出口 IP 被拦
+      - 200 但 csrf=false           → 上游返回了拦截页（改版或风控）
+    不写入任何数据，纯只读诊断。
+    """
+    import requests
+    from akshare.utils.cons import headers
+
+    targets = [
+        ("legulegu/shanghaiPE", "https://legulegu.com/stockdata/shanghaiPE"),
+        ("legulegu/sz50-ttm-lyr", "https://legulegu.com/stockdata/sz50-ttm-lyr"),
+        ("legulegu/pos-stock", "https://legulegu.com/stockdata/fund-position/pos-stock"),
+        ("sina/hs300", "https://hq.sinajs.cn/list=sh000300"),
+    ]
+    out = []
+    for name, url in targets:
+        item = {"name": name, "url": url}
+        try:
+            r = requests.get(url, headers=headers, timeout=20)
+            item["status"] = r.status_code
+            item["bytes"] = len(r.text)
+            item["csrf"] = "_csrf" in r.text
+            item["head"] = r.text[:120].replace("\n", " ")
+        except Exception as e:
+            item["error"] = f"{type(e).__name__}: {str(e)[:160]}"
+        out.append(item)
+    return {"status": "ok", "results": out}
 
 
 @router.get("/stock-temp/series")

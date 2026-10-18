@@ -299,27 +299,87 @@ function gaugeHtml(t) {
 }
 
 /* ---------------- 当前读数速览表 ---------------- */
+// 单项分的来源说明：
+//   - 「分位」口径：读数本身就是0-100 的连续分位，直接线性映射到0-100（反向指标则翻转），锚点固定为 (0,0)-(100,100)。
+//   - 「读数」口径：锚点取相邻两档的交界读数，分数为两档分数的中点；当前读数卡在哪两个锚点之间就线性插值，
+//     所以同一档内也能分出高下（如成交额 15608 亿与17999 亿不再同为 50 分）。
+function fmtAnchorNum(v, digits) {
+    const n = Number(v);
+    if (!isFinite(n)) return String(v);
+    let text = n.toFixed(digits);
+    // -0.00 → 0.00（ETF 周变化率常出现 -0.0，显示成「-0%」很难看）
+    if (/^-0(\.0+)?$/.test(text)) text = text.slice(1);
+    if (Math.abs(n) >= 1000) text = text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return text;
+}
+
+function anchorHtml(item) {
+    const a = item.score_anchor;
+    if (!a) return "<span class=\"st-ov-dash\">—</span>";
+    // 分位口径的锚点固定在 0% / 100%，用整数显示；读数口径沿用指标自身小数位
+    const isPct = a.axis_label === "分位";
+    const d = isPct ? 0 : (item.digits === undefined ? 2 : item.digits);
+    const axis = escapeHtml(a.axis || "");
+    const pt = (p) => fmtAnchorNum(p[0], d) + (isPct ? "%" : axis) + " → " + Number(p[1]).toFixed(1) + "分";
+
+    if (a.mode === "single" || a.mode === "floor" || a.mode === "ceil") {
+        // 开区间饱和：读数落在最外侧，插值无意义，直接取该侧档位分
+        const why = a.mode === "floor" ? "低于首锚点，取首档分"
+            : a.mode === "ceil" ? "高于末锚点，取末档分" : "单一档位";
+        return "<span class=\"st-ov-anchor st-ov-anchor-flat\" title=\"" + why + "\">"
+            + (a.mode === "single"
+                ? fmtAnchorNum(a.score, 1) + "分（单一档位）"
+                : fmtAnchorNum(a.mode === "floor" ? a.lo[1] : a.hi[1], 1) + "分（" + why + "）")
+            + "</span>";
+    }
+    const t = Number(a.t || 0) * 100;
+    return "<span class=\"st-ov-anchor\" title=\"读数落在两个锚点之间，按 " + t.toFixed(1)
+        + "% 的位置线性插值\">"
+        + pt(a.lo) + "<span class=\"st-ov-anchor-sep\"> ⟷ </span>" + pt(a.hi)
+        + "<span class=\"st-ov-anchor-t\">t=" + t.toFixed(1) + "%</span></span>";
+}
+
 function overviewHtml(groups) {
     const rows = [];
     (groups || []).forEach(function (g) {
         (g.items || []).forEach(function (it, i) {
+            const w = it.temp_weight || 0;
+            const inTemp = w > 0;
             // 每组首行加 st-ov-start：用一条横向分隔线把四个分类拉开（不靠底色填充）
             rows.push("<tr" + (i === 0 ? " class=\"st-ov-start\"" : "") + ">"
-                + (i === 0 ? "<td rowspan=\"" + g.items.length + "\" class=\"st-ov-group\">" + escapeHtml(g.title.replace(/^[①②③④]\s*/, "")) + "</td>" : "")
-                + "<td>" + escapeHtml(it.name) + "</td>"
+                + (i === 0 ? "<td rowspan=\"" + g.items.length + "\" class=\"st-ov-group\">"
+                    + escapeHtml(g.title.replace(/^[①②③④]\s*/, "")) + "</td>" : "")
+                + "<td>" + escapeHtml(it.name)
+                + (it.percentile === null || it.percentile === undefined
+                    ? "" : "<span class=\"st-ov-pct\">分位 " + Number(it.percentile).toFixed(1) + "%</span>")
+                + "</td>"
+                + "<td class=\"st-ov-w\">" + (inTemp ? Math.round(w * 100) + "%" : "—")
+                + (inTemp ? "" : "<span class=\"st-ov-w-off\">不参与</span>") + "</td>"
                 + "<td class=\"st-ov-val\" style=\"color:" + (it.missing ? "#9ca3af" : tone(it.tone)) + "\">"
                 + fmtValue(it) + "<span class=\"st-ov-unit\">" + escapeHtml(it.unit) + "</span></td>"
-                + "<td>" + (it.percentile === null || it.percentile === undefined ? "<span class=\"st-ov-dash\">—</span>"
-                    : Number(it.percentile).toFixed(1) + "%") + "</td>"
-                + "<td class=\"st-ov-state\" style=\"color:" + (it.missing ? "#9ca3af" : tone(it.tone)) + "\">" + escapeHtml(it.state || "—") + "</td>"
-                + "<td class=\"st-ov-date\">" + escapeHtml(it.as_of) + "</td></tr>");
+                + "<td class=\"st-ov-state\" style=\"color:" + (it.missing ? "#9ca3af" : tone(it.tone)) + "\">"
+                + escapeHtml(it.state || "—") + "</td>"
+                + "<td class=\"st-ov-score\">"
+                + (it.heat_score === null || it.heat_score === undefined
+                    ? "<span class=\"st-ov-dash\">—</span>"
+                    : "<b>" + Number(it.heat_score).toFixed(1) + "</b>")
+                + "</td>"
+                + "<td class=\"st-ov-date\">" + escapeHtml(it.as_of) + "</td>"
+                + "<td>" + anchorHtml(it) + "</td></tr>");
         });
     });
     return "<section class=\"st-overview\">"
-        + "<h2 class=\"st-group-title\">当前读数速览<span class=\"st-group-sub\">按上一节的三层口径逐项列出；分位列给出各指标所处的位置</span></h2>"
+        + "<h2 class=\"st-group-title\">当前读数速览<span class=\"st-group-sub\">按上一节的三层口径逐项列出；"
+        + "分位列给出各指标所处的位置，单项分为0-100 热度分（越高越热）</span></h2>"
         + "<div class=\"st-table-wrap\"><table class=\"st-table\">"
-        + "<thead><tr><th>层</th><th>指标</th><th>当前读数</th><th>历史分位</th><th>状态</th><th>数据日期</th></tr></thead>"
-        + "<tbody>" + rows.join("") + "</tbody></table></div></section>";
+        + "<thead><tr><th>层</th><th>分项</th><th>权重</th><th>当前读数</th><th>状态</th>"
+        + "<th>单项分</th><th>数据日期</th><th>打分锚点（两点间线性插值）</th></tr></thead>"
+        + "<tbody>" + rows.join("") + "</tbody></table></div>"
+        + "<div class=\"st-ov-note\">打分锚点说明：<b>分位</b>口径下读数本身就是 0-100 的连续分位，"
+        + "直接线性映射（锚点固定为 0% → 0 分、100% → 100 分，反向指标则翻转）；"
+        + "<b>读数</b>口径下，锚点取相邻两档的交界读数、分数取两档分数的中点，"
+        + "当前读数落在哪两个锚点之间就按位置线性插值 —— 同一档内也能分出高下。"
+        + "最外侧为开区间，读数低于首锚点取首档分、高于末锚点取末档分。</div></section>";
 }
 
 /* ---------------- 方法说明（静态） ---------------- */
@@ -389,22 +449,66 @@ function render(data) {
         + notesHtml();
 }
 
+// 刷新走后台：POST 只「点火」，随后轮询 /refresh-status 直至跑完再重渲染。
+// （云沙箱反代 60s 硬超时，而限流节流后一轮抓取要 60s+，同步等待必然 504。）
+function setRefreshBtn(btn, text, disabled) {
+    btn.disabled = disabled;
+    btn.textContent = text;
+}
+
+async function pollRefresh(done) {
+    for (let i = 0; i < 110; i++) {         // 最多等约 7 分钟（含限流退避重试）
+        await new Promise((r) => setTimeout(r, 4000));
+        let s;
+        try {
+            const resp = await fetchWithAuth("/api/stock-temp/refresh-status");
+            s = await resp.json();
+        } catch (e) { continue; }
+        if (!s.running) { done(s); return; }
+    }
+    done(null);
+}
+
 async function loadStock(force) {
     const btn = document.getElementById("stRefresh");
-    btn.disabled = true;
-    btn.textContent = force ? "正在抓取…" : "加载中…";
     try {
-        const response = await fetchWithAuth(force ? "/api/stock-temp/refresh" : "/api/stock-temp",
-            { method: force ? "POST" : "GET" });
-        const data = await response.json();
-        if (data.status !== "ok") throw new Error(data.message || "获取股市热度失败");
-        render(data);
+        if (!force) {
+            setRefreshBtn(btn, "加载中…", true);
+            const response = await fetchWithAuth("/api/stock-temp");
+            const data = await response.json();
+            if (data.status !== "ok") throw new Error(data.message || "获取股市热度失败");
+            render(data);
+            return;
+        }
+
+        setRefreshBtn(btn, "正在抓取…", true);
+        const resp = await fetchWithAuth("/api/stock-temp/refresh", { method: "POST" });
+        const kicked = await resp.json();
+        if (kicked.status === "running") {
+            setRefreshBtn(btn, "上一轮还在跑…", true);
+        }
+        await pollRefresh(async (s) => {
+            if (s && s.error) {
+                document.getElementById("stRoot").innerHTML =
+                    "<div class=\"error-state\"><h2>刷新失败</h2><p>" + escapeHtml(s.error) + "</p></div>";
+                return;
+            }
+            const failed = (s && s.last_result && s.last_result.errors) || {};
+            const names = Object.keys(failed);
+            setRefreshBtn(btn, "刷新数据", false);
+            const response = await fetchWithAuth("/api/stock-temp");
+            const data = await response.json();
+            if (data.status === "ok") render(data);
+            if (names.length) {
+                document.getElementById("stNotice").innerHTML =
+                    "<div class=\"st-alert\">本次有 " + names.length + " 项更新失败（"
+                    + names.map(escapeHtml).join("、") + "），其余已刷新。</div>";
+            }
+        });
     } catch (error) {
         document.getElementById("stRoot").innerHTML =
             "<div class=\"error-state\"><h2>加载失败</h2><p>" + escapeHtml(error.message) + "</p></div>";
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "刷新数据";
+        setRefreshBtn(btn, "刷新数据", false);
     }
 }
 

@@ -106,6 +106,28 @@
 .st-ov-state { font-weight: 600; white-space: nowrap; }
 .st-ov-date { color: #a3adba; font-size: 0.76rem; white-space: nowrap; }
 .st-ov-dash { color: #cbd5e1; }
+/* 分项列：名称 + 内嵌的分位小标签 */
+.st-ov-pct {
+    display: inline-block; margin-left: 6px; font-size: 0.7rem; font-weight: 500;
+    color: #64748b; background: #f1f5f9; border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+}
+/* 权重列：参与合成的显示百分比，不参与的灰化标注 */
+.st-ov-w { white-space: nowrap; font-variant-numeric: tabular-nums; color: #475569; font-weight: 600; }
+.st-ov-w-off { font-size: 0.7rem; font-weight: 400; color: #a8b3c2; margin-left: 4px; }
+/* 单项分列：0-100 热度分，定宽等宽对齐便于纵向比较 */
+.st-ov-score { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st-ov-score b { font-size: 1rem; color: #1e293b; }
+/* 打分锚点列：两个锚点 + 插值比例 */
+.st-ov-anchor { font-size: 0.74rem; color: #64748b; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st-ov-anchor-sep { color: #a8b8f0; font-weight: 700; padding: 0 1px; }
+.st-ov-anchor-t { color: #94a3b8; margin-left: 5px; }
+.st-ov-anchor-flat { color: #a8b3c2; font-style: italic; }
+.st-ov-note {
+    margin-top: 0.7rem; font-size: 0.76rem; line-height: 1.65; color: #94a3b8;
+    background: #f8fafc; border-left: 3px solid #dbe2ec; border-radius: 0 6px 6px 0;
+    padding: 0.6rem 0.8rem;
+}
+.st-ov-note b { color: #64748b; }
 
 /* ==================== 指标卡 ==================== */
 .st-group { margin-bottom: 1.6rem; }

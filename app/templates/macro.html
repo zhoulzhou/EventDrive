@@ -396,6 +396,7 @@ function thermoBreakdownHtml(t) {
                 <td>${escapeHtml(c.name)}</td>
                 <td class="macro-tb-freq">${c.weight_pct}%</td>
                 <td><b>${escapeHtml(rawTxt)}</b></td>
+                <td class="macro-tb-state"${has ? ` style="color:${color}"` : ""}>${escapeHtml(c.state || "—")}</td>
                 <td class="macro-thermo-tb-score"${has ? ` style="color:${color}"` : ""}>${num1(c.score)}</td>
                 <td class="macro-tb-datecell">${compAsOfHtml(c.as_of)}</td>
                 <td class="macro-tb-anchor">${escapeHtml(c.anchor_text)}</td>
@@ -408,12 +409,13 @@ function thermoBreakdownHtml(t) {
         return `<div class="macro-note macro-note-wide">
             <h3>${escapeHtml(s.name)}
                 <span class="macro-thermo-sub-weight">总权重 ${s.weight_pct}%</span>
+                ${s.state ? `<span class="macro-tb-state" style="color:${scoreColor}">${escapeHtml(s.state)}</span>` : ""}
                 <span class="macro-thermo-bd-score" style="color:${scoreColor}">${num1(s.score)} 分</span>
             </h3>
             <p class="macro-note-tail">${escapeHtml(s.source_note || "")}</p>
             <div class="macro-tb-scroll">
             <table class="macro-table">
-                <thead><tr><th>分项</th><th>权重</th><th>当前读数</th><th>单项分</th><th>数据日期</th><th>打分锚点（两点间线性插值）</th></tr></thead>
+                <thead><tr><th>分项</th><th>权重</th><th>当前读数</th><th>状态</th><th>单项分</th><th>数据日期</th><th>打分锚点（两点间线性插值）</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
             </div>
@@ -511,22 +513,61 @@ function render(data) {
     document.getElementById("macroRoot").innerHTML = html;
 }
 
+// 刷新走后台：POST 只「点火」，随后轮询 /refresh-status 直至跑完再重渲染。
+// （云沙箱反代 60s硬超时，限流节流后一轮抓取要 60s+，同步等待必然 504。）
+function pollMacroRefresh(done) {
+    return (async () => {
+        for (let i = 0; i < 110; i++) {         // 最多等约 7 分钟（含限流退避重试）
+            await new Promise((r) => setTimeout(r, 4000));
+            let s;
+            try {
+                const resp = await fetchWithAuth("/api/macro/refresh-status");
+                s = await resp.json();
+            } catch (e) { continue; }
+            if (!s.running) { done(s); return; }
+        }
+        done(null);
+    })();
+}
+
 async function loadMacro(force) {
     const btn = document.getElementById("macroRefresh");
-    btn.disabled = true;
-    btn.textContent = force ? "正在抓取…" : "加载中…";
     try {
-        const url = force ? "/api/macro/refresh" : "/api/macro";
-        const response = await fetchWithAuth(url, { method: force ? "POST" : "GET" });
-        const data = await response.json();
-        if (data.status !== "ok") throw new Error(data.message || "获取宏观指标失败");
-        render(data);
+        if (!force) {
+            btn.disabled = true; btn.textContent = "加载中…";
+            const response = await fetchWithAuth("/api/macro");
+            const data = await response.json();
+            if (data.status !== "ok") throw new Error(data.message || "获取宏观指标失败");
+            render(data);
+            btn.disabled = false; btn.textContent = "刷新数据";
+            return;
+        }
+
+        btn.disabled = true; btn.textContent = "正在抓取…";
+        const kicked = await (await fetchWithAuth("/api/macro/refresh", { method: "POST" })).json();
+        if (kicked.status === "running") btn.textContent = "上一轮还在跑…";
+
+        await pollMacroRefresh(async (s) => {
+            if (s && s.error) {
+                document.getElementById("macroRoot").innerHTML =
+                    `<div class="error-state"><h2>刷新失败</h2><p>${escapeHtml(s.error)}</p></div>`;
+                return;
+            }
+            const failed = (s && s.last_result && s.last_result.errors) || {};
+            const names = Object.keys(failed);
+            const response = await fetchWithAuth("/api/macro");
+            const data = await response.json();
+            if (data.status === "ok") render(data);
+            btn.disabled = false; btn.textContent = "刷新数据";
+            if (names.length) {
+                document.getElementById("macroNotice").innerHTML =
+                    `<div class="macro-alert">本次有 ${names.length} 项更新失败（${names.map(escapeHtml).join("、")}），其余已刷新。</div>`;
+            }
+        });
     } catch (error) {
         document.getElementById("macroRoot").innerHTML =
             `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "刷新数据";
+        btn.disabled = false; btn.textContent = "刷新数据";
     }
 }
 

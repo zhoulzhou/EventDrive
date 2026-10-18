@@ -40,6 +40,15 @@ ZONE_BANDS: Sequence[Tuple[float, str]] = (
     (20, "ice"), (40, "cold"), (60, "neutral"), (80, "warm"), (101, "hot"),
 )
 
+# 段位 → 中文状态标签（与股市热度页 TEMP_ZONES 的措辞保持一致，便于横向对照阅读）
+ZONE_LABELS: Dict[str, str] = {
+    "ice": "冰点 · 布局区",
+    "cold": "偏冷",
+    "neutral": "中性",
+    "warm": "偏热",
+    "hot": "亢奋 · 风险区",
+}
+
 # 「占新增存款比」的口径：
 #   cumulative —— 年初至今累计（默认）。与央行报告披露口径一致，也是结构性判断
 #                 「钱堆在资管还是在企业」的本意；当月口径受月末理财回表扰动极大。
@@ -200,6 +209,12 @@ def zone_of(score: Optional[float]) -> Optional[str]:
     return "hot"
 
 
+def state_of(score: Optional[float]) -> Optional[str]:
+    """把 0-100 分数映射到中文状态标签（供分项表的「状态」列展示）。"""
+    zone = zone_of(score)
+    return ZONE_LABELS.get(zone) if zone else None
+
+
 def lerp_score(value: Optional[float], anchors: Sequence[Tuple[float, float]]) -> Optional[float]:
     """两点间线性插值打分；超出锚点范围取端点分值（不外推）。"""
     if value is None or not anchors:
@@ -348,6 +363,7 @@ def _sub_index(spec: Dict[str, Any], metrics: Dict[str, Any],
             "as_of": dates.get(comp["key"]),
             "score": None if score is None else round(score, 1),
             "zone": zone_of(score),
+            "state": state_of(score),
             "anchor_text": comp["anchor_text"],
             "anchors": [{"value": a, "score": b} for a, b in comp["anchors"]],
         })
@@ -362,6 +378,7 @@ def _sub_index(spec: Dict[str, Any], metrics: Dict[str, Any],
         "source_note": spec["source_note"],
         "score": score,
         "zone": zone_of(score),
+        "state": state_of(score),
         "missing": [c["name"] for c in components if c["score"] is None],
         "components": components,
     }
@@ -407,6 +424,9 @@ def compute_thermometer(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "score": score,
         "zone": zone_of(score),
+        # 总分沿用用户给定的 READING_BANDS（偏冷区 / 磨底区 / 复苏确认区…），
+        # 与分项用的五段冷热段位不是同一套阈值，故这里只给 zone，
+        # 文字判读一律走下面的 reading，避免同一分数出现两种说法。
         "reading": reading["label"],
         "reading_hint": reading["hint"],
         "reading_tone": reading["tone"],
@@ -422,7 +442,9 @@ def compute_thermometer(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         "spread_bands": [dict(b) for b in SPREAD_BANDS],
         "reading_bands": [dict(b) for b in READING_BANDS],
         "zone_colors": dict(ZONE_COLORS),
-        "zone_bands": [{"under": u, "zone": z} for u, z in ZONE_BANDS],
+        "zone_labels": dict(ZONE_LABELS),
+        "zone_bands": [{"under": u, "zone": z, "label": ZONE_LABELS.get(z)}
+                       for u, z in ZONE_BANDS],
         "deposit_share_basis": DEPOSIT_SHARE_BASIS,
         "derived_detail": metrics.get("_detail") or {},
         "missing": [s["name"] for s in subs if s["score"] is None],

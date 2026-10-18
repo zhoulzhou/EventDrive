@@ -30,8 +30,9 @@ POST /refresh 共用同一份）。GET 接口只读库、不触发任何外部�
 也不影响其他指标。
 """
 import logging
+import threading
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,6 +48,9 @@ from app.utils import macro_refresh as mrf
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 宏观指标后台刷新状态（云沙箱反代 60s 超时，抓取需放后台，见 refresh_macro）
+_macro_refresh_status: Dict[str, Any] = {"running": False, "last_result": None}
 
 # 页面「更新于」的展示时区（库中时间戳是 UTC，见 _utcnow）
 CN_TZ = ZoneInfo("Asia/Shanghai")
@@ -189,16 +193,69 @@ def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth))
 
 
 @router.post("/macro/refresh")
-def refresh_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    """强制重新抓取全部指标（与定时任务走同一实现）。"""
-    try:
-        crud.seed_macro_fallbacks(db, mi.FALLBACK_DEFAULTS)
-        crud.seed_macro_history_from_snapshot(db)
-        refreshed, errors, history_added = mrf.refresh_snapshot(db)
-        return _payload(db, refreshed, errors, history_added)
-    except Exception as e:
-        logger.error("刷新市场指标失败: %s", e, exc_info=True)
-        return {"status": "error", "message": str(e)}
+async def refresh_macro(auth: bool = Depends(require_auth)):
+    """强制重新抓取全部指标。
+
+    与股市热度同理：宏观页也依赖 legulegu（ERP / 破净率 / 公募仓位…），
+    限流节流后一轮要 60s+，超过云沙箱反代的 60 秒硬超时，
+    故改为点火后台线程后立即返回。
+    """
+    started = _kick_macro_refresh()
+    if not started:
+        return {
+            "status": "running",
+            "message": "已有一个刷新任务在执行中，请稍候（上一轮通常需 1 分钟左右）",
+        }
+    return {
+        "status": "started",
+        "message": "已开始后台抓取，约 1 分钟后完成；页面会自动显示新读数",
+    }
+
+
+@router.get("/macro/refresh-status")
+def macro_refresh_status(auth: bool = Depends(require_auth)):
+    """查询后台刷新进度。"""
+    return dict(_macro_refresh_status)
+
+
+def _kick_macro_refresh() -> bool:
+    """启动宏观指标后台刷新线程。已有任务在跑时返回 False。"""
+    if _macro_refresh_status.get("running"):
+        return False
+    _macro_refresh_status["running"] = True
+    _macro_refresh_status["started_at"] = datetime.now().isoformat()
+    _macro_refresh_status.pop("error", None)
+
+    def _worker():
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            crud.seed_macro_fallbacks(db, mi.FALLBACK_DEFAULTS)
+            crud.seed_macro_history_from_snapshot(db)
+            refreshed, errors, history_added = mrf.refresh_snapshot(db)
+            payload = _payload(db, refreshed, errors, history_added)
+            _macro_refresh_status["last_result"] = {
+                "refreshed": refreshed,
+                "errors": errors or {},
+                "history_added": history_added,
+                "score": (payload.get("thermometer") or {}).get("score"),
+            }
+            logger.info("宏观指标后台刷新完成: %d 项, 失败 %d 项",
+                        refreshed, len(errors or {}))
+        except Exception as e:
+            logger.error("后台刷新市场指标失败: %s", e, exc_info=True)
+            _macro_refresh_status["error"] = str(e)
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+            _macro_refresh_status["running"] = False
+            _macro_refresh_status["finished_at"] = datetime.now().isoformat()
+
+    threading.Thread(target=_worker, name="macro-refresh", daemon=True).start()
+    return True
 
 
 @router.get("/macro/history")

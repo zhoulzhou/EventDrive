@@ -34,6 +34,8 @@ import json
 import logging
 import math
 import re
+import threading
+import time
 from datetime import date, datetime, timedelta
 from statistics import mean, pstdev
 from typing import Any, Dict, List, Optional, Tuple
@@ -618,6 +620,86 @@ def band_of(ind: Dict[str, Any], value: Optional[float]) -> Optional[Dict[str, A
     return None
 
 
+# ---------------------------------------------------------------- 线性插值打分
+#
+# 原实现里每档只有一个常数分（band.score），落在同一档内的所有读数得分完全相同——
+# 成交额 12000 亿和 17999 亿都算50 分，档内没有任何分辨率。
+# 这里把「相邻两档的**交界值 → 两档分数的中点**」定义为一组锚点，
+# 当前读数落在哪两个锚点之间，就在两点之间做线性插值，档内也能分出高下。
+#
+# 例：破净率 6~10% 档 score=30、10%+ 档 score=12
+#     → 锚点 (6, 41) 与 (10, 21)，读数 8.96 → 41 + (8.96-6)/(10-6)×(21-41) = 26.2
+#
+# 锚点只覆盖相邻档交界那一段，最外侧两档是开区间：低于首锚点取首档分、
+# 高于末锚点取末档分（即"读数再低也就只能是这个分数"的饱和语义）。
+
+def _ascending_bands(ind: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """按读数升序返回分档。
+
+    声明顺序不固定（破净率、产业资本等按「越热越前」倒序写），必须重排，
+    且开区间档（lo 为 None）永远排在最前。
+    """
+    bands = list(ind.get("bands") or [])
+    return sorted(
+        bands,
+        key=lambda b: (0, 0.0) if b.get("lo") is None else (1, float(b["lo"])),
+    )
+
+
+def interpolation_anchors(ind: Dict[str, Any]) -> List[Tuple[float, float]]:
+    """返回 (读数, 分数) 锚点序列（按读数升序）。
+
+    锚点定义在**相邻两档的交界读数**上，分数取两档分数的中点——
+    这样插值曲线在交界处连续，且不改变任何一档原本的分数中枢。
+    """
+    bands = _ascending_bands(ind)
+    pts: List[Tuple[float, float]] = []
+    for lo_band, hi_band in zip(bands, bands[1:]):
+        edge = lo_band.get("hi")
+        if edge is None:
+            continue
+        pts.append((
+            float(edge),
+            (float(lo_band.get("score", 50)) + float(hi_band.get("score", 50))) / 2.0,
+        ))
+    return pts
+
+
+def interpolate_score(ind: Dict[str, Any], value: Optional[float]
+                      ) -> Tuple[Optional[float], Optional[Dict[str, Any]]]:
+    """在相邻锚点之间线性插值得分，返回 (分数, 锚点说明)。
+
+    锚点说明形如 {"mode": "linear"|"floor"|"ceil",
+                 "lo": (x, y), "hi": (x, y), "t": 0~1}，
+    供页面展示"当前读数卡在哪两个锚点之间、插值比例多少"。
+    """
+    bands = _ascending_bands(ind)
+    if not bands or value is None:
+        return None, None
+    if len(bands) == 1:
+        s = float(bands[0].get("score", 50))
+        return s, {"mode": "single", "score": s}
+
+    pts = interpolation_anchors(ind)
+    x = float(value)
+    first_score = float(bands[0].get("score", 50))
+    last_score = float(bands[-1].get("score", 50))
+
+    # 最外侧：开区间饱和，取该侧档位分
+    if not pts or x <= pts[0][0]:
+        return first_score, {"mode": "floor", "lo": (pts[0][0] if pts else None, first_score)}
+    if x >= pts[-1][0]:
+        return last_score, {"mode": "ceil", "hi": (pts[-1][0], last_score)}
+
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        if x1 <= x < x2:
+            t = (x - x1) / (x2 - x1) if x2 != x1 else 0.0
+            return y1 + t * (y2 - y1), {
+                "mode": "linear", "lo": (x1, y1), "hi": (x2, y2), "t": round(t, 4),
+            }
+    return last_score, {"mode": "ceil", "hi": (pts[-1][0], last_score)}
+
+
 def dump_detail(detail: Optional[dict]) -> str:
     try:
         return json.dumps(detail or {}, ensure_ascii=False, default=str)
@@ -645,6 +727,88 @@ def _ak():
     return ak
 
 
+# ---------------------------------------------------------------- 乐咕乐股限流
+#
+# 现象（2026-10-18 实测）：一次「刷新数据」里hs300_pe / hs300_pb / below_na /
+# fund_position / erp 会**依次**打 legulegu，而 akshare 的每个接口内部都要
+# 先GET 一次页面取 _csrf 令牌（stock_index_pe_lg 就硬编码了
+# `get_cookie_csrf(url=".../sz50-ttm-lyr")`）。连续 6~7 次后legulegu 开始返回
+# **HTTP 429**，响应正文是「访问过于频繁 - 乐咕乐股」的拦截页 —— 里面当然没有
+# _csrf，于是 akshare 抛出
+#   「legulegu 页面中未找到 _csrf 令牌，上游可能已改版或拦截了本次请求」
+# 这个报错把「被限流」说成了「上游改版」，排查方向完全被带偏（实测同一时刻
+# 手动访问页面 csrf 正常返回，站点并未改版）。
+#
+# 对策：给所有 legulegu 调用套一层串行节流 + 429 退避重试。
+#   - 同一线程内用锁串行化，避免并发叠加请求
+#   - 每次调用前保证最小间隔。实测阈值：0.4s 连续 6~7 次即429，
+#     3s 在「刚被限流过」的冷却期内仍会失败，**6s 实测 5/5 全通**，故取 6s。
+#     一次完整刷新要打5 个 legulegu 接口，约 30s，可接受（页面本就允许异步抓取）。
+#   - 遇 429 / 502-504 / JSON 解析失败（冷却期的典型表现）都退避后重试
+#     退避 30s → 60s → 120s → 240s：实测 legulegu 的冷却窗口长达 1~2 分钟，
+#     短退避会在冷却期内继续挨打，白白耗尽重试次数。
+_LEGU_MIN_INTERVAL = 6.0
+_LEGU_MAX_RETRY = 4
+_LEGU_BACKOFF_BASE = 30.0
+_legu_lock = threading.Lock()
+_legu_last_call = [0.0]
+
+
+def _is_legu_throttled(exc: Exception) -> bool:
+    """判断异常是否为 legulegu 限流/风控所致（决定是否值得退避重试）。
+
+    akshare 把限流包装成好几种形态，都要看：
+      - DataParsingError「未找到 _csrf 令牌」：429 拦截页里没有该标签
+      - JSONDecodeError「Expecting value: line 1 ...」：接口在冷却期返回了
+        HTML/空响应，akshare 调r.json() 时炸在这里（实测沙箱上会与429 交替出现）
+      - APIError / requests 异常里带 429
+    另外冷却期内上游还会回 502/503/504（网关等不到后端），同样属于「等一会就好」。
+
+    只把「明确是限流特征」的归入重试；真正的解析 bug（如字段改名）不在此列，
+    免得掩盖问题。
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    if any(code in text for code in ("429", "502", "503", "504")):
+        return True
+    if "_csrf" in text or "访问过于频繁" in text:
+        return True
+    # akshare 内部 requests 的 JSON 解析失败 —— 冷却期内的典型表现
+    if "Expecting value" in text or "JSONDecodeError" in text:
+        return True
+    return False
+
+
+def _legu_call(fn, *args, **kwargs):
+    """调用 legulegu 系接口：串行节流 + 限流退避重试。"""
+    last_exc = None
+    for attempt in range(_LEGU_MAX_RETRY):
+        with _legu_lock:
+            # 保证与上一次调用至少间隔 _LEGU_MIN_INTERVAL
+            wait = _legu_last_call[0] + _LEGU_MIN_INTERVAL - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                result = fn(*args, **kwargs)
+            except Exception as e:
+                last_exc = e
+                throttled = _is_legu_throttled(e)
+            else:
+                _legu_last_call[0] = time.monotonic()
+                return result
+            _legu_last_call[0] = time.monotonic()
+
+        if not throttled or attempt == _LEGU_MAX_RETRY - 1:
+            raise last_exc
+        # 指数退避：20s → 40s → 80s，给上游限流窗口足够恢复
+        backoff = _LEGU_BACKOFF_BASE * (2 ** attempt)
+        logger.warning(
+            "legulegu 触发限流（第 %d 次），%.0fs 后重试：%s",
+            attempt + 1, backoff, last_exc,
+        )
+        time.sleep(backoff)
+    raise last_exc
+
+
 def _legu_series(df, date_col: str, value_col: str) -> List[Dict[str, Any]]:
     if df is None or df.empty:
         return []
@@ -656,7 +820,7 @@ def _legu_series(df, date_col: str, value_col: str) -> List[Dict[str, Any]]:
 
 def fetch_hs300_pe() -> Dict[str, Any]:
     ak = _ak()
-    df = ak.stock_index_pe_lg(symbol="沪深300")
+    df = _legu_call(ak.stock_index_pe_lg, symbol="沪深300")
     series = _legu_series(df, "日期", "滚动市盈率")
     if not series:
         raise RuntimeError("乐咕乐股未返回沪深300 PE 数据")
@@ -681,7 +845,7 @@ def fetch_hs300_pe() -> Dict[str, Any]:
 
 def fetch_hs300_pb() -> Dict[str, Any]:
     ak = _ak()
-    df = ak.stock_index_pb_lg(symbol="沪深300")
+    df = _legu_call(ak.stock_index_pb_lg, symbol="沪深300")
     series = _legu_series(df, "日期", "市净率")
     if not series:
         raise RuntimeError("乐咕乐股未返回沪深300 PB 数据")
@@ -775,7 +939,7 @@ def fetch_erp(pe_series: Optional[List[Dict[str, Any]]] = None,
 
 def fetch_below_na() -> Dict[str, Any]:
     ak = _ak()
-    df = ak.stock_a_below_net_asset_statistics(symbol="全部A股")
+    df = _legu_call(ak.stock_a_below_net_asset_statistics, symbol="全部A股")
     rows = []
     for _, r in df.iterrows():
         ratio = _num(r.get("below_net_asset_ratio"))
@@ -1150,7 +1314,7 @@ def fetch_margin(float_mcap_yi: Optional[float] = None,
 
 def fetch_breadth() -> Dict[str, Any]:
     ak = _ak()
-    df = ak.stock_market_activity_legu()
+    df = _legu_call(ak.stock_market_activity_legu)
     kv = {}
     for _, r in df.iterrows():
         kv[str(r.get("item"))] = r.get("value")
@@ -1188,7 +1352,7 @@ def fetch_breadth() -> Dict[str, Any]:
 
 def fetch_fund_position() -> Dict[str, Any]:
     ak = _ak()
-    df = ak.fund_stock_position_lg()
+    df = _legu_call(ak.fund_stock_position_lg)
     series = _legu_series(df, "date", "position")
     series = [p for p in series if p["value"] and p["value"] > 0]
     if not series:
@@ -1704,15 +1868,57 @@ def score_from(ind: Dict[str, Any], value: Optional[float],
 
     优先用分位（方法论要求「全部用历史分位说话」）；分位样本不足时退回该指标
     读数所命中的档位分（band score）。两者都拿不到则返回 None，该指标不参与合成。
+
+    ⚠ temp_invert 只作用于**分位**口径，不作用于档位分：
+    分位是「原始数值在历史分布里的位置」，高分位未必= 热（ERP 分位越高= 赔率越好= 越冷），
+    所以反向指标要把分位映射成 100-pct。而 bands 里的 score **已经是最终热度刻度**
+    （破净率 >10% 标 12 分「历史底部区」、产业资本增持潮标 12 分「底部特征」），
+    再取 100-s 就是二次反转，会出现「状态写着偏冷、分数却是 70 偏热」的自相矛盾。
     """
     invert = bool(ind.get("temp_invert"))
     if pct is not None:
         return round(100 - pct if invert else pct, 1)
-    band = band_of(ind, value)
-    if band is None:
-        return None
-    s = float(band.get("score", 50))
-    return round(100 - s if invert else s, 1)
+    s, _ = interpolate_score(ind, value)
+    if s is None:
+        band = band_of(ind, value)
+        if band is None:
+            return None
+        s = float(band.get("score", 50))
+    # 档位分已是最终热度刻度，不再取反（见上方说明）
+    return round(s, 1)
+
+
+def _score_with_anchor(ind: Dict[str, Any], value: Optional[float],
+                       pct: Optional[float], detail: dict
+                       ) -> Tuple[Optional[float], Optional[Dict[str, Any]]]:
+    """与 score_from 同一口径，但把打分锚点一并带出来，供页面展示。
+
+    分位口径：锚点就是 (0, 0) 与 (100, 100)（反向指标则翻转）。
+    读数口径：锚点是 interpolate_score 算出的相邻两档交界点。
+    """
+    invert = bool(ind.get("temp_invert"))
+    if pct is not None:
+        s = 100 - pct if invert else pct
+        lo_y, hi_y = (100.0, 0.0) if invert else (0.0, 100.0)
+        t = max(0.0, min(1.0, float(pct) / 100.0))
+        # 分位口径的锚点固定在 0% / 100%，统一写成整数，不受指标 digits 影响
+        return round(s, 1), {"mode": "linear", "lo": (0.0, lo_y), "hi": (100.0, hi_y),
+                             "t": round(t, 4), "axis": "%", "axis_label": "分位"}
+
+    x = detail.get("较上次快照变化%") if (ind.get("judge") or "value") == "rate" else value
+    s, anchor = interpolate_score(ind, x)
+    if s is None:
+        band = band_of(ind, value)
+        if band is None:
+            return None, None
+        s = float(band.get("score", 50))
+        anchor = {"mode": "single", "score": s}
+    if anchor:
+        # rate 口径的锚点是「份额周变化率%」，用百分号；其余用指标自身单位
+        anchor["axis"] = "%" if (ind.get("judge") == "rate") else (ind.get("unit") or "")
+        anchor["axis_label"] = "周变化率" if (ind.get("judge") == "rate") else "读数"
+    # 档位分已是最终热度刻度，不再取反（见 score_from 的说明）
+    return round(s, 1), anchor
 
 
 def _score_of(ind: Dict[str, Any], value: Optional[float], pct: Optional[float],
@@ -1720,8 +1926,8 @@ def _score_of(ind: Dict[str, Any], value: Optional[float], pct: Optional[float],
     """实时卡片用：按 judge 的口径判档，再折算热度分（ETF 份额用「周变化率」判档）。"""
     mode = ind.get("judge") or "value"
     if mode == "rate":
-        band = band_of(ind, detail.get("较上次快照变化%"))
-        return round(float(band.get("score", 50)), 1) if band else None
+        s, _ = interpolate_score(ind, detail.get("较上次快照变化%"))
+        return round(float(s), 1) if s is not None else None
     return score_from(ind, value, pct)
 
 
@@ -1739,6 +1945,10 @@ def build_item(ind: Dict[str, Any], rec: Optional[dict]) -> Dict[str, Any]:
     band, judged, basis = judge(ind, value, pct, detail)
     tone = band.get("tone") if band else "slate"
     source = rec.get("source") or "akshare"
+
+    heat_score, anchor = _score_with_anchor(ind, value, pct, detail)
+    # 读数档位被插值细化后，原band 不再精确描述该读数所处的"档内位置"，
+    # 状态列仍沿用档位判读（状态是离散结论，单项分才是连续量）。
 
     bands = []
     for b in ind.get("bands") or []:
@@ -1780,7 +1990,12 @@ def build_item(ind: Dict[str, Any], rec: Optional[dict]) -> Dict[str, Any]:
         "temp_layer": ind.get("temp_layer"),
         "temp_weight": ind.get("temp_weight") or 0.0,
         "temp_invert": bool(ind.get("temp_invert")),
-        "heat_score": _score_of(ind, value, pct, detail),
+        "heat_score": heat_score,
+        "score_anchor": anchor,
+        "anchors": [
+            {"value": round(x, 4), "score": round(y, 2)}
+            for x, y in interpolation_anchors(ind)
+        ] if (ind.get("temp_weight") or 0) > 0 else [],
     }
     return item
 
