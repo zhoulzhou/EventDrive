@@ -67,6 +67,26 @@ class Settings:
     # CSV 更新后置 1 可强制重导 index_history 表
     RELOAD_INDEX_DATA: bool = _get_bool("RELOAD_INDEX_DATA", False)
 
+    # ---- 云数据库（WorkBuddy Cloud / PostgREST）----
+    #
+    # 沙箱部署无持久磁盘，SQLite 重启即丢。启用后快照类小表改走云库持久化。
+    # 三项须齐备才启用，缺任一项自动退回 SQLite（见 app/cloud_db.py）。
+    #
+    # 这里的默认值是**该应用自己的 publicConfig**：publishableKey 是前端可见的
+    # 应用标识（服务端只校验 Origin，不含管理权限），可安全随源码分发；
+    # 真正的环境 id 与 provider 密钥始终留在服务端，不出现在这里。
+    # 若将来多应用共用一套代码，改用环境变量覆盖即可。
+    # 缺省为 false：本地默认继续用 SQLite（离线可调试）。
+    # 云沙箱不走这个开关 —— app/cloud_db.py 检测到 PORT 注入会直接启用云库，
+    # 这样即使 .env（含 CLOUD_DB_ENABLED=false）被一起打包也不会把线上打回 SQLite。
+    CLOUD_DB_ENABLED: bool = _get_bool("CLOUD_DB_ENABLED", False)
+    CLOUD_DB_ENDPOINT: str = os.getenv(
+        "CLOUD_DB_ENDPOINT",
+        "https://eventdrive-finance.app.workbuddy.host")
+    CLOUD_DB_KEY: str = os.getenv(
+        "CLOUD_DB_KEY",
+        "wbpk_qSd54InvBTGATZPZuNrkZA_Nuy2RbjRqRfNnWOMEf5fJP1z5DqFzpsW")
+
     # 市场指标自动抓取缓存有效期（小时）。超过则下次打开页面重新抓取
     MACRO_CACHE_TTL_HOURS: float = float(os.getenv("MACRO_CACHE_TTL_HOURS", "12"))
 

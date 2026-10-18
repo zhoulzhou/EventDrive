@@ -45,24 +45,21 @@ CONCURRENT_CRAWLERS = 2
 def _write_crawl_log(task: str, session: str, source: str = None,
                      item_count: int = 0, status: str = "ok",
                      error_message: str = None, duration: int = 0) -> None:
-    """把一次抓取结果写入 crawl_logs 表（同步，供 to_thread 调用或直接调用）。
+    """把一次抓取结果写入 crawl_logs 表（供 to_thread 调用或直接调用）。
 
+    实际写入委托给 crud.write_crawl_log：云库启用时走PostgREST，否则走 SQLite。
     写日志失败不应影响抓取主流程，故内部吞掉异常。
     """
     db = None
     try:
         db = SessionLocal()
-        db.add(models.CrawlLog(
-            task=task,
-            session=session,
-            source=source,
-            item_count=item_count or 0,
-            status=status,
-            error_message=error_message,
-            duration=duration or 0,
+        crud.write_crawl_log(
+            db,
+            task=task, session=session, source=source,
+            item_count=item_count or 0, status=status,
+            error_message=error_message, duration=duration or 0,
             crawl_time=datetime.now(),
-        ))
-        db.commit()
+        )
     except Exception as e:
         logger.warning(f"写入 crawl_logs 失败（不影响抓取）: {e}")
     finally:
