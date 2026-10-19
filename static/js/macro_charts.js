@@ -165,6 +165,8 @@ function shortPpi(v) {
 function mount(id, option) {
     const dom = document.getElementById(id);
     if (!dom) return;
+    // 兜底：库没加载出来时不要继续调 init（会抛 TypeError），改为显示提示
+    if (!echartsReady()) { echartsLoadFailed([id]); return; }
     if (chartReg[id]) { chartReg[id].dispose(); delete chartReg[id]; }
     dom.innerHTML = "";
     const inst = echarts.init(dom);
@@ -727,7 +729,42 @@ function drawCharts(d) {
     Object.keys(chartReg).forEach(function (k) { chartReg[k].resize(); });
 }
 
+/** 本页全部图表容器 id（兜底时统一提示）。 */
+const MP_CHART_IDS = ["mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"];
+
+/** 图表库（ECharts，本地 /static/js/echarts.min.js）是否可用。 */
+function echartsReady() {
+    return typeof echarts !== "undefined" && typeof echarts.init === "function";
+}
+
+/**
+ * ECharts 加载失败时的统一兜底。
+ *
+ * 库文件虽已本地化（不再依赖 CDN），仍可能因文件缺失、静态目录挂载异常、
+ * 版本不兼容等原因没加载成功。此时 `echarts.init` 会直接抛 TypeError，
+ * 页面表现为整片空白且控制台报错 —— 用户分不清是「没数据」还是「脚本没跑起来」。
+ */
+function echartsLoadFailed(ids) {
+    const msg = "图表库加载失败，请刷新重试";
+    // 用 chart-load-failed（红色告警）而非 chartEmpty 的常规灰色空态 ——
+    // 加载失败是异常，需要与「暂无数据」视觉上区分开
+    ids.forEach(function (id) {
+        const dom = document.getElementById(id);
+        if (!dom) return;
+        if (chartReg[id]) { chartReg[id].dispose(); delete chartReg[id]; }
+        dom.innerHTML = '<div class="chart-load-failed">' + escapeHtml(msg) + "</div>";
+    });
+    const banner = document.getElementById("mpChartAlert");
+    if (banner) {
+        banner.className = "chart-load-alert";
+        banner.style.display = "flex";
+        banner.textContent = msg;
+    }
+}
+
 async function loadSeries(force) {
+    // 前置兜底：库没加载出来就没必要再请求数据了
+    if (!echartsReady()) { echartsLoadFailed(MP_CHART_IDS); return; }
     if (seriesCache && !force) { drawCharts(seriesCache); setTrendMeta(seriesCache, false); return; }
     try {
         const response = await fetchWithAuth("/api/macro/series");
@@ -737,7 +774,7 @@ async function loadSeries(force) {
         drawCharts(d);
         setTrendMeta(d, false);
     } catch (error) {
-        ["mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"].forEach(function (id) {
+        MP_CHART_IDS.forEach(function (id) {
             chartEmpty(id, "历史序列加载失败：" + error.message);
         });
         setTrendMeta(null, true);

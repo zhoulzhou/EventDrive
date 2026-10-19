@@ -676,3 +676,28 @@ body {
         flex-direction: column;
     }
 }
+
+/* ==================== 图表库加载失败兜底 ==================== */
+/* ECharts 已本地化到 /static/js/echarts.min.js（不再依赖外部 CDN），但仍可能因
+   文件缺失、静态目录挂载异常、版本不兼容等原因没加载成功。此时 echarts.init 会抛
+   TypeError，页面表现为整片空白 —— 用户分不清是「没数据」还是「脚本没跑起来」。
+   各页在初始化前检测 echarts 是否可用，不可用时用这个红色提示兜底。
+   放在 style.css（全局）而非 macro.css / stock.css，因为 finance、index_alarm
+   两页只继承 base.html 的 style.css，不引另两个文件。 */
+.chart-load-failed {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; min-height: 80px; padding: 0 1rem; text-align: center;
+    font-size: 0.82rem; color: #dc2626;
+    background: rgba(220, 38, 38, 0.06);
+    border: 1px dashed rgba(220, 38, 38, 0.35);
+    border-radius: 8px;
+}
+/* 页面级横幅（提示整个页面的图表都不可用，比逐图提示更醒目） */
+.chart-load-alert {
+    display: flex; align-items: center; gap: 0.4rem;
+    margin-bottom: 0.8rem; padding: 0.6rem 0.9rem;
+    font-size: 0.82rem; color: #dc2626;
+    background: rgba(220, 38, 38, 0.08);
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    border-radius: 8px;
+}

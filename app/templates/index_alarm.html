@@ -145,6 +145,32 @@ function policyMarkLines() {
 
 // 已初始化的图表实例（resize 时统一刷新）
 const charts = [];
+
+/**
+ * 图表库（ECharts，本地 /static/js/echarts.min.js）加载失败时的兜底。
+ * 库文件虽已本地化（不再依赖 CDN），仍可能因文件缺失、静态目录异常、
+ * 版本不兼容等原因没加载成功。此时 echarts.init 会抛 TypeError，
+ * 页面表现为一整片空白，用户分不清是「没数据」还是「脚本没跑起来」。
+ * 这里在 registerChart 统一拦截：本页 3 张图都走它，改一处即可全覆盖。
+ */
+function chartLoadFailed(elId) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.innerHTML = '<div class="chart-load-failed">图表库加载失败，请刷新重试</div>';
+}
+
+function echartsReady() {
+    return typeof echarts !== 'undefined' && typeof echarts.init === 'function';
+}
+
+/** 统一的图表初始化入口：库不可用时显示提示并返回 null（调用方需判空）。 */
+function initChart(elId) {
+    if (!echartsReady()) { chartLoadFailed(elId); return null; }
+    const el = document.getElementById(elId);
+    if (!el) return null;
+    return registerChart(echarts.init(el));
+}
+
 function registerChart(inst) { charts.push(inst); return inst; }
 
 // 懒加载:滚入视口才初始化，rootMargin 提前 200px 预加载
@@ -179,7 +205,8 @@ async function renderAll() {
 
 // 四指标归一化对比（起点 = 100）
 function renderCompare() {
-    const comp = registerChart(echarts.init(document.getElementById("main")));
+    const comp = initChart("main");
+    if (!comp) return;
     comp.setOption(Object.assign({}, baseOpt, {
         legend: { top: 0, textStyle: { color: "#555" }, itemWidth: 18 },
         grid: { left: 60, right: 20, top: 40, bottom: 80 },
@@ -206,7 +233,8 @@ function renderCompare() {
 
 // 三面板联动图
 function renderThree() {
-    const three = registerChart(echarts.init(document.getElementById("three")));
+    const three = initChart("three");
+    if (!three) return;
     const g3 = { left: 70, right: 28, width: "auto" };
     const xAxisShared = { type: "time", min: "dataMin", axisLine: { lineStyle: { color: "#8b98a5" } }, axisLabel: { color: "#888" }, splitLine: { show: false } };
     const yAxisShared = { type: "value", scale: true, axisLine: { show: false }, axisLabel: { color: "#888" }, splitLine: { lineStyle: { color: "#e4e7eb" } } };
@@ -249,7 +277,8 @@ function renderThree() {
 
 // 单指标图（仅纳斯达克，含峰值回撤标记）
 function renderNasdaq() {
-    const chart = registerChart(echarts.init(document.getElementById("ch_NASDAQCOM")));
+    const chart = initChart("ch_NASDAQCOM");
+    if (!chart) return;
     // 峰值回撤 10% 标记 + 加息/降息政策竖线（合并到同一 markLine）
     const drawdownMarks = buildMarks(computeDrawdowns("NASDAQCOM", 0.10));
     const mergedMarks = Object.assign({}, drawdownMarks, {

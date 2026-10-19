@@ -136,7 +136,24 @@ function renderIndicators(data) {
     });
 }
 
+/**
+ * 图表库（ECharts，本地 /static/js/echarts.min.js）加载失败时的兜底。
+ * 库文件虽已本地化（不再依赖 CDN），仍可能因文件缺失、静态目录异常、
+ * 版本不兼容等原因没加载成功。此时 echarts.init 会抛 TypeError，
+ * 页面表现为一整片空白，用户分不清是「没数据」还是「脚本没跑起来」。
+ */
+function chartLoadFailed(elId) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.innerHTML = '<div class="chart-load-failed">图表库加载失败，请刷新重试</div>';
+}
+
 function renderIndicatorChart(elId, ind, periods, sharedRange) {
+    // 兜底：图表库未加载时显示提示，避免整页空白（详见 macro_charts.js 同名注释）
+    if (typeof echarts === 'undefined' || typeof echarts.init !== 'function') {
+        chartLoadFailed(elId);
+        return;
+    }
     const chart = echarts.init(document.getElementById(elId));
     charts.push(chart);
     const unitSuffix = ind.unit === '%' ? '%' : (ind.unit === '天' ? '天' : '亿元');

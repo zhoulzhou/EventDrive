@@ -25,9 +25,42 @@ function num(v, d) {
     if (v === null || v === undefined || isNaN(Number(v))) return "—";
     return Number(v).toFixed(d === undefined ? 2 : d);
 }
+/** 图表库（ECharts，本地 /static/js/echarts.min.js）是否可用。 */
+function echartsReady() {
+    return typeof echarts !== "undefined" && typeof echarts.init === "function";
+}
+
+/**
+ * ECharts 加载失败时的统一兜底。
+ *
+ * 库文件虽然已本地化（不再依赖 CDN），仍可能因文件缺失、静态目录挂载异常、
+ * 版本不兼容、浏览器拦截等原因没加载成功。此时 `echarts.init` 会直接抛
+ * TypeError，页面表现是**整片空白且控制台报错** —— 用户分不清是「没数据」
+ * 还是「脚本没跑起来」。这里统一在各图表容器里显示红色提示，避免静默空白。
+ */
+function echartsLoadFailed(ids) {
+    const msg = "图表库加载失败，请刷新重试";
+    // 用 chart-load-failed（红色告警）而非 chartEmpty 的常规灰色空态 ——
+    // 加载失败是异常，需要与「暂无数据」视觉上区分开
+    ids.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = '<div class="chart-load-failed">' + escapeHtml(msg) + "</div>";
+    });
+    // 页面级横幅（如有）也提示一次，便于一眼看到原因
+    const banner = document.getElementById("stChartAlert");
+    if (banner) {
+        banner.className = "chart-load-alert";
+        banner.style.display = "flex";
+        banner.textContent = msg;
+    }
+}
+
 function mount(id, opt) {
     const el = document.getElementById(id);
     if (!el) return;
+    // 兜底：库没加载出来时不要继续调init（会抛 TypeError），改为显示提示
+    if (!echartsReady()) { echartsLoadFailed([id]); return; }
     chartReg[id] = echarts.init(el);
     chartReg[id].setOption(opt);
 }
@@ -397,6 +430,8 @@ function drawCharts(d) {
 const CHART_IDS = ["stPE", "stERP", "stBelowNa", "stTurnover", "stMargin", "stFund", "stCapital", "stStruct", "stTemp"];
 
 async function loadSeries(force) {
+    // 前置兜底：库没加载出来就没必要再请求数据了，直接给提示（避免白跑一趟请求）
+    if (!echartsReady()) { echartsLoadFailed(CHART_IDS); return; }
     if (seriesCache && !force) { drawCharts(seriesCache); setTrendMeta(seriesCache, false); return; }
     try {
         const response = await fetchWithAuth("/api/stock-temp/series");
