@@ -358,13 +358,20 @@ SOURCE_LABELS = {
     "fallback": "默认值",
 }
 
-# 历史接口允许查询的全部键（指标 + 参数锚 + 图表专用序列）
-HISTORY_KEYS = set(INDICATOR_KEYS) | {PARAM_REVERSE_REPO} | set(SERIES_EXTRA_KEYS)
+# 宏观温度计打卡键：合成值（资金面×25% + 实体热度×45% + 信用/部门×30%），
+# 不属于任何一张指标表，故单独写进历史表，供「宏观趋势」页画温度计曲线。
+# detail 里存三个子温度计的分数与价差，前端据此画分层曲线。
+THERMOMETER_KEY = "macro_thermometer"
+
+# 历史接口允许查询的全部键（指标 + 参数锚 + 图表专用序列 + 温度计打卡）
+HISTORY_KEYS = (set(INDICATOR_KEYS) | {PARAM_REVERSE_REPO} | set(SERIES_EXTRA_KEYS)
+                | {THERMOMETER_KEY})
 
 # 各键的中文名（含政策利率锚与图表专用序列）
 NAME_OF_KEY = {ind["key"]: ind["name"] for ind in INDICATORS}
 NAME_OF_KEY[PARAM_REVERSE_REPO] = PARAM_META[PARAM_REVERSE_REPO]["name"]
 NAME_OF_KEY.update(SERIES_EXTRA_KEYS)
+NAME_OF_KEY[THERMOMETER_KEY] = "宏观温度计"
 
 # 图表面板「三组一定位」用到的序列键（供 /api/macro/series 组装）
 CHART_DAILY_KEYS = ["dr007_spread", "r001_dr001"]

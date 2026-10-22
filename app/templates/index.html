@@ -13,10 +13,7 @@
             <option value="同花顺">同花顺</option>
             <option value="新浪财经">新浪财经</option>
         </select>
-        <label class="today-only-label">
-            <input type="checkbox" id="todayOnly" checked>
-            仅看当日
-        </label>
+        <span class="filter-hint">仅显示当日新闻（每日 9:15 与 16:17 自动抓取）</span>
     </div>
 </div>
 
@@ -36,9 +33,9 @@ async function loadNews(page = 1) {
     currentPage = page;
     const search = document.getElementById('searchInput').value;
     const source = document.getElementById('sourceFilter').value;
-    const todayOnly = document.getElementById('todayOnly').checked;
 
-    let url = `/api/news?skip=${(page - 1) * pageSize}&limit=${pageSize}&today_only=${todayOnly}`;
+    // 固定只看当日新闻：不再提供「仅看当日」开关（2026-10-20 起）
+    let url = `/api/news?skip=${(page - 1) * pageSize}&limit=${pageSize}&today_only=true`;
     if (search) url += `&include_keywords=${encodeURIComponent(search)}`;
     if (source) url += `&source=${encodeURIComponent(source)}`;
 
@@ -118,7 +115,6 @@ function escapeHtml(text) {
 
 document.getElementById('searchInput').addEventListener('input', debounce(() => loadNews(1), 300));
 document.getElementById('sourceFilter').addEventListener('change', () => loadNews(1));
-document.getElementById('todayOnly').addEventListener('change', () => loadNews(1));
 
 function debounce(func, wait) {
     let timeout;

@@ -63,7 +63,9 @@ class Settings:
     DATA_DIR: Path = BASE_DIR / "data"
     LOGS_DIR: Path = BASE_DIR / "logs"
 
-    START_SCHEDULER: bool = _get_bool("START_SCHEDULER", False)
+    # 注：原 START_SCHEDULER 配置项已移除。进程内 APScheduler 已停用
+    #（云沙箱回收进程 → job 只在进程启动时算出 next_run_time，不会补跑），
+    # 定时抓取改由外部自动任务调用 POST /api/crawl/daily-refresh 点火。
     # CSV 更新后置 1 可强制重导 index_history 表
     RELOAD_INDEX_DATA: bool = _get_bool("RELOAD_INDEX_DATA", False)
 

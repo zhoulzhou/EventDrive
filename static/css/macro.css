@@ -221,6 +221,12 @@
 /* 三个面板各占一整行，图才看得清（原来 3 列并排，单图只有约 330px 宽） */
 .mp-grid { display: grid; grid-template-columns: 1fr; gap: 1.15rem; }
 .mp-card { border-radius: 10px; border: 1px solid #e8ebf0; padding: 0.9rem 1rem 0.95rem; }
+/* 温度计总览卡：放在最上面，是全页的总结论，给它更明显的底色 */
+.mp-thermo {
+    background: linear-gradient(165deg, rgba(148,163,184,0.20), rgba(148,163,184,0.05));
+    margin-bottom: 1.15rem;
+}
+.mp-thermo .mp-chart { height: 290px; }
 .mp-liq { background: linear-gradient(165deg, rgba(139,200,234,0.16), rgba(139,200,234,0.04)); }
 .mp-credit { background: linear-gradient(165deg, rgba(228,212,143,0.20), rgba(228,212,143,0.04)); }
 .mp-heat { background: linear-gradient(165deg, rgba(244,179,147,0.18), rgba(244,179,147,0.04)); }

@@ -12,7 +12,6 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
 from app.api import news, crawl, login, market, index_alarm, finance, valuation, macro, stock_temp, hot_sector
-from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
 
 logger = logging.getLogger(__name__)
@@ -43,19 +42,13 @@ else:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if settings.START_SCHEDULER:
-        start_scheduler()
-        jobs = sched_instance.get_jobs()
-        print("✅ 定时任务调度器已启动（内嵌模式）")
-        for job in jobs:
-            print(f"   - {job.name} (next: {job.next_run_time})")
-    else:
-        print("ℹ️  Web 进程仅提供 API 服务，定时任务由独立进程 run_scheduler.py 运行")
-        print("   启动方式: python run_scheduler.py  或  ./start.sh")
+    # 定时抓取由**外部自动任务**调用 POST /api/crawl/daily-refresh 点火
+    # （北京时间 16:00 收盘一轮，不含财务指标）。
+    # 进程内 APScheduler 已停用 —— 云沙箱会回收进程，job 只在进程启动那一刻
+    # 算出 next_run_time、无持久化 job store，定时点过后不会补跑。
+    print("ℹ️  定时抓取由外部自动任务点火（POST /api/crawl/daily-refresh），进程内调度器已停用")
     yield
-    if settings.START_SCHEDULER:
-        stop_scheduler()
-        print("🛑 定时任务调度器已停止")
+    print("🛑 服务关闭")
 
 
 app = FastAPI(
@@ -116,7 +109,8 @@ async def health_check():
         "status": "ok",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "scheduler_running": sched_instance.running,
+        # 定时抓取由外部自动任务点火，不在本进程内调度
+        "scheduler": "external",
     })
 
 

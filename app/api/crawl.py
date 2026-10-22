@@ -1,9 +1,19 @@
 import asyncio
 import logging
+import threading
+from datetime import datetime
 from typing import Optional, List, Dict
 from fastapi import APIRouter, Depends
 
-from app.scheduler import full_crawl, set_crawl_progress_callback
+from app.scheduler import (
+    full_crawl,
+    set_crawl_progress_callback,
+    close_session,
+    crawl_market_data,
+    refresh_macro_indicators,
+    refresh_stock_temp,
+    refresh_hot_sector,
+)
 from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
@@ -84,3 +94,149 @@ def get_crawl_status(auth: bool = Depends(require_auth)):
         "logs": crawl_status.get("logs", [])
     }
     return response
+
+
+# ======================================================================
+# 外部调度入口（供平台定时任务调用）
+# ======================================================================
+# 定时抓取：**仅北京时间 16:00 一轮**，抓取除财务外的所有页面数据。
+#
+# 背景：APScheduler 内嵌在 Web 进程里，而云沙箱会缩容/回收进程 ——
+# job 只在进程启动那一刻算出 next_run_time，进程被回收后定时点不会补跑，
+# 导致「/health 显示 scheduler_running=true 但定时任务从不执行」。
+# 因此改为由**外部定时任务**（平台 automation）主动调本接口点火。
+#
+# 关键约束：云沙箱反向代理硬超时 60 秒，而一轮完整抓取要数分钟
+# （legulegu 串行 6s 间隔，单域就要 6~7 分钟）。所以这里必须
+# **点火后台线程后立即返回**，绝不能同步等待。
+#
+# 财务指标**不在**自动抓取范围内：按股票代码逐只查询、耗时且低频，
+# 改为在财务页面手动抓取（POST /api/finance/fetch）。
+
+_daily_refresh_lock = threading.Lock()
+_daily_refresh_state = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "result": None,
+    "error": None,
+}
+
+# 单个数据域的补跑入口：key -> 协程工厂。
+# 为什么需要它：close_session 里四个慢域并发，其中 legulegu 串行 6s 间隔，
+# stock_temp 单域就要 6~7 分钟，而沙箱可能在任务跑到一半时回收进程 —— 整轮
+# 会被打断（实测 10-19 丢了 stock_temp）。让外部定时任务能**按域单独补跑**，
+# 就不必因为某个慢域失败而重跑全部。
+_DOMAIN_TASKS = {
+    "news": lambda: full_crawl(session="close"),
+    "market": lambda: crawl_market_data(session="close"),
+    "macro": lambda: refresh_macro_indicators(session="close"),
+    "stock_temp": lambda: refresh_stock_temp(session="close"),
+    "hot_sector": lambda: refresh_hot_sector(session="close"),
+}
+
+
+def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = None) -> bool:
+    """启动一轮收盘抓取（后台线程）。已有任务在跑时返回 False。
+
+    domains 为 None 时跑整轮 close_session；传入列表则只跑指定数据域。
+    """
+    if not _daily_refresh_lock.acquire(blocking=False):
+        return False
+    _daily_refresh_state.update({
+        "running": True,
+        "started_at": datetime.now().isoformat(),
+        "error": None,
+    })
+
+    def _worker():
+        # close_session 是 async，内部用 asyncio.to_thread 跑同步抓取，
+        # 所以要在本线程里新建一个事件循环来跑，不能直接调。
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            if domains:
+                # 补跑指定域；单域失败不应连累其它域，故逐个 try
+                done, failed = [], {}
+                for name in domains:
+                    factory = _DOMAIN_TASKS.get(name)
+                    if factory is None:
+                        failed[name] = "未知数据域"
+                        continue
+                    try:
+                        loop.run_until_complete(factory())
+                        done.append(name)
+                    except Exception as e:
+                        logger.error("补跑数据域 %s 失败: %s", name, e, exc_info=True)
+                        failed[name] = str(e)[:200]
+                _daily_refresh_state["result"] = {
+                    "mode": "domains", "domains": domains,
+                    "done": done, "failed": failed, "ok": not failed,
+                }
+            else:
+                loop.run_until_complete(close_session())
+                _daily_refresh_state["result"] = {"mode": "full", "session": session, "ok": True}
+        except Exception as e:
+            logger.error("每日定时抓取失败: %s", e, exc_info=True)
+            _daily_refresh_state["error"] = str(e)[:500]
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+            _daily_refresh_state["running"] = False
+            _daily_refresh_state["finished_at"] = datetime.now().isoformat()
+            _daily_refresh_lock.release()
+
+    threading.Thread(target=_worker, name="daily-refresh", daemon=True).start()
+    return True
+
+
+@router.post("/crawl/daily-refresh")
+async def trigger_daily_refresh(
+    domains: Optional[str] = None,
+    auth: bool = Depends(require_auth),
+):
+    """外部定时任务入口：跑一轮收盘抓取（新闻 + 行情 + 宏观 + 温度 + 热点）。
+
+    **立即返回、后台执行**：一轮完整抓取要数分钟，而云沙箱反代硬超时 60 秒，
+    同步执行必然 504。落库由后台线程完成，稍后查 `/crawl/daily-status` 看进度。
+
+    可选 `domains` 参数（逗号分隔）只跑指定数据域，用于补跑被中断的部分：
+    `news,market,macro,stock_temp,hot_sector`
+
+    注意：**不含财务指标**，财务在页面手动抓取（`POST /api/finance/fetch`）。
+    """
+    picked = None
+    if domains:
+        picked = [d.strip() for d in domains.split(",") if d.strip()]
+        unknown = [d for d in picked if d not in _DOMAIN_TASKS]
+        if unknown:
+            return {
+                "status": "error",
+                "message": f"未知数据域: {', '.join(unknown)}；"
+                           f"可选: {', '.join(_DOMAIN_TASKS)}",
+            }
+
+    started = _kick_daily_refresh(session="close", domains=picked)
+    if not started:
+        return {
+            "status": "running",
+            "message": "已有一轮定时抓取在执行中，跳过本次触发",
+        }
+    if picked:
+        return {
+            "status": "started",
+            "message": f"已开始后台补跑: {', '.join(picked)}；"
+                       f"稍后查询 /api/crawl/daily-status 看结果",
+        }
+    return {
+        "status": "started",
+        "message": "已开始后台抓取，约 3-5 分钟完成；稍后查询 /api/crawl/daily-status 看结果",
+    }
+
+
+@router.get("/crawl/daily-status")
+def get_daily_refresh_status(auth: bool = Depends(require_auth)):
+    """查询后台每日抓取的进度与结果。"""
+    return dict(_daily_refresh_state)

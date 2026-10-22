@@ -1,0 +1,12 @@
+{
+  "_comment": "环境变量（EVENTDRIVE_SESSION_TOKEN / EVENTDRIVE_CLOUD_DB_KEY）请在 CloudBase 控制台「函数配置 → 环境变量」配置，不要写进本文件。Timeout 需设为 300 秒（默认 3 秒会被杀）。cron 为北京时间七段式：0 15 9 * * * * = 每天 9:15:00。",
+  "name": "eventdrive-morning-news",
+  "timeout": 300,
+  "triggers": [
+    {
+      "name": "morning-0915",
+      "type": "timer",
+      "config": "0 15 9 * * * *"
+    }
+  ]
+}

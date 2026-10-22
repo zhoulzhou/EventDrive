@@ -9,11 +9,11 @@
                        历史表过少时自动升级为全量回溯。**只由「宏观趋势」页的
                        「补齐历史数据」按钮触发，不在定时任务里跑**
 
-定时任务在 app/scheduler.py 注册，由独立进程 run_scheduler.py 执行
-（Web 进程默认不跑调度器，见 settings.START_SCHEDULER）；定时任务只调用
-refresh_snapshot() 抓当前读数，不做历史回溯。
+定时抓取由外部自动任务在北京时间 16:00 调用 POST /api/crawl/daily-refresh 点火
+（见 app/api/crawl.py）；定时任务只调用 refresh_snapshot() 抓当前读数，不做历史回溯。
 """
 import logging
+from datetime import date
 from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from app import crud
 from app.database import SessionLocal
 from app.utils import macro_backfill as mbf
 from app.utils import macro_indicators as mi
+from app.utils import macro_thermometer
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,85 @@ def current_hints(db: Session) -> Dict[str, dict]:
     """各指标已落库的 detail，供央行侧判断「报告期未变则跳过」以省流量。"""
     rows = crud.get_macro_indicators(db)
     return {key: mi.load_detail(row.detail) for key, row in rows.items()}
+
+
+def load_raw(db: Session) -> Dict[str, dict]:
+    """读取库中各指标读数，组装成 build_items 需要的 raw 结构。
+
+    与 app/api/macro.py 的 _load_raw 是同一份实现（那边改为转调本函数），
+    保证「页面展示的温度计」与「落库打卡的温度计」读数完全一致。
+    """
+    raw: Dict[str, dict] = {}
+    for key, row in crud.get_macro_indicators(db).items():
+        if key == mi.PARAM_REVERSE_REPO:
+            continue
+        detail = mi.load_detail(row.detail)
+        raw[key] = {
+            "value": row.value,
+            "as_of": row.as_of,
+            "source": row.source,
+            "source_detail": _source_note(detail),
+            "detail": detail,
+            "error": None,
+        }
+
+    # 未落库时用兜底默认值，保证温度计能算出来
+    for key, meta in mi.FALLBACK_DEFAULTS.items():
+        if key == mi.PARAM_REVERSE_REPO or key in raw:
+            continue
+        raw[key] = {
+            "value": meta.get("value"),
+            "as_of": meta.get("as_of", "兜底默认值"),
+            "source": "fallback",
+            "source_detail": "",
+            "detail": {},
+            "error": None,
+        }
+    return raw
+
+
+def _source_note(detail: dict) -> str:
+    """从 detail 里挑一句能说明数据出处的说明（如报告期 / 公告号）。"""
+    for field in ("报告期", "报告", "公告", "来源"):
+        val = detail.get(field)
+        if val:
+            return str(val)
+    return ""
+
+
+def _record_thermometer(db: Session) -> int:
+    """把当前宏观温度计打卡写进历史表（key="macro_thermometer"），供趋势页画曲线。
+
+    宏观温度计是**合成值**（资金面×25% + 实体热度×45% + 信用/部门×30%），
+    不在任何一张指标表里，每次都现算。若不落库，趋势页就没有它的曲线。
+    故这里按「每日收盘打卡」写一行：value = 总分，detail 里存三个子温度计的分数。
+
+    as_of 用**打卡当天**（而非各分项的数据日期）—— 温度计是「当前合成读数」，
+    与股市热度页的 key="temperature" 打卡口径一致；曲线因此是逐日的。
+    """
+    raw = load_raw(db)
+    items = mi.build_items(raw)
+    thermo = macro_thermometer.compute_thermometer(items)
+    score = thermo.get("score")
+    if score is None:
+        return 0
+
+    detail: Dict[str, Any] = {}
+    for sub in thermo.get("subs") or []:
+        if sub.get("score") is not None:
+            detail[sub["key"]] = sub["score"]
+    detail["spread"] = thermo.get("spread")
+    detail["reading"] = thermo.get("reading")
+    detail["数据源"] = thermo.get("formula")
+
+    today = date.today().strftime("%Y-%m-%d")
+    return crud.add_macro_history(db, [{
+        "key": mi.THERMOMETER_KEY,
+        "value": score,
+        "as_of": today,
+        "source": "akshare",
+        "detail": mi.dump_detail(detail),
+    }])
 
 
 def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str], int]:
@@ -92,6 +172,10 @@ def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str],
         if records:
             crud.upsert_macro_indicators(db, records)
             history_added = crud.add_macro_history(db, records)
+
+        # 宏观温度计是合成值（不在指标表里），单独打卡一行，
+        # 趋势页才有它的曲线。放在指标落库之后 —— 温度计读的是**库中最新值**。
+        history_added += _record_thermometer(db)
 
         logger.info(
             "市场指标自动刷新: 快照更新 %d 项, 历史新增 %d 条, 失败 %d 项",

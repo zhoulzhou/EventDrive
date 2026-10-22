@@ -7,11 +7,12 @@
   按（交易日, 板块代码）写入 hot_sector_snapshots，供页面只读展示与后续复盘。
 
 两个调用方：
-- Web 接口 POST /api/hot-sector/refresh（页面「刷新盘面」按钮），复用请求的 db 会话；
-- 收盘后定时任务（北京时间 16:00，见 app/scheduler.py），保证不开页面也能留下每日记录。
+- Web 接口 POST /api/hot-sector/refresh（页面「刷新数据」按钮），复用请求的 db 会话；
+- 收盘后定时任务（北京时间 16:00），保证不开页面也能留下每日记录。
 
-定时任务由独立进程 run_scheduler.py 执行。抓取本身是异步的（akshare 阻塞调用已在线程池内
-执行），因此这里保持 async，定时任务直接 await 即可，不需要再套 to_thread。
+定时任务由外部自动任务调用 POST /api/crawl/daily-refresh 点火（见 app/api/crawl.py）。
+抓取本身是异步的（akshare 阻塞调用已在线程池内执行），因此这里保持 async，
+调用方直接 await 即可，不需要再套 to_thread。
 """
 import logging
 from typing import Any, Dict, Optional
@@ -44,6 +45,7 @@ async def fetch_and_store_hot_sector(db: Optional[Session] = None) -> Dict[str, 
                     trade_date=payload["trade_date"],
                     sectors=payload["sectors"],
                     reason_source="rule",
+                    source=payload.get("source_key") or "eastmoney",
                 )
             except Exception as e:
                 logger.error("今日热点快照落库失败: %s", e, exc_info=True)

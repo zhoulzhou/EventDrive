@@ -22,25 +22,20 @@ NC='\033[0m'
 
 cleanup() {
     echo ""
-    echo -e "${YELLOW}正在停止所有服务...${NC}"
-    if [ -n "$SCHEDULER_PID" ] && kill -0 "$SCHEDULER_PID" 2>/dev/null; then
-        kill "$SCHEDULER_PID" 2>/dev/null
-        echo -e "${GREEN}✅ 已停止调度器 (PID: $SCHEDULER_PID)${NC}"
-    fi
-    echo -e "${GREEN}所有服务已停止${NC}"
+    echo -e "${GREEN}服务已停止${NC}"
     exit 0
 }
 
 trap cleanup SIGINT SIGTERM
 
 echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}  EventDrive 完整启动${NC}"
+echo -e "${GREEN}  EventDrive 启动${NC}"
 echo -e "${GREEN}  $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
 
 # ---------- 环境检查 ----------
-echo -e "${YELLOW}[1/4] 环境检查...${NC}"
+echo -e "${YELLOW}[1/2] 环境检查...${NC}"
 
 if ! command -v python3 &> /dev/null; then
     echo -e "${RED}✗ 未找到 Python3, 请先安装${NC}"
@@ -70,60 +65,20 @@ echo ""
 
 
 
-# ---------- 启动调度器 ----------
-echo -e "${YELLOW}[2/4] 启动新闻抓取调度器...${NC}"
-
-mkdir -p logs
-
-# 清理旧调度器实例, 避免多次启动堆叠多个进程
-if [ -f "logs/scheduler.pid" ]; then
-    OLD_SCHED_PID=$(cat logs/scheduler.pid 2>/dev/null)
-    if [ -n "$OLD_SCHED_PID" ] && kill -0 "$OLD_SCHED_PID" 2>/dev/null; then
-        echo -e "       检测到旧调度器仍在运行 (PID: $OLD_SCHED_PID), 停止后重新启动"
-        kill "$OLD_SCHED_PID" 2>/dev/null
-        sleep 2
-        if kill -0 "$OLD_SCHED_PID" 2>/dev/null; then
-            kill -9 "$OLD_SCHED_PID" 2>/dev/null
-            echo -e "       旧调度器未正常退出, 已强制停止"
-        fi
-    fi
-fi
-
-python3 run_scheduler.py > logs/scheduler.log 2>&1 &
-SCHEDULER_PID=$!
-echo $SCHEDULER_PID > logs/scheduler.pid
-
-sleep 1
-if kill -0 "$SCHEDULER_PID" 2>/dev/null; then
-    echo -e "${GREEN}  ✓ 调度器已启动 (PID: $SCHEDULER_PID)${NC}"
-    echo -e "      日志: ${GREEN}logs/scheduler.log${NC}"
-    echo ""
-    echo -e "${GREEN}--- 调度器启动日志 ---${NC}"
-    tail -5 logs/scheduler.log 2>/dev/null | while IFS= read -r line; do
-        echo -e "       $line"
-    done
-    echo -e "${GREEN}-----------------------${NC}"
-else
-    echo -e "${RED}  ✗ 调度器启动失败, 查看日志:${NC}"
-    echo -e "${RED}$(tail -10 logs/scheduler.log 2>/dev/null)${NC}"
-fi
-echo ""
-
-
-
 # ---------- 启动 Web 服务 ----------
-echo -e "${YELLOW}[3/4] 启动 Web 管理界面...${NC}"
+echo -e "${YELLOW}[2/2] 启动 Web 服务...${NC}"
 echo ""
 echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}  所有服务已启动${NC}"
+echo -e "${GREEN}  Web 服务已启动${NC}"
 echo -e ""
 echo -e "  Web 管理:  ${GREEN}http://localhost:8000${NC}"
 echo -e "  API 文档:  ${GREEN}http://localhost:8000/docs${NC}"
-echo -e "  调度器PID: ${GREEN}$SCHEDULER_PID${NC}"
 echo -e ""
-echo -e "  调度器日志: ${GREEN}tail -f logs/scheduler.log${NC}"
+echo -e "  定时抓取:  ${GREEN}外部自动任务在北京时间 16:00 调用${NC}"
+echo -e "             ${GREEN}POST /api/crawl/daily-refresh 点火${NC}"
+echo -e "             ${GREEN}（抓取除财务外的所有页面数据）${NC}"
 echo -e ""
-echo -e "  ${YELLOW}Ctrl+C 停止所有服务${NC}"
+echo -e "  ${YELLOW}Ctrl+C 停止服务${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
 
@@ -134,7 +89,7 @@ if [ -n "$OLD_WEB_PIDS" ]; then
     for pid in $OLD_WEB_PIDS; do
         if kill -0 "$pid" 2>/dev/null; then
             cmd=$(ps -p "$pid" -o cmd= 2>/dev/null)
-            if echo "$cmd" | grep -qE 'uvicorn|app\.main|run_scheduler'; then
+            if echo "$cmd" | grep -qE 'uvicorn|app\.main|run_server'; then
                 echo -e "       - PID $pid: $(echo "$cmd" | cut -c1-90)"
                 kill "$pid" 2>/dev/null
                 sleep 1

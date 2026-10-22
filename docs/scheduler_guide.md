@@ -26,28 +26,46 @@
 
 ## 定时任务总览
 
-每日两轮，统一用**北京时间**（`CN_TZ`），当天数据以收盘轮为准：
+**每日仅一轮 —— 北京时间 16:00 收盘轮**，抓取除财务外的所有页面数据。
+
+> 2026-10-19 起变更：删除 10:00 盘前轮；删除财务指标定时抓取。
+> 同时**停用进程内 APScheduler**（云沙箱回收进程 → 定时任务不可靠），
+> 改由**外部自动任务**在 16:00 调用 `POST /api/crawl/daily-refresh` 点火。
 
 | 任务函数 | 时刻 | 说明 |
 |----------|------|------|
-| `morning_session` | 10:00 | 盘前轮：新闻（`full_crawl`）+ 今日热点（`refresh_hot_sector`） |
-| `close_session` | 16:00 | 收盘轮：全部页面数据 |
+| `close_session` | 16:00 | 收盘轮：新闻 + 行情 + 宏观 + 温度 + 热点 |
 
 `close_session` 内部顺序：
 
 ```
 1. full_crawl              → 新闻（三源并发）
-2. refresh_financials      → 财务（串行，仅更新已入库股票）
-3. asyncio.gather 并发：
+2. asyncio.gather 并发：
    ├─ crawl_market_data       市场行情
    ├─ refresh_macro_indicators 宏观指标
    ├─ refresh_stock_temp      股票温度计
    └─ refresh_hot_sector      今日热点
 ```
 
+**不含财务指标**：财务按股票代码逐只查询（无法全市场抓取），耗时且低频，
+改为在财务页面手动抓取（`POST /api/finance/fetch`）。
+
+### 触发方式（外部点火）
+
+```
+POST /api/crawl/daily-refresh                    # 整轮
+POST /api/crawl/daily-refresh?domains=macro      # 按域补跑
+GET  /api/crawl/daily-status                     # 查进度
+```
+
+可补跑数据域：`news` / `market` / `macro` / `stock_temp` / `hot_sector`。
+
+⚠️ 必须**点火后台线程后立即返回** —— 反代硬超时 60 秒，整轮要 3~7 分钟。
+⚠️ 沙箱可能在抓取途中重启导致部分域丢失，自动任务必须**校验落库 + 补跑缺失域**。
+
 ### 覆盖语义
 
-同一天内收盘轮自然覆盖盘前轮的同日记录，历史累积不受影响：
+同一天内只跑一轮，历史累积不受影响：
 
 | 数据 | 唯一键 | 覆盖行为 |
 |------|--------|---------|
@@ -62,14 +80,16 @@
 
 | 字段 | 含义 |
 |------|------|
-| `task` | news / finance / market / macro / stock_temp / hot_sector |
-| `session` | morning / close / manual |
-| `source` | 数据源名称或股票代码 |
+| `task` | news / market / macro / stock_temp / hot_sector |
+| `session` | close / manual |
+| `source` | 数据源名称 |
 | `item_count` | 本次抓取条数 |
 | `status` | ok / empty / failed / skipped |
 | `duration` | 耗时（秒） |
 
 写日志内部吞异常，失败不影响抓取主流程。
+
+⚠️ `crawl_time` 云库存 **UTC**，比北京时间少 8 小时。
 
 ## 新闻抓取（full_crawl）
 
@@ -172,7 +192,7 @@
 
 - 抓取概念板块热点前三，写入 `hot_sector_snapshots`
 - 数据源：akshare（阻塞调用已在线程池内执行），此处直接 await
-- 写入时机只有两个：用户点页面「刷新盘面」，或本定时任务
+- 写入时机只有两个：用户点页面「刷新数据」，或本定时任务
 - 同一交易日同一板块就地覆盖，取当日最终结果
 - 页面打开时只读库展示，不发外部请求
 
@@ -196,22 +216,21 @@
 
 ## 启动方式
 
-### 分进程（推荐）
+只需启动 Web 进程：
 
 ```bash
-python run_server.py    # Web 进程
-python run_scheduler.py # 调度器进程
+python run_server.py    # 或 ./start.sh / start.bat
 ```
 
-### 单进程内嵌
-
-`.env` 中设置 `START_SCHEDULER=true`，Web 进程启动时一并拉起调度器（`main.py` 的 lifespan）。
+定时抓取**不由本进程调度**，由外部自动任务在 16:00 调用
+`POST /api/crawl/daily-refresh` 点火。
 
 ## 关键文件
 
 | 文件 | 职责 |
 |------|------|
-| `app/scheduler.py` | 全部任务编排与调度注册 |
+| `app/scheduler.py` | 全部抓取任务编排（`close_session`） |
+| `app/api/crawl.py` | **外部点火入口** + 按域补跑 + 进度查询 |
 | `app/crawlers/eastmoney_depth.py` | 东财接口爬虫 |
 | `app/crawlers/ths.py` | 同花顺接口爬虫 |
 | `app/crawlers/sina.py` | 新浪财经接口爬虫 |
@@ -219,8 +238,6 @@ python run_scheduler.py # 调度器进程
 | `app/utils/macro_refresh.py` | 宏观指标抓取 |
 | `app/utils/stock_temp_refresh.py` | 股票指标抓取 |
 | `app/utils/hot_sector_refresh.py` | 今日热点抓取 |
-| `app/api/crawl.py` | 手动触发与状态查询 |
-| `run_scheduler.py` | 独立调度器进程入口 |
 
 ## 常见问题排查
 
@@ -249,10 +266,12 @@ python run_scheduler.py # 调度器进程
 
 ### 抓取任务不触发
 
-1. 确认调度器进程是否在运行（`run_scheduler.py` 或 `START_SCHEDULER=true`）
-2. 所有定时任务统一用**北京时间**（`CN_TZ`）：10:00 盘前轮 / 16:00 收盘轮
-3. 查看启动日志中「已注册任务」列表与 `next_run_time`（应为 `morning_session_job` 与 `close_session_job` 两条）
-4. 查看 `crawl_logs` 表确认最近一次抓取结果与状态
+1. 定时抓取**不由 Web 进程调度**（进程内 APScheduler 已停用），由外部自动任务点火
+2. 确认自动任务已启用，并查 `GET /api/crawl/daily-status` 看点火与完成状态
+3. 直接手动打一发验证抓取链路：`POST /api/crawl/daily-refresh`
+4. 查 `crawl_logs` 表确认最近一次抓取结果（注意 `crawl_time` 存的是 **UTC**，比北京时间少 8 小时）
+5. 若整轮缺某些域，用 `POST /api/crawl/daily-refresh?domains=stock_temp` 单独补跑
+   （沙箱可能在抓取途中重启，被打断的域不会自动重跑）
 
 ### 市场行情获取失败
 

@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import crud
 from app.api.login import require_auth
+from app.utils import greed_index as greed_index_mod
 from app.utils import stock_temp as st
 from app.utils import stock_temp_refresh as srf
 
@@ -82,6 +83,7 @@ def _kick_stock_temp_refresh() -> bool:
                 "errors": errors or {},
                 "history_added": history_added,
                 "thermometer": (payload.get("thermometer") or {}).get("value"),
+                "greed_index": (payload.get("greed_index") or {}).get("value"),
             }
             logger.info("股票指标后台刷新完成: %d 项, 失败 %d 项",
                         refreshed, len(errors or {}))
@@ -171,6 +173,20 @@ def _payload(db: Session, refreshed: int, errors: dict, history_added: int = 0) 
     payload["errors"] = errors
     payload["history_added"] = history_added
     payload["history_total"] = crud.count_stock_temp_history(db)
+
+    # 市场贪婪指数的 5 日移动平均（去极值，可选项）：由历史打卡点现算，
+    # 样本不足 5 期时为 null，页面会注明「未平滑」。
+    try:
+        rows = crud.get_stock_temp_history(db, key="greed_index", limit=5, order="desc")
+        hist = [r.value for r in rows if r.value is not None]
+        cur = (payload.get("greed_index") or {}).get("value")
+        seq = list(reversed(hist))
+        if cur is not None:
+            seq.append(cur)
+        payload["greed_index"]["ma5"] = greed_index_mod.moving_average(seq, greed_index_mod.SMOOTH_DAYS)
+    except Exception as e:
+        logger.warning("计算贪婪指数 MA5 失败: %s", e)
+        payload["greed_index"]["ma5"] = None
 
     # updated_at 用「快照最近一次落库时间」而不是本次响应时间：本页读数由定时任务抓取
     # 写入，页面只是读库，报响应时间会让人误以为数据刚刚刷新过。
@@ -361,6 +377,7 @@ def get_stock_temp_history(
         rows = crud.get_stock_temp_history(db, key=key, limit=limit, order=order)
         name_of = {ind["key"]: ind["name"] for ind in st.INDICATORS}
         name_of["temperature"] = "综合市场温度"
+        name_of["greed_index"] = "市场贪婪指数"
         name_of["total_float_mcap"] = "两市流通市值"
         records = []
         for row in rows:

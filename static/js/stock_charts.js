@@ -321,32 +321,74 @@ function drawStruct(bag) {
     });
 }
 
-function drawTemp(tp) {
+function drawTemp(tp, greedSeries) {
     const rows = (tp || {}).daily || [];
-    if (!rows.length) return chartEmpty("stTemp", "综合温度按日累计，层与层数据齐全后自动出现");
-    const cats = rows.map(function (r) { return r.as_of; });
+    const greedPts = pts(greedSeries || []);
+    if (!rows.length && !greedPts.length) {
+        return chartEmpty("stTemp", "综合温度按日累计，层与层数据齐全后自动出现");
+    }
+
+    // 温度打卡(key=temperature) 与 贪婪指数(key=greed_index) 是两个独立历史键，
+    // 启用时间不同 → 起始日期可能不一致。这里取**日期并集**做横轴，
+    // 各自缺失的那天留 null，由 connectNulls:false 自动断线
+    //（与本页「缺数据的图层自动断线、不做插补」的口径一致）。
+    const cats = Array.from(new Set(
+        rows.map(function (r) { return String(r.as_of).slice(0, 10); })
+            .concat(greedPts.map(function (p) { return p[0]; }))
+    )).sort();
+
+    const tempMap = {};
+    rows.forEach(function (r) { tempMap[String(r.as_of).slice(0, 10)] = r; });
+    const greedMap = {};
+    greedPts.forEach(function (p) { greedMap[p[0]] = p[1]; });
+
     const mk = function (key) {
-        return rows.map(function (r) { return r[key] === null || r[key] === undefined ? null : r[key]; });
+        return cats.map(function (c) {
+            const r = tempMap[c];
+            if (!r) return null;
+            const v = r[key];
+            return (v === null || v === undefined) ? null : v;
+        });
     };
+    const mkGreed = function () {
+        return cats.map(function (c) { return greedMap[c] === undefined ? null : greedMap[c]; });
+    };
+
     // 样本积累初期点数很少，用 circle + symbolSize 让每个点都看得见
     const sparse = rows.length < 20;
+    const greedSparse = greedPts.length < 20;
     const base = { connectNulls: false, symbol: "circle", symbolSize: 5 };
+    const greedBase = { connectNulls: false, symbol: "circle", symbolSize: 6 };
+
     const series = [
         lineSeries("估值温度", mk("valuation"), CH.blue,
             Object.assign({ areaStyle: { color: withAlpha(CH.blue, 0.08) } }, sparse ? base : {})),
         lineSeries("情绪温度", mk("sentiment"), CH.amber, sparse ? base : { connectNulls: false }),
         lineSeries("资金温度", mk("capital"), CH.green, sparse ? base : { connectNulls: false }),
         lineSeries("综合温度", mk("total"), CH.ink,
-            Object.assign({}, sparse ? base : {}, { lineStyle: { width: 2.6, color: CH.ink } }))
+            Object.assign({}, sparse ? base : {}, { lineStyle: { width: 2.6, color: CH.ink } })),
+        // 贪婪指数：同为 0-100、同为「越高越热」，故与温度同轴可直接比高低；
+        // 但它是「分位合成」口径（综合温度是「热度分合成」），不是同一把尺子，
+        // 故用虚线区分，避免被误读成同一类指标
+        lineSeries("贪婪指数", mkGreed(), CH.violet,
+            Object.assign({}, greedSparse ? greedBase : {}, {
+                lineStyle: { width: 2, color: CH.violet, type: "dashed" }
+            }))
     ];
     mount("stTemp", {
-        grid: baseGrid(), legend: legend(["估值温度", "情绪温度", "资金温度", "综合温度"]), tooltip: tipAxis(""),
+        grid: baseGrid(),
+        legend: legend(["估值温度", "情绪温度", "资金温度", "综合温度", "贪婪指数"]),
+        tooltip: tipAxis(""),
         xAxis: xAxis(cats),
-        yAxis: [yAxis("温度（0-100）")],
+        yAxis: [yAxis("温度 / 贪婪 0-100")],
         series: series
     });
     const el = document.getElementById("stTempNote");
-    if (el) el.textContent = (tp.note || "") + "（当前已积累 " + rows.length + " 个交易日）";
+    if (el) el.textContent = (tp.note || "")
+        + "（当前已积累 " + rows.length + " 个交易日）"
+        + "贪婪指数同为 0-100、同为越高越热，与综合温度同轴比高低；"
+        + "但它是「分位合成」口径、综合温度是「热度分合成」口径，不是同一把尺子"
+        + "（已积累 " + greedPts.length + " 个交易日）。";
 }
 
 /* ---------------- 面板骨架（顺序即页面顺序） ---------------- */
@@ -359,6 +401,11 @@ function fig(title, note, id) {
 function panelHtml() {
     return "<section class=\"st-panel\">"
         + "<h2 class=\"st-group-title\">趋势面板<span class=\"st-group-sub\">阈值线已内置，落在哪条泳道直接读；缺数据的图层自动断线</span></h2>"
+        + "<div class=\"st-fig-block st-f-temp\">"
+        + "<div class=\"st-fig-block-head\">综合温度 · 每日收盘打卡</div>"
+        + fig("三层温度、综合温度 与 贪婪指数", "每天收盘抓取时打卡一次；三层齐备才给综合温度；贪婪指数同为 0-100、越高越热", "stTemp")
+        + "<div class=\"st-temp-note\" id=\"stTempNote\"></div>"
+        + "</div>"
         + "<div class=\"st-fig-block st-f-valuation\">"
         + "<div class=\"st-fig-block-head\">估值层 · 慢变量定方向</div>"
         + fig("沪深300 PE-TTM 与 PB（双轴）", "月频；图中带十年分位带（样本积累后逐步显现）", "stPE")
@@ -378,11 +425,6 @@ function panelHtml() {
         + "<div class=\"st-fig-block st-f-structure\">"
         + "<div class=\"st-fig-block-head\">结构 · 热度在哪个市场</div>"
         + fig("科创50 vs 创业板 · 价格分位差", "按月；±20 / ±40pp 分化阈值线", "stStruct")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-temp\">"
-        + "<div class=\"st-fig-block-head\">综合温度 · 每日收盘打卡</div>"
-        + fig("三层温度 与 综合温度", "每天收盘抓取时打卡一次；三层齐备才给综合温度", "stTemp")
-        + "<div class=\"st-temp-note\" id=\"stTempNote\"></div>"
         + "</div></section>";
 }
 
@@ -393,6 +435,11 @@ function trendNotesHtml() {
         + "<div class=\"st-notes-grid\">"
         + "<div class=\"st-note\"><h3>一、图里的三层结构</h3>"
         + "<ul>"
+        + "<li><b>最上面那张是总览</b>：<b>综合温度</b>（黑线）由估值 / 情绪 / 资金三层温度合成，"
+        + "先看它的走势与分档，再往下看是哪一层在拉动。</li>"
+        + "<li><b>贪婪指数</b>（紫色虚线）与综合温度<b>同轴</b>：两者都是 0-100、都是越高越热，"
+        + "可直接比高低。但口径不同——综合温度是「热度分合成」，贪婪指数是「分位合成」，"
+        + "不是同一把尺子；它更贴近「贵不贵」，综合温度更贴近「热不热」。</li>"
         + "<li><b>阈值线已内置</b>：成交额 7000 亿地量 / 2 万亿亢奋 / 3 万亿极端、两融占流通市值 2.0 / 2.5 / 3.0 / 3.5%、ERP 均值 ±1σ、破净率 10 / 6 / 3 / 1%、"
         + "公募仓位 88%、产业资本 ±100 / −400 亿、结构分化 ±20 / ±40pp。落在线哪一侧，直接读状态。</li>"
         + "<li><b>末端数值标签</b>在每条线最右侧单独一列，是「最新一个数据点」的读数（不是当前快照，含日期差）。</li>"
@@ -421,9 +468,11 @@ function trendNotesHtml() {
 /* ---------------- 加载与绘制 ---------------- */
 function drawCharts(d) {
     const bag = d.series || {};
+    // 绘制顺序与页面顺序一致：综合温度在最上（总览），然后估值/情绪/资金/结构分层
+    // 贪婪指数与综合温度同图同轴（都是 0-100、越高越热），数据取自 series.greed_index
+    drawTemp(d.temperature || {}, bag.greed_index || []);
     drawPE(bag); drawERP(bag); drawBelowNa(bag); drawTurnover(bag);
     drawMargin(bag); drawFund(bag); drawCapital(bag); drawStruct(bag);
-    drawTemp(d.temperature || {});
     Object.keys(chartReg).forEach(function (k) { if (chartReg[k]) chartReg[k].resize(); });
 }
 

@@ -5,7 +5,7 @@
 
 四组指标：
 - 估值层（valuation）：沪深300 PE-TTM / 沪深300 PB / ERP 股债性价比 / 破净率
-- 情绪层（sentiment）：两市成交额 / 全A换手率 / 两融占流通市值 / 市场宽度
+- 情绪层（sentiment）：两市成交额 / 全A换手率 / 融资余额占流通市值 / 市场宽度
 - 资金层（capital）  ：公募仓位 / 股票ETF份额 / 新基金发行 / 产业资本净增持
 - 结构  （structure）：科创50 vs 创业板 分位差
 
@@ -39,6 +39,8 @@ import time
 from datetime import date, datetime, timedelta
 from statistics import mean, pstdev
 from typing import Any, Dict, List, Optional, Tuple
+
+from app.utils import greed_index as greed_index_mod
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +104,7 @@ TEMP_LAYERS = [
         "name": "情绪温度",
         "weight": 0.35,
         "tone": "amber",
-        "desc": "成交额分位 50% + 换手率分位 30% + 两融占流通市值 20%。快变量，定情绪。",
+        "desc": "成交额分位 50% + 换手率分位 30% + 融资余额占流通市值 20%。快变量，定情绪。",
     },
     {
         "key": GROUP_CAPITAL,
@@ -133,7 +135,7 @@ CHART_KEYS = [
     "hs300_pe", "hs300_pb", "erp", "below_na",
     "turnover_amt", "turnover_rate", "margin", "total_float_mcap", "breadth",
     "fund_position", "new_fund", "industry_capital", "etf_share",
-    "structure_div", "temperature",
+    "structure_div", "temperature", "greed_index",
 ]
 
 # ---------------------------------------------------------------- 指标清单
@@ -325,8 +327,8 @@ INDICATORS: List[Dict[str, Any]] = [
     {
         "key": "margin",
         "group": GROUP_SENTIMENT,
-        "name": "两融占流通市值",
-        "subtitle": "融资余额 + 融券余额，占两市流通市值比例",
+        "name": "融资余额占流通市值",
+        "subtitle": "融资余额（不含融券）占两市流通市值比例",
         "unit": "%",
         "digits": 2,
         "temp_layer": GROUP_SENTIMENT,
@@ -339,7 +341,7 @@ INDICATORS: List[Dict[str, Any]] = [
         "freq": "日频",
         "judge": "value",
         "meaning": (
-            "融资融券余额（杠杆资金规模）占两市流通市值的比重，衡量市场杠杆水位。"
+            "融资余额（杠杆资金规模，不含融券）占两市流通市值的比重，衡量市场杠杆水位。"
             "余额由沪深两市账户信息合并口径取得，流通市值取交易所官方数据。"
         ),
         "guide": (
@@ -1013,15 +1015,19 @@ def _index_daily_volume(symbol: str) -> List[Dict[str, Any]]:
 
 def fetch_market_series_bulk(
     start: str = "2014-01-01", anchor_day: Optional[str] = None
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[Dict[str, float]]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[Dict[str, float]], List[Dict[str, Any]]]:
     """用指数成交量批量合成两市成交额长历史。
 
-    返回 (成交额序列, 换手率序列, 锚点明细)。与 fetch_market_series() 的区别：
+    返回 (成交额序列, 换手率序列, 锚点明细, 近似流通市值序列)。
+    与 fetch_market_series() 的区别：
     一次调用即可拿到 start 以来的全部交易日，不做逐日请求。
 
     换手率 = 成交额 ÷ 两市流通市值。流通市值同样没有批量历史源，这里用**指数点位
     同比缩放**的流通市值近似：锚点取交易所真实流通市值，之后按大盘指数点位比例折算，
-    与「成交额 ÷ 流通市值」的真实口径保持同量纲（约 1~2% 误差）。
+    与「成交额 ÷ 流通市值」的真实口径保持同量纲（约 1~2% 误差，实测锚点日偏差 0.01%）。
+
+    第四个返回值（近似流通市值逐日序列）：融资余额本身有官方长历史，
+    （akshare 返回 2012 年以来 3400+ 期），配上逐日流通市值即可得到占比长序列。
 
     anchor_day 指定锚点交易日（默认最近一个有官方数据的交易日）；取不到官方数据时
     返回空序列并抛错，避免产出无锚点的假历史。
@@ -1067,6 +1073,7 @@ def fetch_market_series_bulk(
 
     turnover_series: List[Dict[str, Any]] = []
     rate_series: List[Dict[str, Any]] = []
+    mcap_series: List[Dict[str, Any]] = []
     for d in days:
         s = sh[d]
         z = sz[d]
@@ -1086,6 +1093,9 @@ def fetch_market_series_bulk(
             rate_series.append({
                 "as_of": d, "value": round(turnover / est_mcap * 100, 3)
             })
+            # 逐日近似流通市值：融资余额有官方长历史，但逐日流通市值原本没有
+            # 批量源，这里顺带产出（供 long_history 备查用，不参与分位计算）
+            mcap_series.append({"as_of": d, "value": round(est_mcap, 2)})
 
     latest = dict(anchor)
     latest["口径"] = "指数成交量×均价近似"
@@ -1094,7 +1104,7 @@ def fetch_market_series_bulk(
         "批量成交额: 锚点 %s(官方 %.0f亿), 覆盖 %s ~ %s 共 %d 个交易日",
         anchor["as_of"], anchor["turnover"], days[0], days[-1], len(turnover_series),
     )
-    return turnover_series, rate_series, latest
+    return turnover_series, rate_series, latest, mcap_series
 
 
 def _sse_day(day: str) -> Dict[str, Optional[float]]:
@@ -1241,7 +1251,12 @@ def fetch_market_series(days: int = 0) -> Tuple[List[Dict[str, Any]], List[Dict[
 
 def fetch_margin(float_mcap_yi: Optional[float] = None,
                  days: int = 0) -> Dict[str, Any]:
-    """两融余额（亿元）与占流通市值比例。
+    """融资余额（亿元）与占流通市值比例。
+
+    ⚠️ 口径 2026-10-20 起调整：**只算融资余额，不含融券余额**（原为「融资 + 融券」
+    的两融余额）。融券余额长期只占两融合计的 1~2%，剔除后指标更贴近「杠杆资金水位」
+    这一真实含义（融券余额是空头头寸，与「市场贪婪」方向相反，混进来会互相抵消）。
+    对综合温度计的分档（1.0/1.5/2.5/4.0%）同步沿用，差异 < 0.05pp，不影响判档。
 
     历史序列存的是**占流通市值百分比**（与指标卡判档同口径）。交易所的逐日流通市值
     没有批量历史源，只能取到「当前这一个点」，因此历史序列里**只有最新那一天**能算出
@@ -1253,10 +1268,9 @@ def fetch_margin(float_mcap_yi: Optional[float] = None,
     rows = []
     for _, r in df.iterrows():
         rz = _num(r.get("融资余额"))
-        rq = _num(r.get("融券余额"))
         if rz is None:
             continue
-        rows.append((_d(r.get("日期")), round(rz + (rq or 0), 2)))
+        rows.append((_d(r.get("日期")), round(rz, 2)))
     series = _clean_series(rows)
     if not series:
         raise RuntimeError("未取到融资融券账户信息")
@@ -1293,12 +1307,10 @@ def fetch_margin(float_mcap_yi: Optional[float] = None,
         "value": ratio,
         "as_of": last["as_of"],
         "source": "akshare",
-        # 历史序列存**占流通市值百分比**，与 value / 指标卡判档完全同口径。
-        # 若这里放余额（亿元），回填路径会把余额写进历史表、而刷新路径写占比，
-        # 同一个 key 混两种量纲，图表按哪种画都会错（详见 _MARGIN_SERIES_NOTE）。
-        "series": ratio_series,
         "detail": {
-            "两融余额(万亿)": round(last["value"] / 10000, 4),
+            "融资余额(万亿)": round(last["value"] / 10000, 4),
+            # 当期余额（亿元，原始单位）：供需要与余额序列同量纲的下游使用
+            "融资余额(亿)": last["value"],
             "占流通市值%": ratio,
             "流通市值(万亿)": round(float_mcap_yi / 10000, 2) if float_mcap_yi else None,
             "近5日变化%": changes.get("近5个交易日"),
@@ -1306,7 +1318,14 @@ def fetch_margin(float_mcap_yi: Optional[float] = None,
             "近60日变化%": changes.get("近60个交易日"),
             "连续回落交易日": streak,
         },
-        "series": series,
+        # ⚠️ 这里**必须**是 ratio_series（占流通市值%），与 value / 指标卡判档同口径。
+        # 原实现误写成下面的 series（融资余额亿元），字典后一个 "series" 键覆盖前一个，
+        # 导致回填路径把余额写进历史表、刷新路径写占比 —— 同一个 key 混两种量纲。
+        # 更隐蔽的后果：下游会把「余额序列」与「占比读数」比分位，量纲错配直接
+        # 把分位压到 0、分数顶到 100（greed_percentile 的量纲保护会拦下，但别依赖它）。
+        "series": ratio_series,
+        # 融资余额序列仅供页面看趋势，不作为任何指标的历史序列落库
+        "_balance_series": series,
     }
 
 
@@ -1740,7 +1759,7 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
 
     _run("below_na", fetch_below_na)
 
-    # 情绪层：交易所口径一次取数，供成交额 / 换手率 / 两融占比共用
+    # 情绪层：交易所口径一次取数，供成交额 / 换手率 / 融资余额占比共用
     latest_market = None
     try:
         t_series, r_series, m_series, latest_market = fetch_market_series(exchange_days)
@@ -2093,12 +2112,17 @@ def build_response(raw: Dict[str, dict]) -> dict:
 
     thermo = build_thermometer(items)
 
+    # 市场贪婪指数（V3.6c 口径）：复用同一批 items，方向与综合温度计一致（越高越贪婪）。
+    # 细节见 app/utils/greed_index.py —— 分位窗口近 13 期，与综合温度计的近十年刻意不同。
+    greed_index = greed_index_mod.build_greed_index(items)
+
     # 温度计历史（用于趋势图）：由分位/热度分逐期重算，见 stock_temp_refresh
     return {
         "status": "ok",
         "tones": TONES,
         "groups": groups,
         "thermometer": thermo,
+        "greed_index": greed_index,
         "indicators": items,
     }
 

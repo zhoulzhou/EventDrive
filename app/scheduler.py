@@ -2,13 +2,10 @@ import logging
 import asyncio
 from typing import List, Callable, Optional, Dict, Tuple, Any
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 
 from app.database import SessionLocal
 from app import crud, schemas
-from app import models
 from app.crawlers import (
     EastmoneyDepthCrawler,
     THSNewsCrawler,
@@ -25,17 +22,13 @@ from app.utils.hot_sector_refresh import fetch_and_store_hot_sector
 
 logger = logging.getLogger(__name__)
 
-TOKYO_TZ = ZoneInfo("Asia/Tokyo")
-# 定时任务统一用**北京时间**：
-#   - 10:00 morning  盘前一轮（新闻 + 今日热点）
-#   - 16:00 close    收盘一轮（全部页面数据，当天以收盘值为准）
-CN_TZ = ZoneInfo("Asia/Shanghai")
+# 定时抓取由**外部自动任务**调用 POST /api/crawl/daily-refresh 点火（北京时间 16:00）。
+# 这里只保留 session 标识；时区常量随进程内 APScheduler 一并停用。
+SESSION_CLOSE = "close"       # 16:00 收盘轮
 
-# 轮次标识
-SESSION_MORNING = "morning"   # 10:00 盘前
-SESSION_CLOSE = "close"       # 16:00 收盘
-
-scheduler = AsyncIOScheduler(timezone=TOKYO_TZ)
+# 进程内 APScheduler 实例 —— 已停用（云沙箱回收进程 → 定时任务不可靠），
+# 仅保留对象供 /health 等旧调用方读取状态，不再注册任何 job。
+scheduler = AsyncIOScheduler()
 
 crawl_progress_callback: Optional[Callable] = None
 
@@ -383,86 +376,6 @@ async def full_crawl(session: str = "manual"):
     log_crawl("=" * 50)
 
 
-async def refresh_financials(session: str = "manual", max_stocks: int = 10):
-    """收盘轮：更新**已入库股票**的财务指标。
-
-    财务数据是按股票代码查询的（无法全市场抓取），所以只更新此前已被用户
-    抓取入库过的股票——即 `financial_reports` 表里出现过的 code。
-    新股票仍需在「抓取控制」页手动输入代码抓取一次。
-    """
-    t0 = datetime.now()
-    codes = await asyncio.to_thread(_list_tracked_stocks, max_stocks)
-    if not codes:
-        log_crawl("财务指标：库中暂无已跟踪股票，跳过（可在抓取控制页手动抓取）")
-        _write_crawl_log(task="finance", session=session, source="finance",
-                         item_count=0, status="skipped", error_message="无已跟踪股票")
-        return
-
-    log_crawl(f"财务指标：更新已入库的 {len(codes)} 只股票 -> {', '.join(c['code'] for c in codes)}")
-    total = 0
-    for item in codes:
-        code, name = item["code"], item.get("name")
-        try:
-            saved = await asyncio.to_thread(_fetch_one_stock_finance, code, name)
-            total += saved
-            log_crawl(f"  - {code} {name or ''}: {saved} 期")
-            _write_crawl_log(task="finance", session=session, source=f"{code}",
-                             item_count=saved, status="ok" if saved else "empty",
-                             duration=int((datetime.now() - t0).total_seconds()))
-        except Exception as e:
-            log_crawl(f"  ! {code} {name or ''} 抓取失败: {e}")
-            logger.error(f"财务抓取 {code} 失败: {e}", exc_info=True)
-            _write_crawl_log(task="finance", session=session, source=f"{code}",
-                             item_count=0, status="failed", error_message=str(e)[:500])
-    log_crawl(f"财务指标更新完成: 共 {total} 期")
-
-
-def _list_tracked_stocks(limit: int = 10):
-    """从 financial_reports 表取出已入库过的股票代码（去重）。"""
-    db = SessionLocal()
-    try:
-        rows = db.execute(
-            models.FinancialReport.__table__.select()
-            .with_only_columns(
-                models.FinancialReport.stock_code,
-                models.FinancialReport.stock_name,
-            )
-            .distinct()
-            .limit(limit)
-        ).fetchall()
-        return [{"code": r[0], "name": r[1]} for r in rows]
-    finally:
-        db.close()
-
-
-def _fetch_one_stock_finance(code: str, name: Optional[str]) -> int:
-    """抓取并写入单只股票的财务数据（同步函数，供 to_thread 调用）。"""
-    from getAkshare import fetch_financial_reports, reports_to_records
-
-    df = fetch_financial_reports(code)
-    records = reports_to_records(df)
-    db = SessionLocal()
-    try:
-        return crud.upsert_financial_reports(db, code, records, stock_name=name)
-    finally:
-        db.close()
-
-
-async def morning_session():
-    """北京时间 10:00 —— 盘前一轮：抓新闻 + 今日热点。
-
-    这一轮的结果是「盘前快照」，当天会被 16:00 收盘轮自然覆盖
-    （新闻按 URL 累积、热点按 trade_date+board_code 覆盖）。
-    """
-    log_crawl("#" * 50)
-    log_crawl("### 盘前轮次10:00：新闻 + 今日热点 ###")
-    log_crawl("#" * 50)
-    t0 = datetime.now()
-    await full_crawl(session=SESSION_MORNING)
-    await refresh_hot_sector(session=SESSION_MORNING)
-    log_crawl(f"盘前轮次完成，总耗时 {int((datetime.now() - t0).total_seconds())} 秒")
-
-
 async def close_session():
     """北京时间 16:00 —— 收盘一轮：抓取**所有页面**的数据并存入数据库。
 
@@ -472,6 +385,9 @@ async def close_session():
     - 热点：按 (trade_date, board_code) 覆盖 → 当天板块被收盘值替换
     - 宏观 / 股票温度：更新最新值，历史表按日期追加
     因此「当日最终展示的数据」以本轮收盘结果为准。
+
+    **不含财务指标**：财务是按股票代码逐只查询的（无法全市场抓取），
+    耗时且低频，改为在财务页面手动抓取（POST /api/finance/fetch）。
     """
     log_crawl("#" * 50)
     log_crawl("### 收盘轮次 16:00：全部页面数据 ###")
@@ -480,9 +396,8 @@ async def close_session():
 
     # 新闻先抓（依赖网络，快）
     await full_crawl(session=SESSION_CLOSE)
-    # 财务指标：更新已入库股票（串行，逐只抓，避免并发打 akshare）
-    await refresh_financials(session=SESSION_CLOSE)
     # 其余数据域并发抓取（akshare 类较慢），但每项内部已有防重入与配额保护
+    # 注：不含财务指标 —— 财务按股票逐只查询、耗时且低频，改在页面手动抓取
     results = await asyncio.gather(
         crawl_market_data(session=SESSION_CLOSE),
         refresh_macro_indicators(session=SESSION_CLOSE),
@@ -504,30 +419,20 @@ async def close_session():
 
 
 def start_scheduler():
+    """进程内 APScheduler —— 已停用，保留仅为兼容旧调用方。
+
+    2026-10-19 起：云沙箱会缩容回收进程，而 APScheduler 的 job 只在进程启动
+    那一刻算出 next_run_time、无持久化 job store，进程被回收后定时点不会补跑，
+    导致「/health 显示 scheduler_running=true 但定时任务从不执行」。
+    因此定时抓取改由**外部自动任务**调用 `POST /api/crawl/daily-refresh` 点火
+    （见 app/api/crawl.py）。
+
+    此函数**不再注册任何 job**，调用它只会打一条日志。
+    """
     if not scheduler.running:
-        # ---- 10:00 盘前轮：新闻 + 今日热点 ----
-        scheduler.add_job(
-            morning_session,
-            trigger=CronTrigger(hour='10', minute=0, timezone=CN_TZ),
-            id='morning_session_job',
-            name='Morning session at 10:00 CST (news + hot sectors)',
-            replace_existing=True,
-        )
-        # ---- 16:00 收盘轮：全部页面数据 ----
-        # A 股 15:00 收盘，16:00 抓当日最终收盘值；当天数据以本轮结果为准，
-        # 会自然覆盖 10:00 盘前轮的同日记录（行情/热点按唯一键覆盖，新闻按 URL 累积）。
-        scheduler.add_job(
-            close_session,
-            trigger=CronTrigger(hour='16', minute=0, timezone=CN_TZ),
-            id='close_session_job',
-            name='Close session at 16:00 CST (all pages)',
-            replace_existing=True,
-        )
-        scheduler.start()
         logger.info(
-            "Scheduler started (Asia/Shanghai). "
-            "10:00 盘前轮(新闻+今日热点) / 16:00 收盘轮(全部页面数据，当日以收盘值为准). "
-            "History backfill is manual only (页面「补齐历史数据」按钮 / POST /api/*/backfill)."
+            "进程内 APScheduler 已停用（云沙箱回收进程导致定时任务不可靠）。"
+            "定时抓取改由外部自动任务调用 POST /api/crawl/daily-refresh 点火。"
         )
 
 

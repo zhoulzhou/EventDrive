@@ -9,9 +9,8 @@
                        换手率 / 流通市值）按最近 N 个交易日逐日补齐，幂等可重复执行。
                        **只由「股票趋势」页的「补齐历史数据」按钮触发，不在定时任务里跑**
 
-定时任务在 app/scheduler.py 注册，由独立进程 run_scheduler.py 执行
-（Web 进程默认不跑调度器，见 settings.START_SCHEDULER）；定时任务只调用
-refresh_snapshot() 抓当前读数，不做历史回溯。
+定时抓取由外部自动任务在北京时间 16:00 调用 POST /api/crawl/daily-refresh 点火
+（见 app/api/crawl.py）；定时任务只调用 refresh_snapshot() 抓当前读数，不做历史回溯。
 """
 import logging
 from datetime import date
@@ -21,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.database import SessionLocal
+from app.utils import greed_index as gi
 from app.utils import stock_temp as st
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,155 @@ def _freq_code(ind: dict) -> str:
     if freq.startswith("周"):
         return "W"
     return "M"
+
+
+def _fill_greed_percentiles(db: Session, records: list) -> int:
+    """按市场贪婪指数口径给 7 个分项补算**实测分位**并回写快照。
+
+    与 _fill_percentiles（综合温度计口径）的区别（两者刻意不同，不要合并）：
+    - 窗口：项目历史表逐日累计，有多少期用多少期（上限 greed_index.GREED_WINDOW）
+    - 分子：严格小于当前值的样本数，非小于等于
+    - 范围：贪婪指数需要的 7 个 key（宽度 / 换手率 / 成交额 / 融资余额占比 /
+      沪深300 PE-TTM / ERP / 破净率），且不要求原指标的 judge 是 percentile
+
+    ⚠️ **两种样本门槛，别一刀切**（2026-10-20 实测踩过）：
+      · 主成分（有基准分位兜底）：必须攒够 `GREED_BASE_MIN_SAMPLES`(20) 期才用实测。
+        实测 2~3 期时融资占比与 PE 的分位都算出 0%，把贪婪指数从 37.4 压到 25.7 ——
+        样本极少时「严格小于当前值」的个数只能是 0 或 1，分位必然贴 0%/100%，是伪信号。
+      · 确认层 ERP / 破净率（无基准值兜底）：样本够 `GREED_MIN_SAMPLES`(2) 就得给，
+        否则泡沫警示闸门永远无法触发。
+
+    ⚠️ **分位只来自项目历史表**（用户 2026-10-20 定案）：
+    样本满 greed_index.GREED_BASE_MIN_SAMPLES 期后用实测分位覆盖基准值，
+    不够则留 None —— 由 build_greed_index 回落到 V3.6c 基准分位兜底。
+    **刻意不用** fetch 自带序列与长历史源：
+      · fetch 自带序列（legulegu/东财）与基准分位的口径不同
+      · 长历史源是「指数成交量×均价」近似口径，实测会算出与基准矛盾的95%
+    所以这里没有任何序列来源，只有历史表逐日积累这一条路。
+
+    ⚠️ **margin 特殊：历史表存的是「占流通市值%」**，与value 同量纲，
+    可以直接算分位（早期版本曾用两融余额分位与之混算，量纲错配，已废弃）。
+
+    结果写进 detail 的「贪婪分位 / 贪婪分位窗口 / 贪婪分位样本数」三个**独立键**，
+    不动原有的「分位」——综合温度计照旧读「分位」，贪婪指数读「贪婪分位」，
+    两套窗口各自滚动、互不干扰。
+    """
+    need = []
+    for rec in records:
+        key = rec.get("key")
+        if key not in gi.GREED_KEYS:
+            continue
+        ind = st.INDICATOR_MAP.get(key)
+        if not ind:
+            continue
+        if st.load_detail(rec.get("detail")).get("贪婪分位") is not None:
+            continue
+        need.append(key)
+    if not need:
+        return 0
+
+    grouped = crud.get_stock_temp_history_series(db, need, per_key_limit=gi.GREED_WINDOW)
+    fixed = []
+    for rec in records:
+        key = rec.get("key")
+        if key not in need:
+            continue
+        cur = rec.get("value")
+        as_of = rec.get("as_of")
+
+        # 项目历史表逐日读数 + 当期快照值（同量纲，直接可比）
+        rows = grouped.get(key) or []
+        series = [{"as_of": r.as_of, "value": float(r.value)}
+                  for r in rows if r.value is not None and r.as_of]
+        if cur is not None and as_of:
+            series = [p for p in series if p["as_of"] != as_of]
+            series.append({"as_of": as_of, "value": float(cur)})
+            series.sort(key=lambda p: p["as_of"])
+
+        n = gi.percentile_sample_size(series)
+        # 样本门槛按角色区分（关键，别一刀切）：
+        # · **主成分**有基准分位兜底 → 必须攒够 GREED_BASE_MIN_SAMPLES 期才用实测，
+        #   否则用 2~3 期算出的分位必然贴 0%/100%（实测把指数从 37.4 压到 25.7）。
+        # · **确认层**（ERP / 破净率）没有基准值可用 → 样本够GREED_MIN_SAMPLES
+        #   就得给，否则泡沫警示闸门永远无法触发。
+        need_samples = (gi.GREED_BASE_MIN_SAMPLES
+                        if key in gi.GREED_BASE_PERCENTILES
+                        else gi.GREED_MIN_SAMPLES)
+
+        pct, window = (None, None)
+        if n >= need_samples:
+            pct, window = gi.greed_percentile(cur, series)
+            if pct is None:
+                window = "样本 %d 期但分位不可算" % n
+        else:
+            # 主成分样本不够 → pct 留 None，由 build_greed_index 回落到基准分位
+            window = "已累计 %d / %d 期" % (n, need_samples)
+
+        detail = st.load_detail(rec.get("detail"))
+        detail["贪婪分位"] = pct
+        detail["贪婪分位窗口"] = window
+        if pct is not None:
+            detail["贪婪分位来源"] = "项目历史表累计 %d 期" % n
+        # 样本期数**无论有没有分位都记**：这是「什么时候会切到实测分位」的唯一
+        # 可见依据，也是基准分位阶段的「再攒 N 期」提示的数据来源。
+        detail["贪婪分位样本数"] = n
+        rec["detail"] = st.dump_detail(detail)
+        fixed.append(rec)
+
+    if fixed:
+        # 不在这里 upsert 快照：调用方refresh_snapshot 会在补算后统一落库，
+        # 避免同一批数据写两次快照（云库每次 upsert 都是一次网络往返）。
+        logger.info("贪婪指数分位补算: %s", [
+            "%s=%s(%s期)" % (
+                r["key"], st.load_detail(r["detail"]).get("贪婪分位"),
+                st.load_detail(r["detail"]).get("贪婪分位样本数"),
+            ) for r in fixed
+        ])
+    return len(fixed)
+
+
+def _record_greed(db: Session) -> int:
+    """把当前市场贪婪指数打卡写进历史表（key="greed_index"），供 5 日移动平均与后续曲线用。
+
+    取最近 4 个历史点 + 当日值算 5 日移动平均；样本不足时 ma5 为 None，
+    落库写当日原始值（平滑是可选展示项，不可用时不能挡掉打卡）。
+    """
+    raw = _snapshot_records(db)
+    payload = st.build_response(raw)
+    greed = payload.get("greed_index") or {}
+    value = greed.get("value")
+    if value is None:
+        return 0
+
+    prev = crud.get_stock_temp_history(db, key="greed_index", limit=gi.SMOOTH_DAYS - 1, order="desc")
+    history = [r.value for r in prev if r.value is not None]
+    ma5 = gi.moving_average(list(reversed(history)) + [value], gi.SMOOTH_DAYS)
+
+    detail = {
+        "贪婪指数": value,
+        "MA5": ma5,
+        "情绪层": next((f["score"] for f in greed.get("factors") or []
+                       if f["layer"] == "sentiment" and f["score"] is not None), None),
+        "估值层": next((f["score"] for f in greed.get("factors") or []
+                       if f["layer"] == "valuation" and f["score"] is not None), None),
+        "ERP分位": next((c["percentile"] for c in greed.get("confirms") or []
+                         if c["key"] == "erp"), None),
+        "破净率分位": next((c["percentile"] for c in greed.get("confirms") or []
+                          if c["key"] == "below_na"), None),
+        "状态": greed.get("state"),
+        "信号": greed.get("signal"),
+        "覆盖率(%)": greed.get("coverage"),
+        "深度确认": (greed.get("deep") or {}).get("title"),
+        "数据源": "由 5 个分项历史分位加权合成（情绪 88% + 估值 12%）",
+    }
+    today = date.today().strftime("%Y-%m-%d")
+    return crud.add_stock_temp_history(db, [{
+        "key": "greed_index",
+        "value": value,
+        "as_of": today,
+        "source": "akshare",
+        "detail": st.dump_detail(detail),
+    }])
 
 
 def _fill_percentiles(db: Session, records: list) -> int:
@@ -148,23 +297,29 @@ def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str],
             if item.get("error"):
                 errors[key] = item["error"]
                 continue
-            records.append({
+            rec = {
                 "key": key,
                 "value": item.get("value"),
                 "as_of": item.get("as_of"),
                 "source": item.get("source") or "akshare",
                 "detail": st.dump_detail(item.get("detail") or {}),
-            })
+            }
+            records.append(rec)
 
         added = 0
         if records:
+            # 顺序：**先补算分位，再 upsert 快照、最后落历史**。
+            # 两套补算都改写 rec["detail"]，所以 upsert 必须排在补算之后 ——
+            # 否则补算结果只留在内存里，快照表拿不到「贪婪分位」，
+            # 页面会一直显示「基准分位」而看不到实测分位。
+            #（_fill_percentiles 自身也调 upsert，是它原有的行为，这里不动。）
+            _fill_percentiles(db, records)
+            _fill_greed_percentiles(db, records)
             crud.upsert_stock_temp_indicators(db, records)
             added = crud.add_stock_temp_history(db, records)
-            # 单次抓取窗口太短、算不出分位的指标，用历史表补算后再打卡温度
-            if _fill_percentiles(db, records):
-                crud.add_stock_temp_history(db, records)
 
         added += _record_temperature(db)
+        added += _record_greed(db)
 
         logger.info(
             "股票指标刷新: 快照更新 %d 项, 历史新增 %d 条, 失败 %d 项",

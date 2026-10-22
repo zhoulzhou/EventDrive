@@ -413,6 +413,106 @@ function drawExcessReserve(bag) {
     mount("mpER", opt);
 }
 
+/* ---------------- 宏观温度计（总览：总分 + 三个子温度计） ---------------- */
+//
+// 温度计是**合成值**（资金面×25% + 实体热度×45% + 信用/部门×30%），0-100 分，
+// 与股市热度页的综合温度计同构：一条总分主线 + 三条子温度计分层线。
+// 冷热段位沿用全站五段配色（0-20 冰点 / 20-40 偏冷 / 40-60 中性 / 60-80 偏热 / 80-100 亢奋），
+// 与 macro_thermometer.ZONE_BANDS 一致。
+const MACRO_ZONE_BANDS = [
+    [0, 20, "ice", "冰点 <20"],
+    [20, 40, "cold", "偏冷 20-40"],
+    [40, 60, "neutral", "中性 40-60"],
+    [60, 80, "warm", "偏热 60-80"],
+    [80, 100.01, "hot", "亢奋 >80"]
+];
+// 五段配色（与 static/css/style.css 的 --zone-* 同一份，改色两边同步）
+const MACRO_ZONE_COLORS = {
+    ice: "#5B8FC7", cold: "#8BC8EA", neutral: "#E4D48F", warm: "#F4B393", hot: "#EA6668"
+};
+
+function macroZoneOf(v) {
+    if (v === null || v === undefined || isNaN(Number(v))) return null;
+    const n = Number(v);
+    for (let i = 0; i < MACRO_ZONE_BANDS.length; i++) {
+        const b = MACRO_ZONE_BANDS[i];
+        if (n >= b[0] && n < b[1]) return { label: b[3], color: MACRO_ZONE_COLORS[b[2]] };
+    }
+    return { label: "亢奋 >80", color: MACRO_ZONE_COLORS.hot };
+}
+
+function drawThermometer(rows) {
+    if (!rows || !rows.length) {
+        chartEmpty("mpThermo", "暂无宏观温度计历史，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）");
+        return;
+    }
+    const dates = rows.map(function (r) { return r.as_of; });
+    const pickField = function (k) {
+        return rows.map(function (r) {
+            return (r[k] === null || r[k] === undefined) ? null : Number(r[k]);
+        });
+    };
+    const total = pickField("total");
+    const liq = pickField("liquidity");
+    const heat = pickField("heat");
+    const stru = pickField("structure");
+    const yMin = 0, yMax = 100;
+    const x0 = dates[0], x1 = dates[dates.length - 1];
+
+    // 冷热段位色带：与「宏观指标」页温度计的色带口径一致
+    const bands = [];
+    MACRO_ZONE_BANDS.forEach(function (b) {
+        pushBand(bands, x0, x1, b[0], b[1], yMin, yMax, MACRO_ZONE_COLORS[b[2]], b[3]);
+    });
+
+    const lastIdx = total.length - 1;
+    const lastTotal = total[lastIdx];
+    const zone = macroZoneOf(lastTotal);
+
+    const series = [
+        Object.assign(lineSeries("资金面温度", liq, CH.blue, { width: 1.5 }), {}),
+        Object.assign(lineSeries("实体热度温度", heat, CH.orange, { width: 1.5 }), {}),
+        Object.assign(lineSeries("信用/部门温度", stru, CH.green, { width: 1.5 }), {}),
+        Object.assign(lineSeries("宏观温度总分", total, CH.ink, { width: 2.6 }), {
+            areaStyle: { color: withAlpha(CH.ink, 0.08) },
+            markArea: { silent: true, data: bands }
+        })
+    ];
+
+    const opt = baseOption(dates, {
+        yName: "温度 0-100", yMin: yMin, yMax: yMax,
+        tooltip: function (p) {
+            const i = p[0].dataIndex;
+            const z = macroZoneOf(total[i]);
+            const line = function (name, v, color) {
+                if (v === null || v === undefined) return "";
+                return '<span style="color:' + color + '">●</span> ' + name + '：<b>' + num(v, 1) + "</b><br>";
+            };
+            return "<b>" + escapeHtml(dates[i]) + "</b><br>"
+                + line("宏观温度总分", total[i], CH.ink)
+                + line("资金面温度", liq[i], CH.blue)
+                + line("实体热度温度", heat[i], CH.orange)
+                + line("信用/部门温度", stru[i], CH.green)
+                + (z ? '<span style="color:' + z.color + '">段位：</span>' + escapeHtml(z.label) : "");
+        },
+        series: series
+    });
+    // 末端读数徽标：总分 + 段位
+    opt.series[3].markPoint = {
+        silent: true,
+        data: [{
+            coord: [dates[lastIdx], lastTotal], value: lastTotal, symbolSize: 9,
+            itemStyle: { color: CH.ink, borderColor: "#fff", borderWidth: 1.5 },
+            label: Object.assign({
+                show: true, position: "right", distance: 8,
+                color: CH.ink, fontSize: 10.5, fontWeight: 600,
+                formatter: "总分 " + num(lastTotal, 1) + (zone ? " · " + zone.label : "")
+            }, HALO)
+        }]
+    };
+    mount("mpThermo", opt);
+}
+
 /* ---------------- ② 信用扩张：社融存量同比 ---------------- */
 function drawTsf(bag) {
     const rows = pick(bag, "tsf_yoy");
@@ -665,6 +765,15 @@ function panelHtml() {
         + '<p class="form-hint">日度 / 月度 / 季度分开 · 每个面板 = 主图 + 辅图 + 判读。'
         + "阈值线与色带已内置，落在哪条泳道直接读；当前值、极值都标在图上。<b>曲线从现在开始逐日积累</b>，不再回溯补历史。</p>"
         + "</div>"
+        + '<div class="mp-card mp-thermo">'
+        + '<div class="mp-card-head"><span class="mp-card-name">宏观温度计 · 总览</span>'
+        + '<span class="mp-card-freq">每日收盘合成</span></div>'
+        + panelChart("宏观温度总分 与 三个子温度计",
+            "资金面×25% + 实体热度×45% + 信用/部门×30%；0-100 五段冷热色带", "mpThermo")
+        + '<div class="mp-read"><span class="mp-read-label">判读</span>'
+        + "总分是三个子温度计的加权合成；三条子线谁在拉动、谁在拖后腿，看分层曲线的分化即可。"
+        + "分项缺失时按可用权重归一化，缺失项不参与合成。</div>"
+        + "</div>"
         + '<div class="mp-grid">'
         + panelCard("mp-liq", "① 资金松紧", "日度 / 季度", [
             panelChart("主图 · DR007 − 7天逆回购利率", "偏离度线 + 0 轴 + ±20bp 带 + 5 日均线", "mpDr007"),
@@ -719,6 +828,8 @@ function notesHtml() {
 function drawCharts(d) {
     const bag = Object.assign({}, d.daily || {}, d.monthly || {});
     const steps = d.anchor_steps || [];
+    // 绘制顺序与页面顺序一致：温度计总览在最上，然后是三组一定位
+    drawThermometer(d.thermometer || []);
     drawDr007(bag, steps);
     drawR001(bag);
     drawExcessReserve(bag);
@@ -730,7 +841,7 @@ function drawCharts(d) {
 }
 
 /** 本页全部图表容器 id（兜底时统一提示）。 */
-const MP_CHART_IDS = ["mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"];
+const MP_CHART_IDS = ["mpThermo", "mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"];
 
 /** 图表库（ECharts，本地 /static/js/echarts.min.js）是否可用。 */
 function echartsReady() {

@@ -87,3 +87,20 @@ api_response.json
 
 # WorkBuddy 发布工具生成的本地标记文件（含本机绝对路径，不应入库）
 .wbapp_*.genie
+
+# 定时任务配置仓库（独立推送到GitHub，不属于业务代码）
+.cron/
+.cron-scf/
+
+# 本地临时验证目录（venv +探测产物），不应入库
+.tmp_probe/
+.tmp_v/
+# 页面实拍校验用的临时脚本与 PNG（Chrome CDP 截图）
+.tmp/
+
+# 离线预览产物（用真实 API 数据渲染的静态页），不应入库
+preview_panic/
+
+# 调试用会话 cookie 与接口响应转储（含登录态），不入库
+data/_ck.txt
+data/_s*.json

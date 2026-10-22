@@ -8,13 +8,15 @@
         <h1>今日热点</h1>
         <div class="hot-actions">
             <p class="form-hint" id="metaInfo"></p>
-            <button id="refreshBtn" type="button" class="btn-refresh">刷新盘面</button>
+            <button id="refreshBtn" type="button" class="btn-refresh">刷新数据</button>
         </div>
     </div>
     <p class="form-hint">
-        口径：新浪财经概念板块，按当日涨跌幅排序取前三（该数据源无概念级资金流，故不再计资金维度；
-        涨跌家数与换手率由成分股聚合得到）。
-        本页打开时只读取已存档数据（点击「刷新盘面」抓取或收盘后自动抓取），不会自动抓取行情。
+        口径：<b>东方财富</b>概念板块，按「当日涨跌幅为主、主力资金净流入为辅」综合排序取前三
+        （两者量纲不可比，各自排名后加权 0.6 / 0.4）；
+        统计口径的伪板块（昨日涨停、机构重仓、百元股、指数成分等）已剔除。
+        东方财富不可达时自动降级为新浪财经（此时无概念级资金流，排序退化为纯涨幅）。
+        本页打开时只读取已存档数据（点击「刷新数据」抓取或收盘后自动抓取），不会自动抓取行情。
     </p>
 </div>
 
@@ -39,10 +41,10 @@ async function loadSaved() {
     }
 }
 
-// 点击「刷新盘面」：抓取最新盘面并落库，再回读展示
+// 点击「刷新数据」：抓取最新盘面并落库，再回读展示
 async function refreshMarket() {
     const body = document.getElementById('hotBody');
-    body.innerHTML = '<div class="loading">正在抓取最新盘面数据...</div>';
+    body.innerHTML = '<div class="loading">正在获取数据，请稍候…</div>';
 
     try {
         const response = await fetchWithAuth('/api/hot-sector/refresh', { method: 'POST' });
@@ -75,13 +77,14 @@ function renderResult(data, justRefreshed) {
         body.innerHTML = `
             <div class="hot-empty-state">
                 <h2>暂无热点数据</h2>
-                <p>${escapeHtml(data.message || '点击「刷新盘面」抓取当前盘面数据。')}</p>
+                <p>${escapeHtml(data.message || '点击「刷新数据」抓取当前盘面数据。')}</p>
             </div>`;
         return;
     }
 
     const actionTag = justRefreshed ? ' · 刚刚刷新' : '';
-    meta.textContent = `交易日：${data.trade_date} · 数据存档时间：${data.generated_at}${actionTag}`;
+    const sourceTag = data.source ? ` · 数据源：${data.source}` : '';
+    meta.textContent = `交易日：${data.trade_date} · 数据存档时间：${data.generated_at}${sourceTag}${actionTag}`;
 
     body.innerHTML = data.sectors.map(renderSector).join('')
         + (data.errors && data.errors.length
@@ -113,6 +116,15 @@ function renderSector(sector) {
         </tr>
     `).join('');
 
+    // 主力净流入：东财源有，新浪降级源为 null
+    const inflowHtml = sector.main_net_inflow == null
+        ? '<span>主力净流入 <b>--</b><span class="hot-stat-note">（该数据源无资金流）</span></span>'
+        : `<span>主力净流入 <b class="${sector.main_net_inflow >= 0 ? 'up' : 'down'}">${sector.main_net_inflow >= 0 ? '+' : ''}${sector.main_net_inflow.toFixed(2)} 亿</b></span>`;
+
+    const turnoverNote = sector.main_net_inflow == null
+        ? '<span class="hot-stat-note">（成分股均值）</span>'
+        : '';
+
     return `
         <div class="hot-card">
             <div class="hot-card-head">
@@ -122,7 +134,8 @@ function renderSector(sector) {
             </div>
             <div class="hot-stats">
                 <span>成分股 <b>${sector.up_count} 涨 / ${sector.down_count} 跌</b></span>
-                <span>换手率 <b>${sector.turnover_rate == null ? '--' : sector.turnover_rate.toFixed(2) + '%'}</b><span class="hot-stat-note">（成分股均值）</span></span>
+                ${inflowHtml}
+                <span>换手率 <b>${sector.turnover_rate == null ? '--' : sector.turnover_rate.toFixed(2) + '%'}</b>${turnoverNote}</span>
                 <span>领涨股 <b>${escapeHtml(sector.lead_stock || '--')}</b> ${pct(sector.lead_stock_change)}</span>
             </div>
             <div class="hot-reason">
@@ -147,12 +160,12 @@ function renderSector(sector) {
 document.getElementById('refreshBtn').addEventListener('click', async () => {
     const btn = document.getElementById('refreshBtn');
     btn.disabled = true;
-    btn.textContent = '抓取中...';
+    btn.textContent = '获取中…';
     try {
         await refreshMarket();
     } finally {
         btn.disabled = false;
-        btn.textContent = '刷新盘面';
+        btn.textContent = '刷新数据';
     }
 });
 

@@ -40,17 +40,10 @@ if [ ! -f ".env" ]; then
     cp .env.example .env
 fi
 
-echo -e "${YELLOW}📦 启动定时调度器(后台)...${NC}"
-nohup python3 run_scheduler.py > logs/scheduler.log 2>&1 &
-SCHEDULER_PID=$!
-echo $SCHEDULER_PID > logs/scheduler.pid
-echo -e "${GREEN}✅ 调度器已启动 (PID: $SCHEDULER_PID)${NC}"
-
-sleep 2
-
 echo -e "${YELLOW}📦 启动 Web 服务器...${NC}"
 echo -e "访问地址: ${GREEN}http://localhost:8000${NC}"
 echo -e "API 文档: ${GREEN}http://localhost:8000/docs${NC}"
+echo -e "定时抓取: ${GREEN}外部自动任务 16:00 调用 POST /api/crawl/daily-refresh（不含财务）${NC}"
 echo ""
 
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload

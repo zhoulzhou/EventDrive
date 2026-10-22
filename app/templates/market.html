@@ -23,13 +23,7 @@
     <div id="historyTip" class="history-tip" style="display:none;"></div>
     <div class="panel-stack">
         <div class="panel">
-            <div class="history-wrap"><canvas id="chartNasdaq"></canvas></div>
-        </div>
-        <div class="panel">
-            <div class="history-wrap"><canvas id="chartVix"></canvas></div>
-        </div>
-        <div class="panel">
-            <div class="history-wrap"><canvas id="chartBond"></canvas></div>
+            <div class="history-wrap" id="historyChart"></div>
         </div>
     </div>
     <div class="chart-legend" id="chartLegend"></div>
@@ -37,7 +31,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/chart.umd.min.js?v={{ static_ver or 0 }}"></script>
+<script src="/static/js/echarts.min.js?v={{ static_ver or 0 }}"></script>
 <script>
 async function loadMarket() {
     const grid = document.getElementById('marketGrid');
@@ -94,17 +88,37 @@ function renderCard(item) {
     `;
 }
 
-const FIXED_Y_WIDTH = 84;
+// ============================================================================
+// 历史走势：ECharts 单实例多 grid 方案
+// ----------------------------------------------------------------------------
+// 为什么不用 Chart.js：三个面板各自独立成图时，内置 X 轴网格依赖各自的
+// autoSkip 结果（面板高度不同 → 刻度数不同 → 竖线错开），
+// 而悬停联动竖线走 getPixelForValue、网格线走 getPixelForTick，两条路径
+// 本身就不一致。要对齐得手写插件 + 手动锁定 min/max 逐一打补丁。
+//
+// ECharts 的 axisPointer.link 就是为这个场景设计的：多个 grid 共用一套
+// category 轴，指示器与竖线由库统一计算，**天然像素级对齐**，无需手算。
+// ============================================================================
+const HISTORY_H = 348;          // 三面板总高度（须与 CSS .history-wrap 的 height 一致）
+const PANEL_GAP = 34;           // 面板间距：需容下每行上方的指标名标题
+const AXIS_LABEL_W = 74;         // 固定 Y 轴标签宽度，保证三个 grid 左边界一致
 
-// 跨面板共享的历史曲线 hover 状态：任一图表被悬停时，三面板联动
-// 画出同一 X 竖线，并在统一 tooltip(historyTip) 中集中显示各曲线数值
-const historySync = { allDates: [], valMap: {}, nameMap: {}, colorOf: {}, syms: [], charts: [], idx: -1 };
+const historySync = { allDates: [], valMap: {}, nameMap: {}, colorOf: {}, syms: [], chart: null, idx: -1 };
 
 function formatVal(v, unit) {
     if (v == null) return '--';
     return unit === '%'
         ? Number(v).toFixed(2)
         : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Y 轴刻度的紧凑数字（30000 → 3万），避免长数字挤占绘图区宽度
+function compactNumber(v) {
+    const n = Number(v);
+    if (!isFinite(n)) return '';
+    if (Math.abs(n) >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+    if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    return String(Math.round(n * 100) / 100);
 }
 
 function renderHistoryTip(mx = -1, my = -1) {
@@ -117,11 +131,10 @@ function renderHistoryTip(mx = -1, my = -1) {
         const v = valMap[s][date];
         const unit = s === 'DGS2' || s === 'DGS10' ? '%' : '';
         return `<div class="tip-row"><span class="tip-dot" style="background:${colorOf[s]}"></span>`
-            + `<span class="tip-name">${nameMap[s] || s}</span>`
+            + `<span class="tip-name">${escapeHtml(nameMap[s] || s)}</span>`
             + `<span class="tip-val">${formatVal(v, unit)}</span></div>`;
     }).join('');
     tip.innerHTML = `<div class="tip-date">${date}</div>${rows}`;
-    // 跟随鼠标放置（右下偏移），并在靠近右/下边缘时翻转，避免被图表裁剪
     tip.style.display = 'block';
     tip.style.left = '0px';
     tip.style.top = '0px';
@@ -137,35 +150,10 @@ function renderHistoryTip(mx = -1, my = -1) {
     tip.style.top = y + 'px';
 }
 
-// 统一插件：在每一图表的已绘制数据之上叠加一条竖线，标记当前悬停的 X 索引
-const crossLinePlugin = {
-    id: 'crossLine',
-    afterDatasetsDraw(chart) {
-        const { idx, allDates } = historySync;
-        if (idx < 0 || idx >= allDates.length) return;
-        const xScale = chart.scales.x;
-        if (!xScale) return;
-        const x = xScale.getPixelForValue(idx);
-        const { left, right, top, bottom } = chart.chartArea;
-        if (x < left || x > right) return;
-        const ctx = chart.ctx;
-        ctx.save();
-        ctx.strokeStyle = 'rgba(37, 99, 235, 0.6)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(x, top);
-        ctx.lineTo(x, bottom);
-        ctx.stroke();
-        ctx.restore();
-    }
-};
-
 async function renderAllHistory(items) {
     const empty = document.getElementById('historyEmpty');
-    // 图表库未就绪时给出明确提示（此前依赖外部 CDN，加载失败会表现为「曲线一直空白」，
-    // 用户看不出是数据问题还是脚本问题；现已改成本地库，这里只作兜底）。
-    if (typeof Chart === 'undefined') {
+    // 图表库未就绪时给出明确提示，避免静默空白（用户分不清是数据问题还是脚本问题）
+    if (typeof echarts === 'undefined') {
         empty.style.display = 'flex';
         empty.textContent = '图表库加载失败，请刷新页面重试';
         return;
@@ -192,8 +180,8 @@ async function renderAllHistory(items) {
     empty.style.display = 'none';
     empty.textContent = '';
 
-    // 统一时间轴：取所有指标日期并集并排序，缺失值填 null，保证三面板 X 轴完全一致、
-    // 每条曲线端点对齐（不因部分指标缺数据而裁剪日期，避免曲线长短不齐造成"错位"）
+    // 统一时间轴：取所有指标日期并集并排序，缺失值填 null，
+    // 保证四条曲线端点对齐（不因部分指标缺数据而裁剪日期）
     const nameMap = {};
     const valMap = {};
     series.forEach(s => {
@@ -209,153 +197,206 @@ async function renderAllHistory(items) {
         fill,
         data: allDates.map(d => (valMap[sym] && valMap[sym][d] != null) ? valMap[sym][d] : null)
     });
-
     const nasdaq = mk('NASDAQ100', '#2563eb', true);
     const vix = mk('VIXCLS', '#ef4444', false);
     const dgs2 = mk('DGS2', '#059669', false);
     const dgs10 = mk('DGS10', '#f59e0b', false);
 
-    // 初始化跨面板共享 hover 状态
     Object.assign(historySync, {
         allDates,
         valMap,
         nameMap,
         colorOf: { NASDAQ100: '#2563eb', VIXCLS: '#ef4444', DGS2: '#059669', DGS10: '#f59e0b' },
         syms: ['NASDAQ100', 'VIXCLS', 'DGS2', 'DGS10'],
-        charts: [],
         idx: -1,
     });
 
-    // 渲染三面板，均附加 crossLinePlugin（画统一竖线），并收集 chart 实例
-    const charts = [
-        renderChart('chartNasdaq', allDates, [nasdaq], { showX: false },
-            [drawdownEventsPlugin, crossLinePlugin], { drawdownEvents: { events: eventsMap['NASDAQ100'] || [] } }),
-        renderChart('chartVix', allDates, [vix], { showX: false },
-            [crossLinePlugin]),
-        renderChart('chartBond', allDates, [dgs2, dgs10], { showX: true },
-            [crossLinePlugin]),
-    ].filter(Boolean);
-    historySync.charts = charts;
-
-    // 任一图表悬停/离开 → 同步所有面板的竖线位置并刷新统一 tooltip
-    charts.forEach(chart => {
-        chart.canvas.addEventListener('mousemove', e => {
-            const rect = chart.canvas.getBoundingClientRect();
-            const xScale = chart.scales.x;
-            if (!xScale) return;
-            const mouseX = e.clientX - rect.left;
-            const idx = xScale.getValueForPixel(mouseX);
-            if (idx < 0 || idx >= allDates.length) return;
-            historySync.idx = idx;
-            charts.forEach(c => c.draw());
-            renderHistoryTip(e.clientX, e.clientY);
-        });
-        chart.canvas.addEventListener('mouseleave', () => {
-            historySync.idx = -1;
-            charts.forEach(c => c.draw());
-            renderHistoryTip();
-        });
+    // ---- 三个 grid 的纵向布局：等高，底部留出 X 轴标签空间 ----
+    // ⚠️ 三个 grid 的 left 必须完全相同，绘图区左边界才会严格对齐；
+    //    固定留出 AXIS_LABEL_W 给 Y 轴数值，标签有无都不影响曲线起点。
+    const topPad = 22;           // 顶部留白：第一行标题要放在 grid 上方
+    const xAxisH = 20;
+    const panelH = (HISTORY_H - topPad - xAxisH - PANEL_GAP * 2) / 3;
+    const grids = [0, 1, 2].map(i => ({
+        left: AXIS_LABEL_W,
+        right: 26,
+        // 每行网格再下移一点，给标题让位
+        top: topPad + i * (panelH + PANEL_GAP),
+        height: panelH,
+    }));
+    // 每个 grid 一套 category 轴，但都指向**同一份** allDates；
+    // axisPointer.link 让三者的指示器联动，竖线由库保证对齐。
+    const mkCatAxis = (gridIndex, showLabels) => ({
+        type: 'category',
+        gridIndex,
+        data: allDates,
+        boundaryGap: false,
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: true, lineStyle: { color: '#f0f3f6', width: 1 } },
+        axisLabel: showLabels
+            ? {
+                show: true, color: '#9aa3ab', fontSize: 10, margin: 8,
+                interval: Math.max(1, Math.ceil(allDates.length / 8) - 1),
+                hideOverlap: true,
+                formatter: v => String(v).slice(5),   // 只显示 MM-DD，省宽度
+            }
+            : { show: false },
     });
+    // 每个面板都显示 Y 轴数值（原来只有第一面板显示，其余像空面板）；
+    // scale:true让 Y 轴贴着数据范围走，曲线起伏才看得出来。
+    const mkValAxis = (gridIndex, unit, name) => ({
+        type: 'value',
+        gridIndex,
+        scale: true,
+        splitNumber: 3,
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: true, lineStyle: { color: '#f0f3f6', width: 1 } },
+        axisLabel: {
+            show: true,
+            color: '#9aa3ab', fontSize: 10, margin: 8,
+            showMinLabel: false, showMaxLabel: false,
+            formatter: v => (unit === '%' ? Number(v).toFixed(1) : compactNumber(v)),
+        },
+    });
+
+    const lineSeries = (s, gridIndex, yAxisIndex = 0) => ({
+        name: s.label,
+        type: 'line',
+        xAxisIndex: gridIndex,
+        yAxisIndex: gridIndex,
+        data: s.data,
+        showSymbol: false,
+        symbol: 'circle',
+        symbolSize: 5,
+        smooth: 0.3,
+        connectNulls: false,
+        lineStyle: { width: 1.6, color: s.color },
+        itemStyle: { color: s.color },
+        areaStyle: s.fill ? { color: s.color + '18' } : undefined,
+        z: 3,
+    });
+
+    const option = {
+        animation: false,
+        backgroundColor: 'transparent',
+        // ★ 核心：三个 grid 的 X 轴指示器联动，竖线必然连成一条
+        axisPointer: {
+            link: [{ xAxisIndex: 'all' }],
+            label: { show: false },
+            lineStyle: { color: 'rgba(37,99,235,0.6)', width: 1.5, type: [4, 4] },
+            triggerTip: false,
+        },
+        //⚠️ 不能设show:false —— ECharts 的 axisPointer 挂在 tooltip 触发链路上，
+        // 一关竖线就没了。改为触发但不渲染浮框（透明 + 空 formatter），
+        // 内容仍由外部 historyTip 统一呈现。
+        tooltip: {
+            trigger: 'axis',
+            triggerOn: 'mousemove',
+            show: true,
+            formatter: () => '',
+            backgroundColor: 'rgba(0,0,0,0)',
+            borderWidth: 0,
+            padding: 0,
+            textStyle: { color: 'transparent' },
+        },
+        grid: grids,
+        // 每行左侧的指标名，让三个面板一眼可辨（原来只有图例在下方，脱离上下文看不知道谁是谁）
+        title: [
+            {
+                text: '纳斯达克100',
+                left: 6, top: grids[0].top - 2,
+                textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' },
+            },
+            {
+                text: 'VIX 恐慌指数',
+                left: 6, top: grids[1].top - 2,
+                textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' },
+            },
+            {
+                text: '美债收益率 2年 / 10年',
+                left: 6, top: grids[2].top - 2,
+                textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' },
+            },
+        ],
+        xAxis: [mkCatAxis(0, false), mkCatAxis(1, false), mkCatAxis(2, true)],
+        yAxis: [mkValAxis(0, '', nasdaq.label), mkValAxis(1, '', vix.label), mkValAxis(2, '%', dgs2.label)],
+        series: [
+            lineSeries(nasdaq, 0),
+            lineSeries(vix, 1),
+            lineSeries(dgs2, 2),
+            lineSeries(dgs10, 2),
+        ],
+    };
+
+    // 回撤事件标记：纳斯达克面板上的峰值（绿三角）与低点（红圆）
+    const events = eventsMap['NASDAQ100'] || [];
+    if (events.length) {
+        option.series.push({
+            name: 'drawdown',
+            type: 'scatter',
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            symbol: 'triangle',
+            symbolSize: 9,
+            data: events.map(ev => [ev.peak_date, ev.peak_value]),
+            itemStyle: { color: '#16a34a' },
+            label: {
+                show: true, position: 'top', color: '#15803d', fontSize: 9,
+                formatter: p => p.value[0],
+            },
+            tooltip: { show: false },
+            z: 5,
+        });
+        option.series.push({
+            name: 'drawdownLow',
+            type: 'scatter',
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            symbol: 'circle',
+            symbolSize: 7,
+            data: events.map(ev => [ev.low_date, ev.low_value]),
+            itemStyle: { color: '#dc2626' },
+            label: {
+                show: true, position: 'bottom', color: '#b91c1c', fontSize: 9,
+                formatter: p => p.value[0],
+            },
+            tooltip: { show: false },
+            z: 5,
+        });
+    }
+
+    const el = document.getElementById('historyChart');
+    if (historySync.chart) historySync.chart.dispose();
+    const chart = echarts.init(el, null, { renderer: 'canvas' });
+    chart.setOption(option);
+    historySync.chart = chart;
+
+    // 悬停：用 axisPointer 的数据索引驱动统一 tooltip
+    chart.on('updateAxisPointer', e => {
+        const info = e.axesInfo && e.axesInfo[0];
+        if (!info) return;
+        historySync.idx = typeof info.value === 'number' ? info.value : -1;
+        renderHistoryTip(...currentMousePos);
+    });
+    chart.getZr().on('mousemove', e => {
+        currentMousePos = [e.offsetX + el.getBoundingClientRect().left,
+        e.offsetY + el.getBoundingClientRect().top];
+        if (historySync.idx >= 0) renderHistoryTip(currentMousePos[0], currentMousePos[1]);
+    });
+    chart.getZr().on('globalout', () => {
+        historySync.idx = -1;
+        renderHistoryTip();
+    });
+
+    // 容器尺寸变化时重绘（左右面板布局在响应式下会变）
+    window.addEventListener('resize', () => chart.resize());
 
     buildLegend([nasdaq, vix, dgs2, dgs10]);
 }
 
-// 回撤事件标记插件：在纳斯达克图表中标出 10% 回撤事件的峰值（绿三角+日期）与低点（红圆+日期）
-const drawdownEventsPlugin = {
-    id: 'drawdownEvents',
-    afterDatasetsDraw(chart, args, opts) {
-        const events = (opts && opts.events) || [];
-        if (!events.length) return;
-        const meta = chart.getDatasetMeta(0);
-        if (!meta || !meta.data || !meta.data.length) return;
-        const ctx = chart.ctx;
-        const xScale = chart.scales.x;
-        const yScale = chart.scales.y;
-        ctx.save();
-        events.forEach(ev => {
-            const iPeak = chart.data.labels.indexOf(ev.peak_date);
-            const iLow = chart.data.labels.indexOf(ev.low_date);
-            if (iPeak < 0 || iLow < 0) return;
-            const pxPeak = xScale.getPixelForValue(iPeak);
-            const pyPeak = yScale.getPixelForValue(ev.peak_value);
-            const pxLow = xScale.getPixelForValue(iLow);
-            const pyLow = yScale.getPixelForValue(ev.low_value);
-
-            // 峰值：绿色倒三角 + 日期
-            ctx.fillStyle = '#16a34a';
-            ctx.beginPath();
-            ctx.moveTo(pxPeak, pyPeak - 6);
-            ctx.lineTo(pxPeak - 5, pyPeak + 2);
-            ctx.lineTo(pxPeak + 5, pyPeak + 2);
-            ctx.closePath();
-            ctx.fill();
-            ctx.font = 'bold 9px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillStyle = '#15803d';
-            ctx.fillText(ev.peak_date, pxPeak, pyPeak - 8);
-
-            // 低点：红色实心圆 + 日期
-            ctx.fillStyle = '#dc2626';
-            ctx.beginPath();
-            ctx.arc(pxLow, pyLow, 4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.font = 'bold 9px sans-serif';
-            ctx.fillText(ev.low_date, pxLow, pyLow + 16);
-        });
-        ctx.restore();
-    }
-};
-
-function renderChart(canvasId, labels, datasets, opts, chartPlugins = [], pluginOptions = {}) {
-    const canvas = document.getElementById(canvasId);
-    const existing = Chart.getChart(canvas);
-    if (existing) existing.destroy();
-
-    new Chart(canvas.getContext('2d'), {
-        type: 'line',
-        data: {
-            labels,
-            datasets: datasets.map(d => ({
-                label: d.label,
-                data: d.data,
-                borderColor: d.color,
-                backgroundColor: d.color + '22',
-                fill: d.fill,
-                tension: 0.3,
-                pointRadius: 0.5,
-                pointHoverRadius: 4,
-                _unit: opts.unit
-            }))
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: {
-                legend: { display: false },
-                // 统一由外部 HTML tooltip(historyTip) 呈现，关闭内置浮框
-                tooltip: { enabled: false },
-                drawdownEvents: pluginOptions.drawdownEvents || { events: [] }
-            },
-            scales: {
-                x: {
-                    display: true,
-                    border: { display: false },
-                    grid: { color: '#eef1f4' }, // 始终显示垂直网格，使三面板连成一线
-                    ticks: opts.showX ? { maxTicksLimit: 8 } : { display: false }
-                },
-                y: {
-                    // 固定 Y 轴宽度，使三个面板绘图区左边界一致，实现 X 轴垂直对齐
-                    afterFit: axis => { axis.width = FIXED_Y_WIDTH; },
-                    grid: { color: '#ecf0f3' },
-                    ticks: { maxTicksLimit: 5 }
-                }
-            }
-        },
-        plugins: chartPlugins
-    });
-    return Chart.getChart(canvas);
-}
+let currentMousePos = [-1, -1];
 
 function buildLegend(entries) {
     const el = document.getElementById('chartLegend');
@@ -537,16 +578,12 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
     border-radius: 10px;
     overflow: hidden;
 }
-.panel + .panel {
-    border-top: 1px dashed #dde1e6;
-}
+/* ECharts 单实例三 grid：容器高度须与 JS 里的 HISTORY_H 一致，
+   否则 grid 布局与容器不匹配。改高度时两处同步改。 */
 .panel .history-wrap {
     position: relative;
-    height: 95px;
+    height: 348px;
     width: 100%;
-}
-.panel-stack .panel:last-child .history-wrap {
-    height: 105px; /* 底部多留一点空位给 X 轴刻度 */
 }
 .chart-legend {
     display: flex;

@@ -19,7 +19,7 @@
         <p class="form-hint st-src-line">
             数据源：乐咕乐股（PE/PB、破净率、公募仓位、市场宽度）· 沪深交易所官网（成交额、流通市值）·
             中债国债收益率（ERP）· 东财数据中心（两融、重要股东增减持）· 新浪/东财（宽基ETF份额、新基金发行）。
-            <strong>全部 13 项自动抓取、无手工录入项</strong>，由 ./start.sh 启动的定时任务
+            <strong>全部 13 项自动抓取、无手工录入项</strong>，由定时任务
             （北京时间 16:00）抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
         </p>
     </div>
@@ -156,7 +156,7 @@ function methodHtml() {
         { label: "② 情绪层", freq: "日频 · 亢奋还是低迷", cls: "st-m-sentiment", body: [
             ["两市成交额", "&lt;7000亿 地量冰点 · 2万亿+ 亢奋 · 3万亿+ 极端"],
             ["全A换手率", "看历史分位，不看绝对值"],
-            ["两融占流通市值", "&gt;3.5% 杠杆过热 · &lt;2.5% 低迷"],
+            ["融资余额占流通市值", "&gt;3.5% 杠杆过热 · &lt;2.5% 低迷"],
             ["市场宽度", "上涨家数占比 &gt;80% 普涨 · &lt;30% 普跌"]] },
         { label: "③ 资金层", freq: "周频 · 钱进不进", cls: "st-m-capital", body: [
             ["股票ETF份额", "持续申购 = 机构/国家队进场，逆势信号"],
@@ -298,6 +298,188 @@ function gaugeHtml(t) {
         + "</section>";
 }
 
+/* ==================== 市场贪婪指数（方向与综合温度计一致） ==================== */
+
+// 贪婪色带 = 综合温度计色带**同序**：0 是冰点冷清（蓝）、100 是亢奋贪婪（红）。
+// 两个指针方向一致、语义相同，可以并排看：都高 = 市场很热。
+const GREED_ZONE_COLORS = ["#5B8FC7", "#8BC8EA", "#E4D48F", "#F4B393", "#EA6668"];
+
+function greedZoneIndex(value, zones) {
+    const v = Number(value);
+    const list = (zones && zones.length) ? zones : null;
+    if (list) {
+        for (let i = 0; i < list.length; i++) {
+            if (v >= list[i].lo && v < list[i].hi) return i;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+function fmtGreedVal(item) {
+    if (item.value === null || item.value === undefined) return "—";
+    const v = Number(item.value);
+    if (isNaN(v)) return "—";
+    const d = item.digits === undefined ? 2 : item.digits;
+    let text = v.toFixed(d);
+    if (d === 0) text = text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return text;
+}
+
+// 分项卡：5 个主成分各自展示读数 / 分位 / 权重贡献
+function greedFactorHtml(f) {
+    const color = f.score === null ? "#9ca3af" : tone(f.tone || "slate");
+    const w = Math.max(2, Math.min(100, f.score === null ? 0 : f.score));
+    const mode = String(f.mode || "");
+    const isBase = mode.indexOf("基准分位") >= 0;
+    const degraded = mode.indexOf("折算") >= 0;
+    const samples = f.samples === null || f.samples === undefined ? null : Number(f.samples);
+    const need = f.base_min_samples || 20;
+    return "<div class=\"st-pf\" style=\"border-top-color:" + color + "\">"
+        + "<div class=\"st-pf-head\"><div>"
+        + "<div class=\"st-pf-name\">" + escapeHtml(f.name)
+        + "<span class=\"st-pf-layer\">" + escapeHtml(f.layer_name) + "</span></div>"
+        + "<div class=\"st-pf-sub\">" + escapeHtml(f.subtitle || "") + "</div></div>"
+        + "<div class=\"st-pf-score\" style=\"color:" + color + ";background:" + tint(color, 0.12) + "\">"
+        + (f.score === null ? "—" : "贪婪 " + Number(f.score).toFixed(1)) + "</div></div>"
+        + "<div class=\"st-pf-bar\"><div class=\"st-pf-fill\" style=\"width:" + w + "%;background:" + color + "\"></div></div>"
+        + "<div class=\"st-pf-meta\"><span>读数 <b>" + fmtGreedVal(f) + escapeHtml(f.unit || "")
+        + "</b></span><span>权重 <b>" + Number(f.weight_pct).toFixed(2) + "%</b></span>"
+        + "<span>贡献 <b>" + (f.contribution === null ? "—" : Number(f.contribution).toFixed(2))
+        + "</b></span></div>"
+        + "<div class=\"st-pf-chip\">"
+        + (f.percentile === null || f.percentile === undefined
+            ? "<span class=\"st-pct st-pct-off\">分位 —</span>"
+            : "<span class=\"st-pct\">分位 " + Number(f.percentile).toFixed(1) + "%</span>")
+        + (isBase ? "<span class=\"st-pf-base\" title=\"分位来自 V3.6c 基准值，"
+            + "历史表样本攒够后自动改用实测分位\">基准分位</span>" : "")
+        + (degraded ? "<span class=\"st-pf-warn\">无基准 · 按绝对阈值折算</span>" : "")
+        + (samples !== null ? "<span class=\"st-pf-samples\" title=\"已累计的历史读数期数，"
+            + "攒够 " + need + " 期后分位改用实测值\">已累计 " + samples + " 期</span>" : "")
+        + (isBase && samples !== null
+            ? "<span class=\"st-pf-todo\">再攒 " + Math.max(0, need - samples) + " 期改用实测分位</span>" : "")
+        + "</div>"
+        + "<div class=\"st-pf-dir\">分位即贪婪分（越高越贪婪）</div>"
+        + "<div class=\"st-explain st-pf-explain\">"
+        + "<p><span class=\"st-label\">指标含义</span>" + escapeHtml(f.meaning || "") + "</p>"
+        + "<p><span class=\"st-label\">怎么看</span>" + escapeHtml(f.guide || "") + "</p>"
+        + "</div></div>";
+}
+
+// 确认层卡：ERP / 破净率，权重 0，只在极端区做闸门
+function greedConfirmHtml(c) {
+    const has = c.percentile !== null && c.percentile !== undefined;
+    // 两项确认层都是「与贪婪反向」：分位越低 = 越贪婪（赔率耗尽 / 找不到便宜货）
+    const extreme = has && Number(c.percentile) < 20;
+    const color = !has ? "#9ca3af" : (extreme ? tone("red") : tone("slate"));
+    return "<div class=\"st-pc\" style=\"border-left-color:" + color + "\">"
+        + "<div class=\"st-pc-head\"><span class=\"st-pc-name\">" + escapeHtml(c.name) + "</span>"
+        + "<span class=\"st-pc-weight\">确认层 · 权重 0</span></div>"
+        + "<div class=\"st-pc-sub\">" + escapeHtml(c.subtitle || "") + "</div>"
+        + "<div class=\"st-pc-row\"><span class=\"st-pc-pct\">分位 "
+        + (has ? Number(c.percentile).toFixed(1) + "%" : "—") + "</span>"
+        + (extreme ? "<span class=\"st-pc-hit\">贪婪确认</span>" : "")
+        + (c.samples !== null && c.samples !== undefined
+            ? "<span class=\"st-pf-samples\">" + Number(c.samples) + " 期样本</span>" : "")
+        + "</div>"
+        + "<div class=\"st-pc-hint\">" + escapeHtml(c.higher_means || "") + "</div>"
+        + "<div class=\"st-pc-deep\">" + escapeHtml(c.deep_note || "") + "</div>"
+        + "<div class=\"st-explain st-pf-explain\">"
+        + "<p><span class=\"st-label\">指标含义</span>" + escapeHtml(c.meaning || "") + "</p>"
+        + "<p><span class=\"st-label\">怎么看</span>" + escapeHtml(c.guide || "") + "</p>"
+        + "</div></div>";
+}
+
+function greedSummaryHtml(p) {
+    if (p.value === null || p.value === undefined) {
+        return "<div class=\"st-psummary\"><div class=\"st-summary-title\">怎么读这个指数</div>"
+            + "<p class=\"st-summary-main\">分项数据还没攒够，贪婪指数暂时算不出来。</p></div>";
+    }
+    const zi = greedZoneIndex(p.value, p.zones);
+    const zoneColor = GREED_ZONE_COLORS[zi];
+    const factors = p.factors || [];
+    const byScore = factors.slice().sort(function (a, b) {
+        return (b.score === null ? -1 : b.score) - (a.score === null ? -1 : a.score);
+    });
+    const worst = byScore.filter(function (f) { return f.score !== null; }).slice(0, 2);
+    const ma = p.ma5;
+
+    let read;
+    if (p.value > 90) {
+        read = "已经进极端贪婪区——泡沫特征明显，宜减仓、回避追高；等确认层（ERP / 破净率）同时走低就更该警惕。";
+    } else if (p.value > 70) {
+        read = "偏热区，别追加新钱；这个位置的风险收益比已经变差。";
+    } else if (p.value > 30) {
+        read = "中性区，没有极端信号。这段时间按方法论只记录、不决策，等它走出 30–70。";
+    } else if (p.value > 10) {
+        read = "偏冷区，开始关注并准备资金；真正的底部还要等情绪继续冷却。";
+    } else {
+        read = "冰点冷清区，逆向机会——按「买冷卖热」的反向指标逻辑，这是分批布局的赔率最好区间。";
+    }
+    const driver = worst.length
+        ? "<em>贪婪主要来自：" + worst.map(function (f) {
+            return escapeHtml(f.name) + "（" + Number(f.score).toFixed(0) + "）";
+        }).join("、") + "。</em> " : "";
+
+    return "<div class=\"st-psummary\" style=\"background:" + zoneColor + "\">"
+        + "<div class=\"st-summary-title\">怎么读这个指数</div>"
+        + "<p class=\"st-summary-main\">当前市场贪婪指数 <b>" + Number(p.value).toFixed(1)
+        + "</b>（<b>" + escapeHtml(p.state) + "</b>）· 信号：<b>" + escapeHtml(p.signal)
+        + "</b> · 操作参考：<b>" + escapeHtml(p.action) + "</b>"
+        + (ma !== null && ma !== undefined ? "，5 日平滑 <b>" + Number(ma).toFixed(1) + "</b>" : "")
+        + "。</p>"
+        + "<p class=\"st-summary-read\">怎么理解：" + driver + read + "</p></div>";
+}
+
+function greedGaugeHtml(p) {
+    const v = p.value;
+    const width = v === null || v === undefined ? 0 : Math.max(0, Math.min(100, v));
+    const zi = greedZoneIndex(width, p.zones);
+    const zones = (p.zones || []).map(function (z) {
+        return "<span style=\"flex:1;color:#6b7280\">" + z.lo + "-" + Math.round(z.hi === 100.01 ? 100 : z.hi)
+            + " " + escapeHtml(z.state) + "</span>";
+    }).join("");
+
+    const factors = (p.factors || []).map(greedFactorHtml).join("");
+    const confirms = (p.confirms || []).map(greedConfirmHtml).join("");
+    const deep = p.deep ? "<div class=\"st-pdeep " + (p.deep.hit ? "hit" : "weak")
+        + "\" style=\"border-left-color:" + tone(p.deep.tone || "slate") + "\">"
+        + "<div class=\"st-pdeep-title\">" + escapeHtml(p.deep.title) + "</div>"
+        + "<p>" + escapeHtml(p.deep.detail) + "</p></div>" : "";
+
+    return "<section class=\"st-gauge-wrap st-greed-wrap\">"
+        + "<h2 class=\"st-group-title\">市场贪婪指数（0-100，越高越贪婪）<span class=\"st-group-sub\">"
+        + escapeHtml(p.weight_note || "") + "</span></h2>"
+        + "<div class=\"st-gauge\">"
+        + "<div class=\"st-gauge-track\">" + GREED_ZONE_COLORS.map(function (c) {
+            return "<div class=\"st-gauge-seg\" style=\"background:" + c + "\"></div>";
+        }).join("") + "</div>"
+        + (v === null || v === undefined ? "" :
+            "<div class=\"st-gauge-marker\" style=\"left:" + width + "%\">"
+            + "<div class=\"st-gauge-pin\"></div>"
+            + "<div class=\"st-gauge-tip\" style=\"color:" + tone(p.tone || "slate") + "\">≈ "
+            + Number(v).toFixed(1) + " " + escapeHtml(p.state) + "</div></div>")
+        + "</div>"
+        + "<div class=\"st-gauge-legend\">" + zones + "</div>"
+        + "<div class=\"st-greed-formula\">" + escapeHtml(p.formula || "")
+        + "<br><span>" + escapeHtml(p.window_note || "") + "</span></div>"
+        + greedSummaryHtml(p)
+        + deep
+        + "<div class=\"st-pf-grid\">" + factors + "</div>"
+        + "<div class=\"st-pc-title\">确认层（0 权重，只在极端区做闸门）"
+        + "<span class=\"st-group-sub\">估值是慢变量，混进主指数会钝化日频灵敏度；"
+        + "只在极端区确认，正好弥补 88% 情绪占比下估值信号的稀释</span></div>"
+        + "<div class=\"st-pc-grid\">" + confirms + "</div>"
+        + "<div class=\"st-gauge-note\">分位口径为<b>「V3.6c 基准值 + 项目历史表逐日累计」</b>："
+        + "先用规格基准分位（对应 10/19 读数）起步，卡片上标为「基准分位」；"
+        + "此后每���抓取一天，历史表就多一期样本，累计满 20 期后该分项自动切换为实测分位，"
+        + "并显示「已累计 N 期」。"
+        + "这样分位既不会因为样本只有两三期而剧烈跳动，也不会因为窗口口径不同而与基准矛盾。"
+        + "<br>贪婪指数与上方综合温度计<b>方向一致</b>：都是越高越热。"
+        + "</div>"
+        + "</section>";
+}
+
 /* ---------------- 当前读数速览表 ---------------- */
 // 单项分的来源说明：
 //   - 「分位」口径：读数本身就是0-100 的连续分位，直接线性映射到0-100（反向指标则翻转），锚点固定为 (0,0)-(100,100)。
@@ -401,7 +583,7 @@ function notesHtml() {
         + "<div class=\"st-note\"><h3>三、构建你自己的温度计时，选这 6 个就够</h3>"
         + "<ul>"
         + "<li><b>估值温度</b> = PE 分位（40%）+ ERP（30%）+ 破净率（30%）</li>"
-        + "<li><b>情绪温度</b> = 成交额分位（50%）+ 换手率分位（30%）+ 两融占流通市值（20%）</li>"
+        + "<li><b>情绪温度</b> = 成交额分位（50%）+ 换手率分位（30%）+ 融资余额占流通市值（20%）</li>"
         + "<li><b>综合温度</b> = 估值 ×35% + 情绪 ×35% + 资金 ×30%</li>"
         + "<li>全部用十年分位，每月更新一次。分位数的取法和「叠纳指 / VIX / 美债」那套 z-score 是同一个逻辑——<b>先标准化，再相加</b>，避免量纲打架。</li>"
         + "</ul></div>"
@@ -414,13 +596,39 @@ function notesHtml() {
         + "<li><b>为什么有些指标「历史分位」是「—」</b>：本页按方法论原意分了两种判定口径——"
         + "PE / PB / ERP / 公募仓位 / 新基金发行这 5 项用<b>十年分位</b>判定，故给出分位；"
         + "成交额、换手率、两融占比、市场宽度、ETF 份额、产业资本、结构分化这 7 项，方法论本身给的是<b>绝对阈值</b>"
-        + "（如成交额 7000 亿地量 / 2 万亿亢奋、两融占流通市值 3.5%、产业资本 ±100 / −400 亿、分位差 ±20 / ±40pp），"
+        + "（如成交额 7000 亿地量 / 2 万亿亢奋、融资余额占流通市值 3.5%、产业资本 ±100 / −400 亿、分位差 ±20 / ±40pp），"
         + "直接读绝对值档位反而更准，因此分位列留空、状态列给出档位判读。</li>"
         + "<li><b>日频历史</b>：成交额 / 换手率 / 市场宽度 / ETF份额 依赖逐日抓取，本页只展示快照读数；"
         + "历史曲线见 <a href=\"/stock-trend\">热度趋势</a> 页（曲线从该页启用起逐日积累，本页与定时任务都不做历史回溯）。</li>"
-        + "<li><b>两融占流通市值</b>：流通市值取沪深交易所官方口径（每日更新）；「连续回落交易日」按两融余额逐日比较统计。</li>"
+        + "<li><b>融资余额占流通市值</b>：流通市值取沪深交易所官方口径（每日更新）；「连续回落交易日」按融资余额逐日比较统计。口径为<b>融资余额，不含融券余额</b>——融券是空头头寸，与贪婪方向相反，混进两融合计会互相抵消。</li>"
         + "<li><b>结构分化</b>用「价格分位」而非 PE 分位（科创50 上市时间较短，估值序列覆盖不足十年）。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
+        + "</ul></div>"
+        + "<div class=\"st-note st-caveat\"><h3>市场贪婪指数（V3.6c 口径）怎么算的</h3>"
+        + "<ul>"
+        + "<li><b>与综合温度计方向一致</b>：都是越高越热。两个指针用同一批底层指标，"
+        + "可以并排看——都高说明市场很热，都低说明冷清。</li>"
+        + "<li><b>权重</b>：情绪 88%（市场宽度 / 全A换手率 / 两市成交额 / 融资余额占流通市值各 22%）"
+        + "+ 估值 12%（沪深300 PE-TTM），合计 100%，<b>无资金主成分</b>。</li>"
+        + "<li><b>分位直接用历史分位</b>（越高越贪婪），不做「100 − 分位」的反向换算，"
+        + "所以与综合温度计方向天然对齐。分子为<b>严格小于</b>当前值的样本数。</li>"
+        + "<li><b>分位口径：基准值 + 逐日累计</b>（不用固定窗口）。先用 V3.6c 规格的基准分位"
+        + "（宽度 92.3 / 换手 23.1 / 成交额 30.8 / 融资占比 15.4 / PE 15.4，对应 10/19 读数）起步，"
+        + "卡片标为「基准分位」；此后每天抓取一次，历史表逐日积累，"
+        + "<b>满 20 期后该分项自动切换为实测分位</b>，并显示「已累计 N 期 / 再攒 N 期」。</li>"
+        + "<li>为什么不用固定窗口：规格标称「近 13 期」时换手率 / 成交额 / PE 的分位恒为 0%"
+        + "（当前值恰是近 13 期最低值）；换成近 5 年 + 指数近似序列又会算出 95% 这类"
+        + "与基准矛盾的值（把「杠杆正在退潮」读成「杠杆水位历史最高」）。"
+        + "既然基准值的口径未公开，任何固定窗口都会与基准打架——"
+        + "所以改为「基准值起步 + 自己每天抓的真实读数逐期替换」。</li>"
+        + "<li><b>确认层不加权</b>：ERP 与破净率权重为 0，只在极端区做闸门。"
+        + "估值是慢变量，混进主指数会钝化日频灵敏度；只在极端区确认，"
+        + "正好弥补 88% 情绪占比下估值信号的稀释。</li>"
+        + "<li><b>泡沫警示</b>：贪婪指数 &gt; 90 且 ERP 分位 &lt; 20 → 泡沫特征明显，"
+        + "宜减仓、回避追高。确认层分位走低（赔率耗尽、找不到便宜货）才是贪婪到极致的证据。</li>"
+        + "<li><b>分位样本越攒越准</b>：每个分项都标了实际样本期数。"
+        + "早期样本少时读数会偏粗（分位分辨率就那么高），随着每日抓取积累会自然收敛到稳定值。"
+        + "这也是本指数采用「分位滚动」而非固定阈值的原因：阈值会漂移，分位会自校准。</li>"
         + "</ul></div>"
         + "</section>";
 }
@@ -435,8 +643,7 @@ function render(data) {
         : "";
     if (data.stale) {
         notice += "<div class=\"st-alert\">数据已 " + data.data_age_hours + " 小时未落库（最后更新 "
-          + escapeHtml(data.updated_at) + "）。本页读数由 ./start.sh 启动的定时任务抓取，本页自身不抓数据，"
-          + "请确认调度器在运行（日志 logs/scheduler.log）。</div>";
+          + escapeHtml(data.updated_at) + "）。本页读数由定时任务抓取（北京时间 16:00），本页自身不抓数据。</div>";
     }
     document.getElementById("stNotice").innerHTML = notice;
     document.getElementById("stUpdated").textContent = "数据更新于 " + (data.updated_at || "—")
@@ -444,6 +651,7 @@ function render(data) {
 
     document.getElementById("stRoot").innerHTML = methodHtml()
         + gaugeHtml(data.thermometer || {})
+        + greedGaugeHtml(data.greed_index || {})
         + overviewHtml(data.groups || [])
         + (data.groups || []).map(groupHtml).join("")
         + notesHtml();

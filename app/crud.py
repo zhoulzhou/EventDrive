@@ -1,11 +1,14 @@
 import json
-from typing import Any, List, Optional, Dict
+import logging
+from typing import Any, List, Optional, Dict, Set
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, or_
 
 from app import models, schemas
 from app import cloud_db as _cdb
+
+logger = logging.getLogger(__name__)
 
 # ================================================================ 云库分支开关
 #
@@ -951,7 +954,21 @@ def get_macro_history(
     limit: int = 200,
     order: str = "desc",
 ) -> List[models.MacroIndicatorHistory]:
-    """查询历史读数。key 为空时返回全部指标（按抓取时间排序，默认最新在前）。"""
+    """查询历史读数。key 为空时返回全部指标（按抓取时间排序，默认最新在前）。
+
+    ⚠ 云库分支不能省：原先这里只有裸 SQLAlchemy，云库模式下读的是沙箱里
+    空的本地 SQLite → 恒返回空列表（与「云库模式禁止裸 SQLAlchemy」同源问题）。
+    """
+    if _USE_CLOUD:
+        filters = {"key": f"eq.{key}"} if key else None
+        desc_order = order != "asc"
+        rows = _cdb.select(
+            T_MACRO_HIST, filters=filters,
+            order="id.desc" if desc_order else "id.asc",
+            limit=limit, context="get_macro_history",
+        )
+        return rows
+
     query = db.query(models.MacroIndicatorHistory)
     if key:
         query = query.filter(models.MacroIndicatorHistory.key == key)
@@ -1276,12 +1293,22 @@ def save_hot_sector_snapshots(
     trade_date: str,
     sectors: List[dict],
     reason_source: str = "rule",
+    source: str = "eastmoney",
 ) -> int:
     """按 (交易日, 板块代码) 更新或插入今日热点板块快照，供后续复盘。
 
     sectors 为 app/utils/hot_sector.py 组装好的板块列表（含 stocks 明细）。
     同一交易日同一板块重复抓取时就地覆盖：盘后数据最完整，复盘只看当日最终结果。
+    source 记录实际使用的数据源（eastmoney / sina），供页面标注与排查。
+
+    ⚠ 同日残留清理：写入后删除该交易日**不在本次结果里**的旧行，覆盖两种情况：
+    ① 换源 —— 东财板块代码是 BKxxxx、新浪是 gn_xxx，两者不重叠；
+    ② 同源但板块换了一批 —— 今天的前三是 A/B/C，重抓变成 A/B/D，则 C 成了残留。
+    需求文档的口径是「当天被收盘值替换」，故同一交易日只保留最新一次的完整结果，
+    避免页面出现 6 个板块、排名重复（No.1/No.2/No.3 各出现两次）。
     """
+    new_codes = {s["code"] for s in sectors}
+
     if _USE_CLOUD:
         now = _cdb.utc_now_iso()
         payload = [{
@@ -1290,6 +1317,7 @@ def save_hot_sector_snapshots(
             "board_rank": sector.get("rank"),
             "board_name": sector.get("name") or "",
             "change_percent": sector.get("change_percent"),
+            "main_net_inflow": sector.get("main_net_inflow"),
             "turnover_rate": sector.get("turnover_rate"),
             "up_count": sector.get("up_count"),
             "down_count": sector.get("down_count"),
@@ -1297,12 +1325,14 @@ def save_hot_sector_snapshots(
             "lead_stock_change": sector.get("lead_stock_change"),
             "reason": sector.get("reason"),
             "reason_source": reason_source,
+            "source": source,
             "stocks": json.dumps(sector.get("stocks") or [], ensure_ascii=False),
             "fetched_at": now,
             "updated_at": now,
         } for sector in sectors]
         _cdb.upsert(T_HOT_SECTOR, payload, on_conflict="trade_date,board_code",
                     context="save_hot_sector_snapshots")
+        _delete_stale_rows_cloud(trade_date, new_codes)
         return len(sectors)
 
     for sector in sectors:
@@ -1321,6 +1351,7 @@ def save_hot_sector_snapshots(
         row.board_rank = sector.get("rank")
         row.board_name = sector.get("name") or ""
         row.change_percent = sector.get("change_percent")
+        row.main_net_inflow = sector.get("main_net_inflow")
         row.turnover_rate = sector.get("turnover_rate")
         row.up_count = sector.get("up_count")
         row.down_count = sector.get("down_count")
@@ -1328,12 +1359,52 @@ def save_hot_sector_snapshots(
         row.lead_stock_change = sector.get("lead_stock_change")
         row.reason = sector.get("reason")
         row.reason_source = reason_source
+        row.source = source
         row.stocks = json.dumps(sector.get("stocks") or [], ensure_ascii=False)
         row.fetched_at = func.now()
         row.updated_at = func.now()
 
+    # 同日残留清理：删掉该交易日**不在本次结果里**的旧行。
+    # 覆盖两种情况：① 换源（东财 BKxxxx vs 新浪 gn_xxx 不重叠）；
+    # ② 同源但板块换了一批（今天的前三是 A/B/C，重抓变成 A/B/D → C 成了残留）。
+    # 需求文档的口径是「当天被收盘值替换」，故同一交易日只保留最新一次的完整结果。
+    stale = (
+        db.query(models.HotSectorSnapshot)
+        .filter(
+            models.HotSectorSnapshot.trade_date == trade_date,
+            models.HotSectorSnapshot.board_code.notin_(list(new_codes)),
+        )
+        .all()
+    )
+    for row in stale:
+        db.delete(row)
+
     db.commit()
     return len(sectors)
+
+
+def _delete_stale_rows_cloud(trade_date: str, new_codes: Set[str]) -> int:
+    """云库模式：删除该交易日不在本次结果里的旧行（同日残留清理）。
+
+    云库的 delete 只支持等值过滤，故先查出该交易日的行，再按 board_code 逐个删。
+    一次最多几行，量极小。source 为 NULL 的历史行也一并清掉。
+    """
+    try:
+        rows = _cdb.select_all(T_HOT_SECTOR, filters={"trade_date": f"eq.{trade_date}"},
+                               max_rows=100, context="delete_stale_rows")
+        stale = [r for r in rows if r.get("board_code") not in new_codes]
+        for r in stale:
+            _cdb.delete(T_HOT_SECTOR,
+                        filters={"trade_date": f"eq.{trade_date}",
+                                 "board_code": f"eq.{r.get('board_code')}"},
+                        context="delete_stale_rows")
+        if stale:
+            logger.info("[hot_sector] 清理同日残留旧行 %d 条 (trade_date=%s)",
+                        len(stale), trade_date)
+        return len(stale)
+    except Exception as e:
+        logger.error("[hot_sector] 同日残留清理失败: %s", e, exc_info=True)
+        return 0
 
 
 def get_latest_hot_sector_snapshot(db: Session):

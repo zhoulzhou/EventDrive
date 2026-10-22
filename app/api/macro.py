@@ -17,10 +17,10 @@ A股估值/情绪类读数不在本页，见「股票指标」页（/stock-temp�
 - macro_indicators        ：每个指标一行，保存当前读数（覆盖式，页面读取用）
 - macro_indicator_history ：每次抓到的读数发生变化就追加一行（只增不改，用于回溯）
 
-**本页数据全部由定时任务抓取**：`./start.sh` 启动的 `run_scheduler.py` 在
-**北京时间每天 16:00** 触发宏观指标任务（抓取实现见 app/utils/macro_refresh.py，与本文件的
-POST /refresh 共用同一份）。GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时的；
-要立刻更新就点页面的「刷新数据」按钮（POST /refresh）。
+**本页数据全部由定时任务抓取**：外部自动任务在**北京时间每天 16:00** 调用
+`POST /api/crawl/daily-refresh` 触发宏观指标抓取（实现见 app/utils/macro_refresh.py，
+与本文件的 POST /refresh 共用同一份）。GET 接口只读库、不触发任何外部请求，
+所以打开页面是瞬时的；要立刻更新就点页面的「刷新数据」按钮（POST /refresh）。
 
 **「宏观趋势」页的长历史序列不由定时任务生成**：定时任务只抓当前读数（顺带把读数
 发生变化的行追加进历史表），历史回溯完全靠页面「补齐历史数据」按钮按需触发
@@ -98,34 +98,12 @@ def _source_note(detail: dict) -> str:
 
 
 def _load_raw(db: Session) -> Dict[str, dict]:
-    """从库中读取各指标读数，供判定使用。"""
-    raw: Dict[str, dict] = {}
-    for key, row in crud.get_macro_indicators(db).items():
-        if key == mi.PARAM_REVERSE_REPO:
-            continue
-        detail = mi.load_detail(row.detail)
-        raw[key] = {
-            "value": row.value,
-            "as_of": row.as_of,
-            "source": row.source,
-            "source_detail": _source_note(detail),
-            "detail": detail,
-            "error": None,
-        }
+    """从库中读取各指标读数，供判定使用。
 
-    # 未落库时用兜底默认值，保证页面有数可展示
-    for key, meta in mi.FALLBACK_DEFAULTS.items():
-        if key == mi.PARAM_REVERSE_REPO or key in raw:
-            continue
-        raw[key] = {
-            "value": meta.get("value"),
-            "as_of": meta.get("as_of", "兜底默认值"),
-            "source": "fallback",
-            "source_detail": "",
-            "detail": {},
-            "error": None,
-        }
-    return raw
+    与 app/utils/macro_refresh.py 的 load_raw 是同一份实现（那边是本体，这里转调），
+    保证「页面展示的温度计」与「落库打卡的温度计」读数完全一致。
+    """
+    return mrf.load_raw(db)
 
 
 def _load_params(db: Session) -> Dict[str, dict]:
@@ -319,13 +297,16 @@ def get_macro_series(
     - daily  ：日度序列（DR007 偏离、R001 − DR001），用于偏离度图与分层利差图
     - monthly：月度序列（PMI、PPI、社融存量同比、M1/M2 同比、M1−M2 剪刀差），
                用于阈值带图、双线剪刀差图、归一化叠加与四象限轨迹
+    - thermometer：宏观温度计序列（总分 + 三个子温度计 + 价差）。温度计是**合成值**，
+               不在指标表里，由历史表 key="macro_thermometer" 的打卡记录还原
     - anchor_steps：7 天逆回购操作利率的历史档位（回溯 DR007 偏离时的锚）
 
     序列一律按时间正序返回，元素为 {as_of, value, source}。
     """
     try:
         per_key = max(10, min(int(per_key or 3000), 5000))
-        grouped = crud.get_macro_history_series(db, mi.CHART_KEYS, per_key_limit=per_key)
+        chart_keys = list(mi.CHART_KEYS) + [mi.THERMOMETER_KEY]
+        grouped = crud.get_macro_history_series(db, chart_keys, per_key_limit=per_key)
 
         def _pack(key: str):
             return [
@@ -337,11 +318,28 @@ def get_macro_series(
         daily = {k: _pack(k) for k in mi.CHART_DAILY_KEYS}
         monthly = {k: _pack(k) for k in mi.CHART_MONTHLY_KEYS}
 
+        # 温度计：value = 总分，detail 里存三个子温度计的分数与价差
+        thermometer = []
+        for r in grouped.get(mi.THERMOMETER_KEY) or []:
+            if r.value is None:
+                continue
+            detail = mi.load_detail(r.detail) or {}
+            row = {"as_of": r.as_of, "total": r.value}
+            for sub in ("liquidity", "heat", "structure"):
+                v = detail.get(sub)
+                row[sub] = v if isinstance(v, (int, float)) else None
+            spread = detail.get("spread")
+            row["spread"] = spread if isinstance(spread, (int, float)) else None
+            row["reading"] = detail.get("reading")
+            thermometer.append(row)
+
         counts = {k: len(v) for k, v in list(daily.items()) + list(monthly.items())}
+        counts[mi.THERMOMETER_KEY] = len(thermometer)
         return {
             "status": "ok",
             "daily": daily,
             "monthly": monthly,
+            "thermometer": thermometer,
             "anchor_steps": [{"from": d, "rate": r} for d, r in mbf.POLICY_RATE_STEPS],
             "counts": counts,
             "total": sum(counts.values()),
