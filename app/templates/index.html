@@ -13,7 +13,7 @@
             <option value="同花顺">同花顺</option>
             <option value="新浪财经">新浪财经</option>
         </select>
-        <span class="filter-hint">仅显示当日新闻（每日 9:15 与 16:17 自动抓取）</span>
+        <span class="filter-hint">仅显示当日新闻（每日 9:15 与 16:17 自动抓取）· 东方财富优先，同来源按时间倒序</span>
     </div>
 </div>
 
@@ -35,7 +35,10 @@ async function loadNews(page = 1) {
     const source = document.getElementById('sourceFilter').value;
 
     // 固定只看当日新闻：不再提供「仅看当日」开关（2026-10-20 起）
-    let url = `/api/news?skip=${(page - 1) * pageSize}&limit=${pageSize}&today_only=true`;
+    // 多取一条（pageSize+1）用来判断「还有没有下一页」——
+    // /api/news 返回的是纯数组、不带总数，之前用 data.length 当总数
+    // 导致 totalPages 恒为 1、分页按钮从不出现（只能看到第一页 10 条）。
+    let url = `/api/news?skip=${(page - 1) * pageSize}&limit=${pageSize + 1}&today_only=true`;
     if (search) url += `&include_keywords=${encodeURIComponent(search)}`;
     if (source) url += `&source=${encodeURIComponent(source)}`;
 
@@ -43,9 +46,9 @@ async function loadNews(page = 1) {
         const response = await fetch(url);
         const data = await response.json();
         const newsList = Array.isArray(data) ? data : data.news || [];
-        renderNewsList(newsList);
-        const total = Array.isArray(data) ? data.length : data.total || newsList.length;
-        renderPagination(total, page, pageSize);
+        const hasMore = newsList.length > pageSize;
+        renderNewsList(newsList.slice(0, pageSize));
+        renderPagination(page, hasMore);
     } catch (error) {
         console.error('加载新闻失败:', error);
     }
@@ -70,35 +73,23 @@ function renderNewsList(news) {
     `).join('');
 }
 
-function renderPagination(total, page, pageSize) {
-    const totalPages = Math.ceil(total / pageSize);
+// 分页：接口不返回总数，用「多取一条」判断是否有下一页，
+// 只渲染 上一页 / 当前页 / 下一页，不猜总页数（猜错会出现点进去是空的页）。
+function renderPagination(page, hasMore) {
     const container = document.getElementById('pagination');
-    
-    if (totalPages <= 1) {
+    if (page <= 1 && !hasMore) {
         container.innerHTML = '';
         return;
     }
-    
+
     let html = '';
-    
     if (page > 1) {
         html += `<button class="page-btn" onclick="loadNews(${page - 1})">上一页</button>`;
     }
-    
-    for (let i = 1; i <= totalPages; i++) {
-        if (i === page) {
-            html += `<button class="page-btn active">${i}</button>`;
-        } else if (i === 1 || i === totalPages || (i >= page - 2 && i <= page + 2)) {
-            html += `<button class="page-btn" onclick="loadNews(${i})">${i}</button>`;
-        } else if (i === page - 3 || i === page + 3) {
-            html += '<span>...</span>';
-        }
-    }
-    
-    if (page < totalPages) {
+    html += `<span class="page-info">第 ${page} 页</span>`;
+    if (hasMore) {
         html += `<button class="page-btn" onclick="loadNews(${page + 1})">下一页</button>`;
     }
-    
     container.innerHTML = html;
 }
 

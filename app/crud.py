@@ -3,7 +3,7 @@ import logging
 from typing import Any, List, Optional, Dict, Set
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, or_
+from sqlalchemy import case, desc, func, or_
 
 from app import models, schemas
 from app import cloud_db as _cdb
@@ -37,6 +37,21 @@ T_MARKET_PRICE = "market_prices"
 T_HOT_SECTOR = "hot_sector_snapshots"
 T_STRATEGY = "market_strategy_state"
 T_VALUATION = "company_valuations"
+
+# ---------------------------------------------------------------- 新闻来源优先级
+#
+# 2026-10-23 用户要求：**新闻列表优先选择东方财富的新闻**。
+# 排序口径 = 来源优先级 → 同来源内按发布时间倒序（两个后端一致）：
+#   东方财富(0) → 同花顺(1) → 新浪财经(2) → 其他未知来源(3)
+# 只影响列表展示顺序，**不改抓取逻辑、不改入库数据、不改分页总量**；
+# 来源筛选下拉（source=xxx）命中单个来源时，本优先级自然退化为纯时间倒序。
+NEWS_SOURCE_PRIORITY = ("东方财富", "同花顺", "新浪财经")
+_NEWS_SOURCE_RANK = {name: i for i, name in enumerate(NEWS_SOURCE_PRIORITY)}
+
+
+def _news_source_rank(source: Optional[str]) -> int:
+    """来源优先级序号：越小越靠前，未知来源排最后。"""
+    return _NEWS_SOURCE_RANK.get((source or "").strip(), len(NEWS_SOURCE_PRIORITY))
 
 
 def using_cloud_db() -> bool:
@@ -143,6 +158,11 @@ def get_news_list(
                 rows = [r for r in rows
                         if not (_text_has(r["title"], kw) or _text_has(r["content"], kw))]
 
+        # 展示排序：先按发布时间倒序，再按来源优先级做**稳定**排序
+        # （东方财富整组提到最前，组内保持时间倒序；其余来源同理）
+        rows.sort(key=lambda r: str(r["publish_time"] or ""), reverse=True)
+        rows.sort(key=lambda r: _news_source_rank(r["source"]))
+
         return rows[skip:skip + limit] if (skip or limit) else rows
 
     query = db.query(models.News)
@@ -182,7 +202,13 @@ def get_news_list(
                     ~models.News.content.contains(keyword)
                 )
     
-    query = query.order_by(desc(models.News.publish_time))
+    # 展示排序：来源优先级（东方财富最前）→ 同来源内发布时间倒序。
+    # 用 CASE 表达式而非内存排序，保证 offset/limit 分页结果稳定。
+    source_rank = case(
+        *[(models.News.source == name, rank) for rank, name in enumerate(NEWS_SOURCE_PRIORITY)],
+        else_=len(NEWS_SOURCE_PRIORITY),
+    )
+    query = query.order_by(source_rank, desc(models.News.publish_time))
     
     return query.offset(skip).limit(limit).all()
 
