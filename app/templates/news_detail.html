@@ -18,7 +18,7 @@ const newsId = {{ news_id }};
 
 async function loadNewsDetail() {
     try {
-        const response = await fetch(`/api/news/${newsId}`);
+        const response = await fetchWithAuth(`/api/news/${newsId}`);
         if (!response.ok) {
             throw new Error('新闻不存在');
         }
