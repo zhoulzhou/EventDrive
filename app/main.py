@@ -100,11 +100,19 @@ def _content_version(files) -> str:
 
 
 def _walk_static():
-    """static/ 下所有文件的相对路径（posix 风格，排序保证哈希稳定）。"""
+    """static/ 下参与版本号的文件（相对路径，posix 风格，排序保证哈希稳定）。
+
+    只取 ``.css`` / ``.js``，并排除 ``.map``（sourcemap 不进浏览器主链路）。
+    为什么限定扩展名：沙箱的 static 目录里可能被塞进别的东西（构建产物、备份、
+    系统杂文件），它们既不是用户要加载的资源，出现与否也不该让全站 URL 变化。
+    收紧之后本地与线上的版本号才能算出同一个值。
+    """
     return sorted(
         p.relative_to(static_dir).as_posix()
         for p in static_dir.rglob("*")
         if p.is_file()
+        and p.suffix.lower() in (".css", ".js")
+        and not p.name.endswith(".map")
     )
 
 
