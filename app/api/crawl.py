@@ -113,14 +113,27 @@ def get_crawl_status(auth: bool = Depends(require_auth)):
 # 财务指标**不在**自动抓取范围内：按股票代码逐只查询、耗时且低频，
 # 改为在财务页面手动抓取（POST /api/finance/fetch）。
 
+# 并发控制：**按域加锁**，而不是整轮一把大锁。
+#
+# 2026-10-24 改：原先是一把全局锁，一次只允许跑一轮。结果是「股市热度」这个
+# 单域 6~7 分钟（被 legulegu 限流时可达 15 分钟以上）的慢域一旦超时，
+# 云端想单独补跑其余域也会被 409 挡回去 —— 一个慢域拖垮整轮。
+# 现在改成记录「正在跑的域集合」，只要**域不重叠**就允许并行点火：
+# 慢域（stock_temp）跑它的，快域（news/market/macro/hot_sector）跑自己的。
+#
+# 注意 `running` 字段仍表示「是否有任意一轮在跑」，保持 /daily-status 的既有语义。
 _daily_refresh_lock = threading.Lock()
+_running_domains: set = set()
 _daily_refresh_state = {
     "running": False,
     "started_at": None,
     "finished_at": None,
     "result": None,
     "error": None,
+    "domains": [],          # 正在跑的域（便于排查「卡在哪个域」）
 }
+
+ALL_DOMAINS = ("news", "market", "macro", "stock_temp", "hot_sector")
 
 # 单个数据域的补跑入口：key -> 协程工厂。
 # 为什么需要它：close_session 里四个慢域并发，其中 legulegu 串行 6s 间隔，
@@ -137,17 +150,42 @@ _DOMAIN_TASKS = {
 
 
 def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = None) -> bool:
-    """启动一轮收盘抓取（后台线程）。已有任务在跑时返回 False。
+    """启动一轮收盘抓取（后台线程）。
+
+    返回 False 表示**请求的域里有正在跑的**（与已跑任务冲突），调用方应稍后重试。
 
     domains 为 None 时跑整轮 close_session；传入列表则只跑指定数据域。
+    指定域之间是**并发**执行的（gather），因此拿 `news,market,macro,hot_sector`
+    这个组合时总耗时取决于最慢的那一个，而不是四个相加 —— 云端等待窗口很紧，
+    这个差别很关键。
+
+    域之间互不重叠时允许并行点火（见 _running_domains 的注释）：
+    stock_temp 在跑的同时，可以照常跑 news/market/macro/hot_sector。
     """
-    if not _daily_refresh_lock.acquire(blocking=False):
+    targets: List[str] = list(ALL_DOMAINS) if domains is None else [
+        d for d in domains if d in _DOMAIN_TASKS
+    ]
+    if not targets:
         return False
-    _daily_refresh_state.update({
-        "running": True,
-        "started_at": datetime.now().isoformat(),
-        "error": None,
-    })
+
+    with _daily_refresh_lock:
+        conflict = [d for d in targets if d in _running_domains]
+        if conflict:
+            logger.warning("数据域 %s 正在执行，本次触发跳过", ", ".join(conflict))
+            return False
+        was_idle = not _running_domains
+        _running_domains.update(targets)
+        _daily_refresh_state.update({
+            "running": True,
+            # 空闲时开新一轮才重置时间轴；并行补跑不覆盖正在跑那轮的 started_at
+            "started_at": datetime.now().isoformat() if was_idle
+                          else _daily_refresh_state.get("started_at"),
+            "error": None,
+            "domains": sorted(_running_domains),
+        })
+        if was_idle:
+            _daily_refresh_state["finished_at"] = None
+            _daily_refresh_state["result"] = None
 
     def _worker():
         # close_session 是 async，内部用 asyncio.to_thread 跑同步抓取，
@@ -155,27 +193,32 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
-            if domains:
-                # 补跑指定域；单域失败不应连累其它域，故逐个 try
-                done, failed = [], {}
-                for name in domains:
-                    factory = _DOMAIN_TASKS.get(name)
-                    if factory is None:
-                        failed[name] = "未知数据域"
-                        continue
-                    try:
-                        loop.run_until_complete(factory())
-                        done.append(name)
-                    except Exception as e:
-                        logger.error("补跑数据域 %s 失败: %s", name, e, exc_info=True)
-                        failed[name] = str(e)[:200]
+            if domains is None or set(targets) >= set(ALL_DOMAINS):
+                loop.run_until_complete(close_session())
                 _daily_refresh_state["result"] = {
-                    "mode": "domains", "domains": domains,
-                    "done": done, "failed": failed, "ok": not failed,
+                    "mode": "full", "session": session, "ok": True,
                 }
             else:
-                loop.run_until_complete(close_session())
-                _daily_refresh_state["result"] = {"mode": "full", "session": session, "ok": True}
+                # 单域失败不应连累其它域：逐个捕获异常，最后汇总
+                async def _one(name: str):
+                    try:
+                        await _DOMAIN_TASKS[name]()
+                        return name, None
+                    except Exception as e:  # noqa: BLE001
+                        logger.error("补跑数据域 %s 失败: %s", name, e, exc_info=True)
+                        return name, str(e)[:200]
+
+                done, failed = [], {}
+                pairs = loop.run_until_complete(asyncio.gather(*[_one(n) for n in targets]))
+                for name, err in pairs:
+                    if err:
+                        failed[name] = err
+                    else:
+                        done.append(name)
+                _daily_refresh_state["result"] = {
+                    "mode": "domains", "domains": targets,
+                    "done": done, "failed": failed, "ok": not failed,
+                }
         except Exception as e:
             logger.error("每日定时抓取失败: %s", e, exc_info=True)
             _daily_refresh_state["error"] = str(e)[:500]
@@ -184,9 +227,11 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
                 loop.close()
             except Exception:
                 pass
-            _daily_refresh_state["running"] = False
-            _daily_refresh_state["finished_at"] = datetime.now().isoformat()
-            _daily_refresh_lock.release()
+            with _daily_refresh_lock:
+                _running_domains.difference_update(targets)
+                _daily_refresh_state["running"] = bool(_running_domains)
+                _daily_refresh_state["domains"] = sorted(_running_domains)
+                _daily_refresh_state["finished_at"] = datetime.now().isoformat()
 
     threading.Thread(target=_worker, name="daily-refresh", daemon=True).start()
     return True
@@ -220,9 +265,12 @@ async def trigger_daily_refresh(
 
     started = _kick_daily_refresh(session="close", domains=picked)
     if not started:
+        running = sorted(_running_domains)
         return {
             "status": "running",
-            "message": "已有一轮定时抓取在执行中，跳过本次触发",
+            "message": f"请求的数据域与正在执行的任务重叠（当前在跑: {', '.join(running) or '无'}），"
+                       f"本次跳过；请稍后重试或改用不重叠的 domains",
+            "running_domains": running,
         }
     if picked:
         return {

@@ -396,21 +396,37 @@ async def close_session():
 
     # 新闻先抓（依赖网络，快）
     await full_crawl(session=SESSION_CLOSE)
-    # 其余数据域并发抓取（akshare 类较慢），但每项内部已有防重入与配额保护
+
+    # 快域并发抓取（akshare 类较慢），但每项内部已有防重入与配额保护
     # 注：不含财务指标 —— 财务按股票逐只查询、耗时且低频，改在页面手动抓取
-    results = await asyncio.gather(
+    fast_results = await asyncio.gather(
         crawl_market_data(session=SESSION_CLOSE),
         refresh_macro_indicators(session=SESSION_CLOSE),
-        refresh_stock_temp(session=SESSION_CLOSE),
         refresh_hot_sector(session=SESSION_CLOSE),
         return_exceptions=True,
     )
-    for name, r in zip(
-        ["市场行情", "宏观指标", "股票温度", "今日热点"], results
-    ):
+    for name, r in zip(["市场行情", "宏观指标", "今日热点"], fast_results):
         if isinstance(r, Exception):
             log_crawl(f"  ! {name} 抓取异常: {r}")
             _write_crawl_log(task=name, session=SESSION_CLOSE, source=name,
+                             item_count=0, status="failed", error_message=str(r)[:500])
+
+    # 股市热度**单独跑、不与其他域并发**（2026-10-24 改）。
+    #
+    # 原先是四个域一起 gather，结果 10-21 起 stock_temp 连续三天「开始跑但从不落库」——
+    # crawl_logs 里连一条 failed/skipped 都没有，说明进程在它跑完之前就没了。
+    # 时间线对得上：10-21 今日热点从新浪切到东方财富（516 个概念板块 + 成分股，
+    # 请求数与内存占用都陡增），恰好是同一天开始丢 stock_temp。
+    # 实测单跑 stock_temp 只要 260 秒，而与热点并发时会拖到 700 秒以上乃至进程被杀。
+    # 所以拆成「快域并发 → 慢域独占」，既降低峰值负载，也让慢域拿到干净的时间窗。
+    stock_temp_result = await asyncio.gather(
+        refresh_stock_temp(session=SESSION_CLOSE),
+        return_exceptions=True,
+    )
+    for r in stock_temp_result:
+        if isinstance(r, Exception):
+            log_crawl(f"  ! 股票温度 抓取异常: {r}")
+            _write_crawl_log(task="股票温度", session=SESSION_CLOSE, source="股票温度",
                              item_count=0, status="failed", error_message=str(r)[:500])
 
     log_crawl("#" * 50)
