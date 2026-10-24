@@ -6,14 +6,13 @@
 四组指标：
 - 估值层（valuation）：沪深300 PE-TTM / 沪深300 PB / ERP 股债性价比 / 破净率
 - 情绪层（sentiment）：两市成交额 / 全A换手率 / 融资余额占流通市值 / 市场宽度
-- 资金层（capital）  ：公募仓位 / 股票ETF份额 / 新基金发行 / 产业资本净增持
+- 资金层（capital）  ：股票ETF份额 / 新基金发行 / 产业资本净增持
 - 结构  （structure）：科创50 vs 创业板 分位差
 
 数据获取方式（全部自动，来源统一记为 source="akshare"，实际站点见各指标 note）：
 - 乐咕乐股（legulegu，经 akshare）
       · stock_index_pe_lg / stock_index_pb_lg        → 沪深300 PE-TTM / PB（月频，2005 年起）
       · stock_a_below_net_asset_statistics           → 全部A股破净率（日频，2005 年起）
-      · fund_stock_position_lg                       → 股票型基金仓位（周频，2008 年起）
 - 交易所官网（经 akshare，无反爬、按日可取，用于回填）
       · stock_sse_deal_daily / stock_szse_summary    → 沪/深 股票成交金额与流通市值
 - 中债 / 新浪（经 akshare）
@@ -61,7 +60,7 @@ GROUP_TITLES = {
 GROUP_SUBTITLES = {
     GROUP_VALUATION: "月频慢变量 · 决定能不能长期拿",
     GROUP_SENTIMENT: "日频快变量 · 决定短线热不热",
-    GROUP_CAPITAL: "周频/月频 · 决定行情有没有持续性",
+    GROUP_CAPITAL: "日频/月频 · 决定行情有没有持续性",
     GROUP_STRUCTURE: "观察分化：同一个 A 股，热度可能不在一个市场",
 }
 
@@ -111,7 +110,7 @@ TEMP_LAYERS = [
         "name": "资金温度",
         "weight": 0.30,
         "tone": "green",
-        "desc": "公募仓位 30% + 股票ETF份额 25% + 新基金发行 25% + 产业资本 20%。资金变量，定底气。",
+        "desc": "股票ETF份额 36% + 新基金发行 36% + 产业资本 28%。资金变量，定底气。",
     },
 ]
 
@@ -134,7 +133,7 @@ FREQ_LABELS = {"M": "近十年（120 个月）", "W": "近十年（520 周）", 
 CHART_KEYS = [
     "hs300_pe", "hs300_pb", "erp", "below_na",
     "turnover_amt", "turnover_rate", "margin", "total_float_mcap", "breadth",
-    "fund_position", "new_fund", "industry_capital", "etf_share",
+    "new_fund", "industry_capital", "etf_share",
     "structure_div", "temperature", "greed_index",
 ]
 
@@ -385,35 +384,6 @@ INDICATORS: List[Dict[str, Any]] = [
 
     # ------------------------------------------------------------ ③ 资金层
     {
-        "key": "fund_position",
-        "group": GROUP_CAPITAL,
-        "name": "公募仓位",
-        "subtitle": "股票型基金仓位（周频，乐咕口径）",
-        "unit": "%",
-        "digits": 2,
-        "temp_layer": GROUP_CAPITAL,
-        "temp_weight": 0.30,
-        "temp_invert": False,
-        "freq": "周频",
-        "judge": "percentile",
-        "meaning": (
-            "股票型基金的股票投资占净值比例（周频估算）。"
-            "仓位越高说明公募可加仓的子弹越少、越拥挤，即所谓「仓位魔咒」（高仓 = 拥挤）。"
-        ),
-        "guide": (
-            "该口径（股票型基金）长期仓位偏高（常年 90% 上下），所以看十年分位比看绝对水平更有意义："
-            "分位 >80% 属高仓拥挤，<20% 属明显低仓、子弹充足。"
-        ),
-        "warning": "「88% 仓位魔咒」主要指偏股混合型；股票型基金因合同下限（≥80%）常年高位，请以十年分位为准。",
-        "bands": [
-            {"lo": None, "hi": 20, "range": "分位 < 20%", "state": "低仓 · 子弹充足", "tone": "blue", "score": 12},
-            {"lo": 20, "hi": 40, "range": "分位 20 ~ 40%", "state": "偏低", "tone": "cyan", "score": 30},
-            {"lo": 40, "hi": 60, "range": "分位 40 ~ 60%", "state": "中性", "tone": "lime", "score": 50},
-            {"lo": 60, "hi": 80, "range": "分位 60 ~ 80%", "state": "偏高", "tone": "orange", "score": 70},
-            {"lo": 80, "hi": None, "range": "分位 > 80%", "state": "高仓拥挤", "tone": "red", "score": 88},
-        ],
-    },
-    {
         "key": "etf_share",
         "group": GROUP_CAPITAL,
         "name": "股票ETF份额",
@@ -421,7 +391,7 @@ INDICATORS: List[Dict[str, Any]] = [
         "unit": "亿份",
         "digits": 0,
         "temp_layer": GROUP_CAPITAL,
-        "temp_weight": 0.25,
+        "temp_weight": 0.36,
         "temp_invert": False,
         "freq": "日频（快照）",
         "judge": "rate",
@@ -450,7 +420,7 @@ INDICATORS: List[Dict[str, Any]] = [
         "unit": "亿元",
         "digits": 0,
         "temp_layer": GROUP_CAPITAL,
-        "temp_weight": 0.25,
+        "temp_weight": 0.36,
         "temp_invert": False,
         "freq": "月频",
         "judge": "percentile",
@@ -479,7 +449,7 @@ INDICATORS: List[Dict[str, Any]] = [
         "unit": "亿元",
         "digits": 1,
         "temp_layer": GROUP_CAPITAL,
-        "temp_weight": 0.20,
+        "temp_weight": 0.28,
         "temp_invert": True,
         "freq": "月频",
         "judge": "value",
@@ -732,7 +702,7 @@ def _ak():
 # ---------------------------------------------------------------- 乐咕乐股限流
 #
 # 现象（2026-10-18 实测）：一次「刷新数据」里hs300_pe / hs300_pb / below_na /
-# fund_position / erp 会**依次**打 legulegu，而 akshare 的每个接口内部都要
+# erp 会**依次**打 legulegu，而 akshare 的每个接口内部都要
 # 先GET 一次页面取 _csrf 令牌（stock_index_pe_lg 就硬编码了
 # `get_cookie_csrf(url=".../sz50-ttm-lyr")`）。连续 6~7 次后legulegu 开始返回
 # **HTTP 429**，响应正文是「访问过于频繁 - 乐咕乐股」的拦截页 —— 里面当然没有
@@ -745,7 +715,7 @@ def _ak():
 #   - 同一线程内用锁串行化，避免并发叠加请求
 #   - 每次调用前保证最小间隔。实测阈值：0.4s 连续 6~7 次即429，
 #     3s 在「刚被限流过」的冷却期内仍会失败，**6s 实测 5/5 全通**，故取 6s。
-#     一次完整刷新要打5 个 legulegu 接口，约 30s，可接受（页面本就允许异步抓取）。
+#     一次完整刷新要打4 个 legulegu 接口，约 24s，可接受（页面本就允许异步抓取）。
 #   - 遇 429 / 502-504 / JSON 解析失败（冷却期的典型表现）都退避后重试
 #     退避 30s → 60s → 120s → 240s：实测 legulegu 的冷却窗口长达 1~2 分钟，
 #     短退避会在冷却期内继续挨打，白白耗尽重试次数。
@@ -1367,42 +1337,6 @@ def fetch_breadth() -> Dict[str, Any]:
     }
 
 
-# ------------------------------------------------------------ 公募仓位
-
-def fetch_fund_position() -> Dict[str, Any]:
-    ak = _ak()
-    df = _legu_call(ak.fund_stock_position_lg)
-    series = _legu_series(df, "date", "position")
-    series = [p for p in series if p["value"] and p["value"] > 0]
-    if not series:
-        raise RuntimeError("乐咕乐股未返回基金仓位数据")
-    last = series[-1]
-    pct, pct_window = percentile_rank(last["value"], series, "W")
-    detail = {
-        "股票型基金仓位%": round(last["value"], 2),
-        "分位": pct,
-        "分位窗口": pct_window,
-        "样本期数": len(series),
-        "数据源": "乐咕乐股 fund_stock_position_lg",
-    }
-    # 灵活配置型仓位作为对照（数据源偶有停更，取不到就不展示）
-    try:
-        df2 = ak.fund_linghuo_position_lg()
-        s2 = [p for p in _legu_series(df2, "date", "position") if p["value"] and p["value"] > 0]
-        if s2:
-            detail["灵活配置型仓位%"] = round(s2[-1]["value"], 2)
-            detail["灵活配置型日期"] = s2[-1]["as_of"]
-    except Exception as e:
-        logger.info("灵活配置型基金仓位未取到（忽略）: %s", e)
-    return {
-        "value": round(last["value"], 2),
-        "as_of": last["as_of"],
-        "source": "akshare",
-        "detail": detail,
-        "series": series,
-    }
-
-
 # ------------------------------------------------------------ 股票ETF份额
 
 # 宽基股票ETF 的识别规则。
@@ -1823,7 +1757,6 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
     _run("breadth", fetch_breadth)
 
     # 资金层
-    _run("fund_position", fetch_fund_position)
     etf_prev = None
     if prev.get("etf_share"):
         etf_prev = prev["etf_share"]["value"] if isinstance(prev["etf_share"], dict) else prev["etf_share"]
@@ -2173,7 +2106,7 @@ def _rolling_pct_series(series: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def reconstruct_temperature(series_map: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
     """用历史表里的序列重建「月度温度」轨迹。
 
-    每条序列先按月取样；分位能算出来的（PE / PB / ERP / 破净率 / 公募仓位 / 新基金 …
+    每条序列先按月取样；分位能算出来的（PE / PB / ERP / 破净率 / 新基金 …
     有长历史）用逐点滚动分位打分，算不出来的（成交额 / 换手率等日频指标才刚开始积累）
     退回用该月读数命中的档位分打分。三层都有值的月份才给综合温度——缺层时不给，
     避免画出「成分一直在变」的假曲线。

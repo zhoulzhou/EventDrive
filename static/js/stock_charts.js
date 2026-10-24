@@ -257,32 +257,23 @@ function drawMargin(bag) {
     });
 }
 
+/* 资金层 · 新基金发行（月）
+ *
+ * 原图是「公募仓位 与 新基金发行」双轴。公募仓位指标已于 2026-10-25 下线
+ * （股票型基金仓位合同下限 ≥80%，读数常年贴 90%，信息量低），
+ * 历史序列不再增长，故本图改为只画新基金发行单轴。 */
 function drawFund(bag) {
-    const pos = pts(bag.fund_position), nf = pts(bag.new_fund);
-    if (!pos.length && !nf.length) return chartEmpty("stFund", "暂无公募仓位 / 新基金发行数据，等待定时任务每日收盘写入（可点「刷新数据」立即抓一次）");
-    const cats = (pos.length ? pos : nf).map(function (p) { return p[0]; });
-    const series = [];
-    if (nf.length) {
-        series.push({
-            name: "新基金发行（月）", type: "bar", yAxisIndex: 1, data: nf,
-            itemStyle: { color: withAlpha(CH.violet, 0.55) },
-            barMaxWidth: 14, markPoint: lastMark("新基金发行", nf, CH.violet, 0, " 亿")
-        });
-    }
-    if (pos.length) {
-        series.push(lineSeries("公募仓位", pos, CH.lime, {
-            markLine: thresholdLines([[88, "88% 仓位魔咒", CH.orange], [80, "80%（合同下限附近）", CH.slate]], true),
-            markPoint: lastMark("公募仓位", pos, CH.lime, 2, "%")
-        }));
-    }
+    const nf = pts(bag.new_fund);
+    if (!nf.length) return chartEmpty("stFund", "暂无新基金发行数据，等待定时任务每日收盘写入（可点「刷新数据」立即抓一次）");
     mount("stFund", {
-        grid: baseGrid(),
-        legend: legend(["公募仓位", "新基金发行（月）"],
-            { "公募仓位": "（% · 左轴）", "新基金发行（月）": "（亿元 · 右轴）" }),
-        tooltip: tipAxis(""),
-        xAxis: xAxis(cats),
-        yAxis: [yAxis("公募仓位（%）"), yAxis("", null, "right")],
-        series: series
+        grid: baseGrid(), tooltip: tipAxis(" 亿"),
+        xAxis: Object.assign(xAxis(nf.map(function (p) { return p[0]; })), { boundaryGap: true }),
+        yAxis: [yAxis("募集份额（亿元）")],
+        series: [{
+            name: "新基金发行（月）", type: "bar", data: nf,
+            itemStyle: { color: withAlpha(CH.violet, 0.55) },
+            barMaxWidth: 16, markPoint: lastMark("新基金发行", nf, CH.violet, 0, " 亿")
+        }]
     });
 }
 
@@ -419,7 +410,7 @@ function panelHtml() {
         + "</div>"
         + "<div class=\"st-fig-block st-f-capital\">"
         + "<div class=\"st-fig-block-head\">资金层 · 资金变量定底气</div>"
-        + fig("公募仓位 与 新基金发行（双轴）", "股票型基金仓位（周）+ 权益类新成立基金募集（月）", "stFund")
+        + fig("新基金发行（权益类，亿元）", "月频；新成立股票型/混合型/指数型基金的募集份额合计", "stFund")
         + fig("产业资本净增持（滚动30日，亿元）", "红柱=净增持 · 绿柱=净减持（A 股涨红跌绿惯例）", "stCapital")
         + "</div>"
         + "<div class=\"st-fig-block st-f-structure\">"
@@ -441,7 +432,7 @@ function trendNotesHtml() {
         + "可直接比高低。但口径不同——综合温度是「热度分合成」，贪婪指数是「分位合成」，"
         + "不是同一把尺子；它更贴近「贵不贵」，综合温度更贴近「热不热」。</li>"
         + "<li><b>阈值线已内置</b>：成交额 7000 亿地量 / 2 万亿亢奋 / 3 万亿极端、两融占流通市值 2.0 / 2.5 / 3.0 / 3.5%、ERP 均值 ±1σ、破净率 10 / 6 / 3 / 1%、"
-        + "公募仓位 88%、产业资本 ±100 / −400 亿、结构分化 ±20 / ±40pp。落在线哪一侧，直接读状态。</li>"
+        + "产业资本 ±100 / −400 亿、结构分化 ±20 / ±40pp。落在线哪一侧，直接读状态。</li>"
         + "<li><b>末端数值标签</b>在每条线最右侧单独一列，是「最新一个数据点」的读数（不是当前快照，含日期差）。</li>"
         + "<li><b>缺数据的图层自动断线</b>——某一层在早期没有数据，曲线就从有数据那天开始画，不做插补。</li>"
         + "<li>红涨绿跌按 A 股惯例：温度计与状态热=红橙、冷=蓝绿；产业资本红柱=净增持、绿柱=净减持。</li>"
@@ -449,14 +440,14 @@ function trendNotesHtml() {
         + "<div class=\"st-note\"><h3>二、先看背离，再看绝对水位</h3>"
         + "<ul>"
         + "<li>估值在低位（PE / PB 分位低、ERP 高、破净率高位）而<b>资金层抬头</b>（ETF 份额增、产业资本净增持）= 底部特征。</li>"
-        + "<li>情绪层冲高（成交额 2 万亿+、换手率抬升）而<b>资金层不动</b>（公募仓位不增、两融不涨）= 虚火。</li>"
+        + "<li>情绪层冲高（成交额 2 万亿+、换手率抬升）而<b>资金层不动</b>（ETF 份额不增、两融不涨）= 虚火。</li>"
         + "<li>两层打架时对照<b>情绪层与资金层的走势</b>：张口越大，越不该用单一维度下结论。</li>"
         + "</ul></div>"
         + "<div class=\"st-note\"><h3>三、数据口径</h3>"
         + "<ul>"
         + "<li><b>曲线从现在开始积累</b>：定时任务每天收盘抓一次各指标读数并写入历史表，本页只读库画图，"
         + "<b>不做历史回溯</b>。所以刚启用时曲线很短，越往后越完整。</li>"
-        + "<li><b>各指标频率不同</b>：估值层月频（PE / ERP）、公募仓位周频、成交额 / 换手率 / 两融 / 破净率日频，"
+        + "<li><b>各指标频率不同</b>：估值层月频（PE / ERP）、新基金发行月频、成交额 / 换手率 / 两融 / 破净率日频，"
         + "同一张图里日期轴按各自实际有数据的点绘制，不会强行对齐。</li>"
         + "<li><b>缺数据的图层自动断线</b>——某指标当天没取到就断开，不做插补。</li>"
         + "<li><b>结构分化</b>用「价格分位」而非 PE 分位（科创50 上市时间较短，估值序列覆盖不足十年）。</li>"

@@ -174,7 +174,7 @@ def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth))
 async def refresh_macro(auth: bool = Depends(require_auth)):
     """强制重新抓取全部指标。
 
-    与股市热度同理：宏观页也依赖 legulegu（ERP / 破净率 / 公募仓位…），
+    与股市热度同理：宏观页也依赖 legulegu（ERP / 破净率…），
     限流节流后一轮要 60s+，超过云沙箱反代的 60 秒硬超时，
     故改为点火后台线程后立即返回。
     """
