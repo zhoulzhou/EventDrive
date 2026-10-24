@@ -682,10 +682,17 @@ async function loadStock(force) {
     try {
         if (!force) {
             setRefreshBtn(btn, "加载中…", true);
-            const response = await fetchWithAuth("/api/stock-temp");
-            const data = await response.json();
-            if (data.status !== "ok") throw new Error(data.message || "获取股市热度失败");
-            render(data);
+            try {
+                const response = await fetchWithAuth("/api/stock-temp");
+                const data = await response.json();
+                if (data.status !== "ok") throw new Error(data.message || "获取股市热度失败");
+                render(data);
+            } finally {
+                // 首屏是**只读**加载，读完必须把按钮恢复成可点。
+                // 原来这里直接 return 没恢复，页面数据正常显示、按钮却永远停在
+                // 「加载中…」且 disabled —— 看上去像卡死（2026-10-24 修）。
+                setRefreshBtn(btn, "刷新数据", false);
+            }
             return;
         }
 
