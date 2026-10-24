@@ -30,16 +30,18 @@ ensure_schema_compatibility(engine)
 Base.metadata.create_all(bind=engine)
 print("✅ 数据库表初始化完成")
 
-# 指数预警:CSV 更新后置 RELOAD_INDEX_DATA=1 强制重导;否则仅在表为空时导入一次,之后直接查库
-if settings.RELOAD_INDEX_DATA:
-    if index_alarm.reload_index_data():
-        print("✅ 指数预警 CSV 数据已强制重新导入数据库")
-    else:
-        print("❌ 指数预警 CSV 强制重导失败")
-elif index_alarm.ensure_index_data_loaded():
-    print("✅ 指数预警 CSV 数据已一次性导入数据库")
+# 指数预警:接口优先读 index/ CSV(按 mtime 缓存),CSV 可用时完全不碰数据库。
+# index_history 表退化为降级数据源,仅在 CSV 缺失时才检查/导入。
+# (原先靠 RELOAD_INDEX_DATA 环境变量触发重导,但发布工具注入不了环境变量,
+#  线上 CSV 更新后无法生效 —— 改成读 CSV 后换文件即自动生效。)
+if index_alarm.load_index_points_from_csv() is not None:
+    print("✅ 指数预警数据源:index/ CSV(直接读取,按 mtime 缓存)")
 else:
-    print("✅ 指数预警数据已存在,直接使用数据库缓存")
+    print("⚠ 未读到 index/ CSV,降级使用 index_history 表")
+    if settings.RELOAD_INDEX_DATA:
+        index_alarm.reload_index_data()
+    elif not index_alarm.ensure_index_data_loaded():
+        print("⚠ 数据库中也无指数预警数据,该页面将为空")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
