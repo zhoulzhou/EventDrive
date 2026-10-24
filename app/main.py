@@ -67,6 +67,38 @@ jinja_env = Environment(loader=FileSystemLoader(str(templates_dir)))
 static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)
 
+# ---- 清理沙箱里残留的废弃静态文件 ----
+# 发布工具是**增量覆盖上传**：源码里已经删掉的文件不会从沙箱消失，会一直躺在
+# static/ 里参与下面的 _walk_static() 哈希，于是线上版本号和本地永久差一位
+# （2026-10-24 实证：static/js/chart.umd.min.js 本地删除已久，线上仍返回 200，
+#  线上 static_ver 因此停在 ed30c76760，而本地算出来是 8b57c14a59）。
+#
+# 这里在启动早期直接删掉，删完之后的 _walk_static() 才扫得干净。
+# 每次进程启动都会跑一遍，所以之后无论重发多少次都不会被旧文件重新污染。
+# 本地开发时文件本来就不存在，unlink 抛 FileNotFoundError 被忽略，无副作用。
+_OBSOLETE_STATIC = (
+    "js/chart.umd.min.js",  # Chart.js：2026-10-21 全站改用 ECharts 后废弃
+)
+
+
+def _purge_obsolete_static() -> list[str]:
+    """删除沙箱里残留的废弃静态文件，返回实际删掉的相对路径。"""
+    removed = []
+    for rel in _OBSOLETE_STATIC:
+        try:
+            (static_dir / rel).unlink()
+            removed.append(rel)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:  # 只读挂载等：记警告但不阻断启动
+            logger.warning("清理废弃静态文件失败 %s: %s", rel, exc)
+    return removed
+
+
+_purged = _purge_obsolete_static()
+if _purged:
+    print(f"🧹 已清理沙箱残留静态文件: {', '.join(_purged)}")
+
 # 第三方库单独版本化：echarts.min.js 有 1MB，而自己的 CSS/JS 合计才 130KB。
 # 若共用一个版本号，改一行样式也会让浏览器重下整个 echarts。
 _VENDOR_FILES = ("js/echarts.min.js",)
@@ -121,6 +153,12 @@ _ALL_STATIC = _walk_static()
 _OWN_STATIC = [rel for rel in _ALL_STATIC if rel not in _VENDOR_FILES]
 jinja_env.globals["static_ver"] = _content_version(_OWN_STATIC) if _OWN_STATIC else 0
 jinja_env.globals["vendor_ver"] = _content_version(_VENDOR_FILES)
+# 打印文件数：本地是 6 个自有资源，线上若多出来，说明沙箱又残留了旧文件
+# （这类残留会悄悄改变版本号，是「本地线上版本号对不上」的唯一成因）。
+print(
+    f"📦 静态版本号 static={jinja_env.globals['static_ver']} "
+    f"vendor={jinja_env.globals['vendor_ver']}（自有 {len(_OWN_STATIC)} 个文件）"
+)
 
 
 class _CachedStaticFiles(StaticFiles):
