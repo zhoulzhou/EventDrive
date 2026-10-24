@@ -165,11 +165,12 @@ python run_server.py
 
 | 时刻 | 云函数 | 抓取内容 |
 |------|--------|---------|
-| **09:15** | `eventdrive-morning-news` | 仅新闻（东方财富），补早间新增 |
-| **16:17**（工作日） | `eventdrive-refresh` | 收盘整轮：新闻 / 市场行情 / 宏观指标 / 股票温度计 / 今日热点 |
+| **09:15** | `eventdrive-morning-news` | 仅新闻（东方财富） |
+| **16:17**（工作日） | `eventdrive-refresh` | 收盘整轮：市场行情 / 宏观指标 / 股票温度计 / 今日热点 |
 
-A 股 15:00 收盘，16:17 抓取即为当日最终收盘值。早盘前的 9:15 单独抓一轮新闻，
-让开盘前就能看到隔夜与当日晨间资讯。
+A 股 15:00 收盘，16:17 抓取即为当日最终收盘值。**新闻只在 09:15 抓一轮**，
+收盘轮不再重复抓（2026-10-24 起），省掉一次东财新闻翻页；新闻域仍保留在
+`?domains=news` 的补跑入口里，需要时可手动补。
 
 **财务指标不在自动抓取范围内** —— 它按股票代码逐只查询、耗时且低频，
 请在财务页面手动抓取（`POST /api/finance/fetch`）。
@@ -179,10 +180,10 @@ A 股 15:00 收盘，16:17 抓取即为当日最终收盘值。早盘前的 9:15
 定时抓取**不由 Web 进程调度**，而是由 CloudBase 云函数在上述时刻调用接口点火：
 
 ```bash
-POST /api/crawl/daily-refresh# 整轮
-POST /api/crawl/daily-refresh?domains=news   # 按域补跑（早间函数用这个）
-POST /api/crawl/daily-refresh?domains=macro  # 补跑单个域
-GET  /api/crawl/daily-status                 # 查进度
+POST /api/crawl/daily-refresh               # 整轮（行情类四域，不含新闻）
+POST /api/crawl/daily-refresh?domains=news  # 只补新闻（早间函数用这个）
+POST /api/crawl/daily-refresh?domains=macro # 补跑单个域
+GET  /api/crawl/daily-status                # 查进度
 ```
 
 可补跑数据域：`news` / `market` / `macro` / `stock_temp` / `hot_sector`。
@@ -190,14 +191,12 @@ GET  /api/crawl/daily-status                 # 查进度
 实际进度查 `/api/crawl/daily-status`。
 
 **按域加锁、域不重叠即可并行**（2026-10-24 起）：一次触发只占用它请求的那几个域，
-所以「股市热度还在跑」不会挡住新闻/行情/宏观/热点的补跑；请求了正在执行的域才会被拒
+所以「股市热度还在跑」不会挡住行情/宏观/热点的补跑；请求了正在执行的域才会被拒
 （返回 `status: running` 并告知当前在跑的域）。
 
 ### 收盘轮的内部编排
 
 ```
-新闻（快）
-  ↓
 市场行情 / 宏观指标 / 今日热点   ← 三者并发，约 1 分钟
   ↓
 股票温度计（股市热度）           ← 独占，约 4~5 分钟
@@ -207,7 +206,7 @@ GET  /api/crawl/daily-status                 # 查进度
 会把后者拖到 700 秒以上乃至进程被回收 —— 表现为「开始了但 crawl_logs 里连一条失败都没有」。
 拆成「快域并发 → 慢域独占」后峰值得以下降，慢域拿到干净的时间窗（实测独占 260 秒）。
 
-云函数侧同时改成**自适应轮询**（每 20 秒查 `crawl_logs`，五域齐了提前收工）+
+云函数侧同时改成**自适应轮询**（每 20 秒查 `crawl_logs`，四域齐了提前收工）+
 **缺失域自动补跑一次**，并把「进程还在跑只是慢」和「进程已被回收」区分开报告。
 
 云函数源码在 `cloudfunctions/<函数名>/index.js`，部署配置在同级 `config.json`。

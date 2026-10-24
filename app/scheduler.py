@@ -374,25 +374,26 @@ async def full_crawl(session: str = "manual"):
 
 
 async def close_session():
-    """北京时间 16:00 —— 收盘一轮：抓取**所有页面**的数据并存入数据库。
+    """北京时间 16:00 —— 收盘一轮：抓取行情类数据并存入数据库。
 
     A 股 15:00 收盘，16:00 抓取即为当日最终收盘值。落库时：
-    - 新闻：按 URL 累积去重（只补充盘前之后新发生的，不删除已有）
     - 行情：按 (symbol, date) 覆盖 → 当天记录被收盘值替换
     - 热点：按 (trade_date, board_code) 覆盖 → 当天板块被收盘值替换
     - 宏观 / 股票温度：更新最新值，历史表按日期追加
     因此「当日最终展示的数据」以本轮收盘结果为准。
 
+    **不含新闻**（2026-10-24 用户要求）：新闻只在上午 09:15 由
+    `eventdrive-morning-news` 云函数抓一轮，收盘轮不再重复抓取。
+    新闻域仍保留在 `/api/crawl/daily-refresh?domains=news` 的补跑入口里，
+    需要时可手动补。
+
     **不含财务指标**：财务是按股票代码逐只查询的（无法全市场抓取），
     耗时且低频，改为在财务页面手动抓取（POST /api/finance/fetch）。
     """
     log_crawl("#" * 50)
-    log_crawl("### 收盘轮次 16:00：全部页面数据 ###")
+    log_crawl("### 收盘轮次 16:00：行情类数据（不含新闻） ###")
     log_crawl("#" * 50)
     t0 = datetime.now()
-
-    # 新闻先抓（依赖网络，快）
-    await full_crawl(session=SESSION_CLOSE)
 
     # 快域并发抓取（akshare 类较慢），但每项内部已有防重入与配额保护
     # 注：不含财务指标 —— 财务按股票逐只查询、耗时且低频，改在页面手动抓取
@@ -402,10 +403,16 @@ async def close_session():
         refresh_hot_sector(session=SESSION_CLOSE),
         return_exceptions=True,
     )
-    for name, r in zip(["市场行情", "宏观指标", "今日热点"], fast_results):
+    for key, name, r in zip(
+        ["market", "macro", "hot_sector"],
+        ["市场行情", "宏观指标", "今日热点"],
+        fast_results,
+    ):
         if isinstance(r, Exception):
             log_crawl(f"  ! {name} 抓取异常: {r}")
-            _write_crawl_log(task=name, session=SESSION_CLOSE, source=name,
+            # task 必须写**英文域键**：云函数按 NEED=['market','macro',...] 查 crawl_logs
+            # 判缺失，写中文名会让它以为该域「从没跑过」，从而重复补跑
+            _write_crawl_log(task=key, session=SESSION_CLOSE, source=name,
                              item_count=0, status="failed", error_message=str(r)[:500])
 
     # 股市热度**单独跑、不与其他域并发**（2026-10-24 改）。
@@ -423,7 +430,7 @@ async def close_session():
     for r in stock_temp_result:
         if isinstance(r, Exception):
             log_crawl(f"  ! 股票温度 抓取异常: {r}")
-            _write_crawl_log(task="股票温度", session=SESSION_CLOSE, source="股票温度",
+            _write_crawl_log(task="stock_temp", session=SESSION_CLOSE, source="股票温度",
                              item_count=0, status="failed", error_message=str(r)[:500])
 
     log_crawl("#" * 50)

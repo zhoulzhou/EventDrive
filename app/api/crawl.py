@@ -133,7 +133,12 @@ _daily_refresh_state = {
     "domains": [],          # 正在跑的域（便于排查「卡在哪个域」）
 }
 
-ALL_DOMAINS = ("news", "market", "macro", "stock_temp", "hot_sector")
+# 收盘轮（close_session）实际抓取的域。**不含 news**：新闻只在上午 09:15
+# 由 eventdrive-morning-news 云函数抓一轮（2026-10-24 用户要求），
+# 收盘轮不再重复抓，省掉一次完整的东财新闻翻页。
+CLOSE_DOMAINS = ("market", "macro", "stock_temp", "hot_sector")
+# 可单独补跑的域集合（含 news —— 上午那轮失败时可手动补）
+ALL_DOMAINS = ("news",) + CLOSE_DOMAINS
 
 # 单个数据域的补跑入口：key -> 协程工厂。
 # 为什么需要它：close_session 里四个慢域并发，其中 legulegu 串行 6s 间隔，
@@ -141,7 +146,7 @@ ALL_DOMAINS = ("news", "market", "macro", "stock_temp", "hot_sector")
 # 会被打断（实测 10-19 丢了 stock_temp）。让外部定时任务能**按域单独补跑**，
 # 就不必因为某个慢域失败而重跑全部。
 _DOMAIN_TASKS = {
-    "news": lambda: full_crawl(session="close"),
+    "news": lambda: full_crawl(session="morning"),
     "market": lambda: crawl_market_data(session="close"),
     "macro": lambda: refresh_macro_indicators(session="close"),
     "stock_temp": lambda: refresh_stock_temp(session="close"),
@@ -154,15 +159,18 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
 
     返回 False 表示**请求的域里有正在跑的**（与已跑任务冲突），调用方应稍后重试。
 
-    domains 为 None 时跑整轮 close_session；传入列表则只跑指定数据域。
-    指定域之间是**并发**执行的（gather），因此拿 `news,market,macro,hot_sector`
-    这个组合时总耗时取决于最慢的那一个，而不是四个相加 —— 云端等待窗口很紧，
-    这个差别很关键。
+    domains 为 None 时跑整轮 close_session（行情类四域，**不含新闻**）；
+    传入列表则只跑指定数据域。指定域之间是**并发**执行的（gather），
+    因此拿 `market,macro,hot_sector` 这个组合时总耗时取决于最慢的那一个，
+    而不是三个相加 —— 云端等待窗口很紧，这个差别很关键。
+
+    例外：显式传入的域恰好等于收盘轮四域时仍走 close_session，
+    以保留「快域并发 → 慢域独占」的编排（慢域与热点并发会被拖垮，见 close_session 注释）。
 
     域之间互不重叠时允许并行点火（见 _running_domains 的注释）：
     stock_temp 在跑的同时，可以照常跑 news/market/macro/hot_sector。
     """
-    targets: List[str] = list(ALL_DOMAINS) if domains is None else [
+    targets: List[str] = list(CLOSE_DOMAINS) if domains is None else [
         d for d in domains if d in _DOMAIN_TASKS
     ]
     if not targets:
@@ -193,7 +201,7 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
-            if domains is None or set(targets) >= set(ALL_DOMAINS):
+            if domains is None or set(targets) == set(CLOSE_DOMAINS):
                 loop.run_until_complete(close_session())
                 _daily_refresh_state["result"] = {
                     "mode": "full", "session": session, "ok": True,
@@ -242,7 +250,10 @@ async def trigger_daily_refresh(
     domains: Optional[str] = None,
     auth: bool = Depends(require_auth),
 ):
-    """外部定时任务入口：跑一轮收盘抓取（新闻 + 行情 + 宏观 + 温度 + 热点）。
+    """外部定时任务入口：跑一轮收盘抓取（行情 + 宏观 + 温度 + 热点）。
+
+    **不含新闻**：新闻只在上午 09:15 抓（`?domains=news`）。
+    收盘轮传空即跑行情类四域。
 
     **立即返回、后台执行**：一轮完整抓取要数分钟，而云沙箱反代硬超时 60 秒，
     同步执行必然 504。落库由后台线程完成，稍后查 `/crawl/daily-status` 看进度。

@@ -12,7 +12,7 @@
  *
  * 2026-10-24 改造（原先是「点火 → 死等 700 秒 → 报告缺失」，两个毛病）：
  * a. 死等：一轮正常只要 350 秒左右，也要空等满 700 秒才出结果。
- *    → 改成**每 20 秒查一次 crawl_logs，五域齐了就提前结束**。
+ *    → 改成**每 20 秒查一次 crawl_logs，四域齐了就提前结束**。
  * b. 只报告不补救：发现 stock_temp 缺失时只打一行 "需手动补跑"，从不真补。
  *    → 现在会**按缺失域自动补跑一次**（/api/crawl/daily-refresh?domains=xxx），
  *      并把「进程还在跑」和「进程已死」区分开报告。
@@ -25,7 +25,10 @@ const TOKEN = process.env.EVENTDRIVE_SESSION_TOKEN || '';
 const KEY = process.env.EVENTDRIVE_CLOUD_DB_KEY || '';
 
 // 快域：几十秒内落库。慢域：股市热度单独跑，实测 260 秒（被限流时更久）。
-const FAST = ['news', 'market', 'macro', 'hot_sector'];
+// **不含 news**（2026-10-24 起）：新闻只在上午 09:15 由 eventdrive-morning-news
+// 抓一轮，收盘轮不再重复抓。若仍把它列在 NEED 里，本函数会一直等一个永远
+// 不会落库的域，最后误判「缺失」并去补跑新闻。
+const FAST = ['market', 'macro', 'hot_sector'];
 const SLOW = ['stock_temp'];
 const NEED = [...FAST, ...SLOW];
 
@@ -134,7 +137,7 @@ exports.main = async (event, context) => {
     return { ok: false, step: 'ignite_failed', error: String(e.message).slice(0, 300) };
   }
 
-  // 2) 自适应等待：五域齐了就提前收工，不再死等固定时长
+  // 2) 自适应等待：四域齐了就提前收工，不再死等固定时长
   let state = await waitFor(NEED, DEADLINE_MS - (Date.now() - START));
   let missing = NEED.filter((t) => !state.got.has(t));
   console.log(
