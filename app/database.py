@@ -133,14 +133,5 @@ def ensure_schema_compatibility(engine=engine):
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE company_valuations ADD COLUMN growth_transition FLOAT"))
                 print("[database] company_valuations 表已补充 growth_transition 列")
-
-        # hot_sector_snapshots: 2026-10-21 起数据源改为东方财富优先，
-        # 新增 source 列记录实际使用的源（eastmoney / sina）。
-        if inspector.has_table("hot_sector_snapshots"):
-            columns = {col["name"] for col in inspector.get_columns("hot_sector_snapshots")}
-            if "source" not in columns:
-                with engine.begin() as conn:
-                    conn.execute(text("ALTER TABLE hot_sector_snapshots ADD COLUMN source TEXT"))
-                print("[database] hot_sector_snapshots 表已补充 source 列")
     except Exception as e:
         print(f"[database] 表结构检测失败: {e}")

@@ -8,11 +8,11 @@
     set CLOUD_DB_KEY=wbpk_xxx
     python migrate_snapshot_to_cloud.py
 
-迁移范围（全部 12 张表）：
+迁移范围（全部 11 张表）：
     快照类小表：macro_indicators / macro_indicator_history /
               stock_temp_indicators / stock_temp_history / crawl_logs
     大表    ：news / index_history / financial_reports / market_prices /
-              hot_sector_snapshots / market_strategy_state / company_valuations
+              market_strategy_state / company_valuations
 
 ⚠ 历史表按 (key, as_of) 定位，导入后云库里若已有同点会被「修正」而非追加，
   这是 upsert_history 的既定语义，符合预期。
@@ -89,14 +89,6 @@ BIG_MIGRATIONS = [
         "market_prices", "market_prices",
         ["symbol", "name", "unit", "value", "date", "created_at", "updated_at"],
         "symbol,date",
-    ),
-    (
-        "hot_sector_snapshots", "hot_sector_snapshots",
-        ["trade_date", "board_rank", "board_name", "board_code", "change_percent",
-         "main_net_inflow", "turnover_rate", "up_count", "down_count",
-         "lead_stock", "lead_stock_change", "reason", "reason_source",
-         "reason_model", "stocks", "fetched_at", "created_at", "updated_at"],
-        "trade_date,board_code",
     ),
     (
         "market_strategy_state", "market_strategy_state",

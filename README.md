@@ -42,7 +42,6 @@
 | 宏观指标 | akshare + 央行官网 |
 | 股票温度计 | akshare + 交易所官网 |
 | 财务指标 | akshare 新浪财报 |
-| 今日热点 | akshare 概念板块 |
 
 市场行情页的四个指标：
 
@@ -69,7 +68,7 @@ EventDrive/
 │   ├── crud.py                 # 数据访问层
 │   ├── scheduler.py            # APScheduler 编排
 │   ├── market_strategy.py      # 峰值回撤策略引擎
-│   ├── api/                    # 11 个 router
+│   ├── api/                    # 9 个 router
 │   │   ├── news.py             # 新闻列表 / 详情
 │   │   ├── crawl.py            # 手动触发抓取 + 抓取状态
 │   │   ├── login.py            # 登录鉴权
@@ -78,14 +77,13 @@ EventDrive/
 │   │   ├── finance.py          # 财务指标
 │   │   ├── valuation.py        # 公司估值（DCF）
 │   │   ├── macro.py            # 宏观指标
-│   │   ├── stock_temp.py       # 股票温度计
-│   │   └── hot_sector.py       # 今日热点
+│   │   └── stock_temp.py       # 股票温度计
 │   ├── crawlers/
 │   │   ├── base.py             # BaseCrawler / NewsItem
 │   │   ├── eastmoney_depth.py  # 东方财富（接口方式，唯一新闻源）
 │   │   └── market_data.py      # 市场行情
-│   ├── utils/                  # 14 个工具模块
-│   └── templates/              # 14 个页面模板
+│   ├── utils/                  # 11 个工具模块
+│   └── templates/              # 13 个页面模板
 ├── static/                     # CSS / JS / 第三方 echarts
 ├── data/db.sqlite3             # SQLite 数据库
 ├── index/*.csv                 # 指数历史数据（FRED 导出）
@@ -166,7 +164,7 @@ python run_server.py
 | 时刻 | 云函数 | 抓取内容 |
 |------|--------|---------|
 | **09:15** | `eventdrive-morning-news` | 仅新闻（东方财富） |
-| **16:17**（工作日） | `eventdrive-refresh` | 收盘整轮：市场行情 / 宏观指标 / 股票温度计 / 今日热点 |
+| **16:17**（工作日） | `eventdrive-refresh` | 收盘整轮：市场行情 / 宏观指标 / 股票温度计 |
 
 A 股 15:00 收盘，16:17 抓取即为当日最终收盘值。**新闻只在 09:15 抓一轮**，
 收盘轮不再重复抓（2026-10-24 起），省掉一次东财新闻翻页；新闻域仍保留在
@@ -180,33 +178,33 @@ A 股 15:00 收盘，16:17 抓取即为当日最终收盘值。**新闻只在 09
 定时抓取**不由 Web 进程调度**，而是由 CloudBase 云函数在上述时刻调用接口点火：
 
 ```bash
-POST /api/crawl/daily-refresh               # 整轮（行情类四域，不含新闻）
+POST /api/crawl/daily-refresh               # 整轮（行情类三域，不含新闻）
 POST /api/crawl/daily-refresh?domains=news  # 只补新闻（早间函数用这个）
 POST /api/crawl/daily-refresh?domains=macro # 补跑单个域
 GET  /api/crawl/daily-status                # 查进度
 ```
 
-可补跑数据域：`news` / `market` / `macro` / `stock_temp` / `hot_sector`。
+可补跑数据域：`news` / `market` / `macro` / `stock_temp`。
 接口**点火后台线程后立即返回**（反代硬超时 60 秒，而整轮要 3~7 分钟，同步必 504），
 实际进度查 `/api/crawl/daily-status`。
 
 **按域加锁、域不重叠即可并行**（2026-10-24 起）：一次触发只占用它请求的那几个域，
-所以「股市热度还在跑」不会挡住行情/宏观/热点的补跑；请求了正在执行的域才会被拒
+所以「股市热度还在跑」不会挡住行情/宏观的补跑；请求了正在执行的域才会被拒
 （返回 `status: running` 并告知当前在跑的域）。
 
 ### 收盘轮的内部编排
 
 ```
-市场行情 / 宏观指标 / 今日热点   ← 三者并发，约 1 分钟
+市场行情 / 宏观指标   ← 二者并发，约 1 分钟
   ↓
-股票温度计（股市热度）           ← 独占，约 4~5 分钟
+股票温度计（股市热度） ← 独占，约 4~5 分钟
 ```
 
-**慢域必须单独跑**：10-21 今日热点切到东方财富后请求量陡增，与 `stock_temp` 并发时
-会把后者拖到 700 秒以上乃至进程被回收 —— 表现为「开始了但 crawl_logs 里连一条失败都没有」。
+**慢域必须单独跑**：`stock_temp` 与快域并发时会被拖到 700 秒以上乃至进程被回收 ——
+表现为「开始了但 crawl_logs 里连一条失败都没有」。
 拆成「快域并发 → 慢域独占」后峰值得以下降，慢域拿到干净的时间窗（实测独占 260 秒）。
 
-云函数侧同时改成**自适应轮询**（每 20 秒查 `crawl_logs`，四域齐了提前收工）+
+云函数侧同时改成**自适应轮询**（每 20 秒查 `crawl_logs`，三域齐了提前收工）+
 **缺失域自动补跑一次**，并把「进程还在跑只是慢」和「进程已被回收」区分开报告。
 
 云函数源码在 `cloudfunctions/<函数名>/index.js`，部署配置在同级 `config.json`。
@@ -226,7 +224,6 @@ GET  /api/crawl/daily-status                # 查进度
 |------|--------|---------|
 | 新闻 | `url` | **累积去重**：只补充新发生的新闻，不删除已有 |
 | 市场行情 | `symbol` + `date` | 当天记录被收盘值替换 |
-| 今日热点 | `trade_date` + `board_code` | 当天板块被收盘值替换 |
 | 宏观 / 股票温度 | 按 `key` 更新最新值 | 历史表按日期追加，趋势曲线完整 |
 
 ### 抓取日志
@@ -298,7 +295,6 @@ TASK_DAILY_QUOTA=8
 | `/stock-temp` `/stock-trend` | 股票温度计 |
 | `/finance` | 财务指标 |
 | `/valuation` | 公司估值 |
-| `/hot-sector` | 今日热点 |
 | `/login` | 登录 |
 | `/health` | 健康检查 |
 

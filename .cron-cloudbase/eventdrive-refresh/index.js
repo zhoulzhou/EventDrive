@@ -28,7 +28,7 @@ const KEY = process.env.EVENTDRIVE_CLOUD_DB_KEY || '';
 // **不含 news**（2026-10-24 起）：新闻只在上午 09:15 由 eventdrive-morning-news
 // 抓一轮，收盘轮不再重复抓。若仍把它列在 NEED 里，本函数会一直等一个永远
 // 不会落库的域，最后误判「缺失」并去补跑新闻。
-const FAST = ['market', 'macro', 'hot_sector'];
+const FAST = ['market', 'macro'];
 const SLOW = ['stock_temp'];
 const NEED = [...FAST, ...SLOW];
 

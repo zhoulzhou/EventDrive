@@ -13,7 +13,6 @@ from app.utils.anti_crawl import (
 )
 from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
-from app.utils.hot_sector_refresh import fetch_and_store_hot_sector
 
 logger = logging.getLogger(__name__)
 
@@ -253,70 +252,6 @@ async def refresh_stock_temp(session: str = "manual"):
     log_crawl("=" * 50)
 
 
-async def refresh_hot_sector(session: str = "manual"):
-    """抓取今日热点（概念板块热点前三）并落库，供后续复盘。
-
-    与页面接口 /api/hot-sector 共用 app/utils/hot_sector_refresh.py 的实现。
-    抓取本身是异步的（akshare 阻塞调用已在线程池内执行），这里直接 await，
-    不套 asyncio.to_thread，避免「线程里再起事件循环」。
-
-    落库按 (trade_date, board_code) 覆盖：同一交易日的板块数据会被后一次抓取
-    就地更新，因此 16:00 收盘轮会自然覆盖 10:00 盘前轮的结果。
-
-    限流：同 refresh_macro_indicators，任务级配额 + 防重入。
-    """
-    if not check_task_allowed("hot_sector"):
-        log_crawl("今日热点：已达今日配额或正在运行，跳过")
-        _write_crawl_log(task="hot_sector", session=session, source="hot_sector",
-                         item_count=0, status="skipped",
-                         error_message="已达今日配额或正在运行")
-        return
-
-    log_crawl("=" * 50)
-    log_crawl(f"开始更新今日热点（概念板块）... (轮次: {session})")
-    log_crawl("=" * 50)
-    mark_task_started("hot_sector")
-    t0 = datetime.now()
-    stored = 0
-    try:
-        payload = await fetch_and_store_hot_sector()
-        if payload.get("status") != "ok":
-            log_crawl(f"今日热点更新失败: {payload.get('message')}")
-            _write_crawl_log(task="hot_sector", session=session, source="hot_sector",
-                             item_count=0, status="failed",
-                             error_message=str(payload.get("message"))[:500],
-                             duration=int((datetime.now() - t0).total_seconds()))
-        else:
-            stored = payload.get("stored_sectors", 0) or 0
-            log_crawl(
-                f"今日热点更新完成: 交易日 {payload.get('trade_date')}, "
-                f"板块 {len(payload.get('sectors', []))} 个, "
-                f"落库 {stored} 条"
-            )
-            for sector in payload.get("sectors", []):
-                log_crawl(
-                    f"  - {sector.get('rank')}. {sector.get('name')} "
-                    f"{sector.get('change_percent')}% "
-                    f"成分股 {sector.get('up_count')}涨{sector.get('down_count')}跌"
-                )
-            for msg in payload.get("errors") or []:
-                log_crawl(f"  ! {msg}")
-            _write_crawl_log(task="hot_sector", session=session, source="hot_sector",
-                             item_count=stored,
-                             status="ok" if stored else "empty",
-                             duration=int((datetime.now() - t0).total_seconds()))
-    except Exception as e:
-        log_crawl(f"今日热点更新出错: {str(e)}")
-        logger.error(f"!!! 今日热点更新出错: {e}", exc_info=True)
-        _write_crawl_log(task="hot_sector", session=session, source="hot_sector",
-                         item_count=0, status="failed", error_message=str(e)[:500],
-                         duration=int((datetime.now() - t0).total_seconds()))
-    finally:
-        mark_task_finished("hot_sector")
-
-    log_crawl("=" * 50)
-
-
 async def full_crawl(session: str = "manual"):
     """抓取新闻。
 
@@ -378,7 +313,6 @@ async def close_session():
 
     A 股 15:00 收盘，16:00 抓取即为当日最终收盘值。落库时：
     - 行情：按 (symbol, date) 覆盖 → 当天记录被收盘值替换
-    - 热点：按 (trade_date, board_code) 覆盖 → 当天板块被收盘值替换
     - 宏观 / 股票温度：更新最新值，历史表按日期追加
     因此「当日最终展示的数据」以本轮收盘结果为准。
 
@@ -400,12 +334,11 @@ async def close_session():
     fast_results = await asyncio.gather(
         crawl_market_data(session=SESSION_CLOSE),
         refresh_macro_indicators(session=SESSION_CLOSE),
-        refresh_hot_sector(session=SESSION_CLOSE),
         return_exceptions=True,
     )
     for key, name, r in zip(
-        ["market", "macro", "hot_sector"],
-        ["市场行情", "宏观指标", "今日热点"],
+        ["market", "macro"],
+        ["市场行情", "宏观指标"],
         fast_results,
     ):
         if isinstance(r, Exception):
@@ -417,11 +350,9 @@ async def close_session():
 
     # 股市热度**单独跑、不与其他域并发**（2026-10-24 改）。
     #
-    # 原先是四个域一起 gather，结果 10-21 起 stock_temp 连续三天「开始跑但从不落库」——
+    # 原先各域一起 gather，结果 10-21 起 stock_temp 连续三天「开始跑但从不落库」——
     # crawl_logs 里连一条 failed/skipped 都没有，说明进程在它跑完之前就没了。
-    # 时间线对得上：10-21 今日热点从新浪切到东方财富（516 个概念板块 + 成分股，
-    # 请求数与内存占用都陡增），恰好是同一天开始丢 stock_temp。
-    # 实测单跑 stock_temp 只要 260 秒，而与热点并发时会拖到 700 秒以上乃至进程被杀。
+    # 实测单跑 stock_temp 只要 260 秒，而与其它域并发时会拖到 700 秒以上乃至进程被杀。
     # 所以拆成「快域并发 → 慢域独占」，既降低峰值负载，也让慢域拿到干净的时间窗。
     stock_temp_result = await asyncio.gather(
         refresh_stock_temp(session=SESSION_CLOSE),

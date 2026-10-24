@@ -370,7 +370,7 @@ def check_task_allowed(task_name: str) -> bool:
     """检查某任务今日是否还有执行额度，以及是否已在运行中（防重入）。
 
     Args:
-        task_name: 任务标识，如 "macro" / "stock_temp" / "hot_sector"。
+        task_name: 任务标识，如 "macro" / "stock_temp"。
 
     Returns:
         True 表示允许执行；False 表示已达配额或正在运行中。

@@ -12,7 +12,6 @@ from app.scheduler import (
     crawl_market_data,
     refresh_macro_indicators,
     refresh_stock_temp,
-    refresh_hot_sector,
 )
 from app.api.login import require_auth
 
@@ -119,7 +118,7 @@ def get_crawl_status(auth: bool = Depends(require_auth)):
 # 单域 6~7 分钟（被 legulegu 限流时可达 15 分钟以上）的慢域一旦超时，
 # 云端想单独补跑其余域也会被 409 挡回去 —— 一个慢域拖垮整轮。
 # 现在改成记录「正在跑的域集合」，只要**域不重叠**就允许并行点火：
-# 慢域（stock_temp）跑它的，快域（news/market/macro/hot_sector）跑自己的。
+# 慢域（stock_temp）跑它的，快域（news/market/macro）跑自己的。
 #
 # 注意 `running` 字段仍表示「是否有任意一轮在跑」，保持 /daily-status 的既有语义。
 _daily_refresh_lock = threading.Lock()
@@ -136,12 +135,12 @@ _daily_refresh_state = {
 # 收盘轮（close_session）实际抓取的域。**不含 news**：新闻只在上午 09:15
 # 由 eventdrive-morning-news 云函数抓一轮（2026-10-24 用户要求），
 # 收盘轮不再重复抓，省掉一次完整的东财新闻翻页。
-CLOSE_DOMAINS = ("market", "macro", "stock_temp", "hot_sector")
+CLOSE_DOMAINS = ("market", "macro", "stock_temp")
 # 可单独补跑的域集合（含 news —— 上午那轮失败时可手动补）
 ALL_DOMAINS = ("news",) + CLOSE_DOMAINS
 
 # 单个数据域的补跑入口：key -> 协程工厂。
-# 为什么需要它：close_session 里四个慢域并发，其中 legulegu 串行 6s 间隔，
+# 为什么需要它：close_session 里各域并发，其中 legulegu 串行 6s 间隔，
 # stock_temp 单域就要 6~7 分钟，而沙箱可能在任务跑到一半时回收进程 —— 整轮
 # 会被打断（实测 10-19 丢了 stock_temp）。让外部定时任务能**按域单独补跑**，
 # 就不必因为某个慢域失败而重跑全部。
@@ -150,7 +149,6 @@ _DOMAIN_TASKS = {
     "market": lambda: crawl_market_data(session="close"),
     "macro": lambda: refresh_macro_indicators(session="close"),
     "stock_temp": lambda: refresh_stock_temp(session="close"),
-    "hot_sector": lambda: refresh_hot_sector(session="close"),
 }
 
 
@@ -159,16 +157,16 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
 
     返回 False 表示**请求的域里有正在跑的**（与已跑任务冲突），调用方应稍后重试。
 
-    domains 为 None 时跑整轮 close_session（行情类四域，**不含新闻**）；
+    domains 为 None 时跑整轮 close_session（行情类三域，**不含新闻**）；
     传入列表则只跑指定数据域。指定域之间是**并发**执行的（gather），
-    因此拿 `market,macro,hot_sector` 这个组合时总耗时取决于最慢的那一个，
-    而不是三个相加 —— 云端等待窗口很紧，这个差别很关键。
+    因此拿 `market,macro` 这个组合时总耗时取决于最慢的那一个，
+    而不是两者相加 —— 云端等待窗口很紧，这个差别很关键。
 
-    例外：显式传入的域恰好等于收盘轮四域时仍走 close_session，
-    以保留「快域并发 → 慢域独占」的编排（慢域与热点并发会被拖垮，见 close_session 注释）。
+    例外：显式传入的域恰好等于收盘轮三域时仍走 close_session，
+    以保留「快域并发 → 慢域独占」的编排（慢域与快域并发会被拖垮，见 close_session 注释）。
 
     域之间互不重叠时允许并行点火（见 _running_domains 的注释）：
-    stock_temp 在跑的同时，可以照常跑 news/market/macro/hot_sector。
+    stock_temp 在跑的同时，可以照常跑 news/market/macro。
     """
     targets: List[str] = list(CLOSE_DOMAINS) if domains is None else [
         d for d in domains if d in _DOMAIN_TASKS
@@ -250,16 +248,16 @@ async def trigger_daily_refresh(
     domains: Optional[str] = None,
     auth: bool = Depends(require_auth),
 ):
-    """外部定时任务入口：跑一轮收盘抓取（行情 + 宏观 + 温度 + 热点）。
+    """外部定时任务入口：跑一轮收盘抓取（行情 + 宏观 + 温度）。
 
     **不含新闻**：新闻只在上午 09:15 抓（`?domains=news`）。
-    收盘轮传空即跑行情类四域。
+    收盘轮传空即跑行情类三域。
 
     **立即返回、后台执行**：一轮完整抓取要数分钟，而云沙箱反代硬超时 60 秒，
     同步执行必然 504。落库由后台线程完成，稍后查 `/crawl/daily-status` 看进度。
 
     可选 `domains` 参数（逗号分隔）只跑指定数据域，用于补跑被中断的部分：
-    `news,market,macro,stock_temp,hot_sector`
+    `news,market,macro,stock_temp`
 
     注意：**不含财务指标**，财务在页面手动抓取（`POST /api/finance/fetch`）。
     """

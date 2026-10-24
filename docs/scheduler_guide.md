@@ -18,7 +18,7 @@
 
 **任务级防重入**：`check_task_allowed()` 保证同一任务不会并发执行；定时任务与页面手动触发撞车时，后到者直接跳过。
 
-涉及的任务：`news_crawl`、`market`、`macro`、`stock_temp`、`hot_sector`。
+涉及的任务：`news_crawl`、`market`、`macro`、`stock_temp`。
 
 运行期观察：`get_limiter().snapshot()`、`task_quota_snapshot()`。
 
@@ -43,8 +43,7 @@
 2. asyncio.gather 并发：
    ├─ crawl_market_data       市场行情
    ├─ refresh_macro_indicators 宏观指标
-   ├─ refresh_stock_temp      股票温度计
-   └─ refresh_hot_sector      今日热点
+   └─ refresh_stock_temp      股票温度计
 ```
 
 **不含财务指标**：财务按股票代码逐只查询（无法全市场抓取），耗时且低频，
@@ -58,7 +57,7 @@ POST /api/crawl/daily-refresh?domains=macro      # 按域补跑
 GET  /api/crawl/daily-status                     # 查进度
 ```
 
-可补跑数据域：`news` / `market` / `macro` / `stock_temp` / `hot_sector`。
+可补跑数据域：`news` / `market` / `macro` / `stock_temp`。
 
 ⚠️ 必须**点火后台线程后立即返回** —— 反代硬超时 60 秒，整轮要 3~7 分钟。
 ⚠️ 沙箱可能在抓取途中重启导致部分域丢失，自动任务必须**校验落库 + 补跑缺失域**。
@@ -71,7 +70,6 @@ GET  /api/crawl/daily-status                     # 查进度
 |------|--------|---------|
 | 新闻 | `url` | 累积去重（只补充新发生的） |
 | 市场行情 | `symbol` + `date` | 当天替换为收盘值 |
-| 今日热点 | `trade_date` + `board_code` | 当天替换为收盘值 |
 | 宏观 / 股票温度 | `key` | 更新最新值，历史表按日期追加 |
 
 ### 抓取日志
@@ -80,7 +78,7 @@ GET  /api/crawl/daily-status                     # 查进度
 
 | 字段 | 含义 |
 |------|------|
-| `task` | news / market / macro / stock_temp / hot_sector |
+| `task` | news / market / macro / stock_temp |
 | `session` | close / manual |
 | `source` | 数据源名称 |
 | `item_count` | 本次抓取条数 |
@@ -188,14 +186,6 @@ GET  /api/crawl/daily-status                     # 查进度
 - 与页面接口 `/api/stock-temp/refresh` 共用 `app/utils/stock_temp_refresh.py`
 - 在 16:00 收盘轮触发，只抓当前读数
 
-## 今日热点（refresh_hot_sector）
-
-- 抓取概念板块热点前三，写入 `hot_sector_snapshots`
-- 数据源：akshare（阻塞调用已在线程池内执行），此处直接 await
-- 写入时机只有两个：用户点页面「刷新数据」，或本定时任务
-- 同一交易日同一板块就地覆盖，取当日最终结果
-- 页面打开时只读库展示，不发外部请求
-
 ## 历史数据策略：只累积，不回溯
 
 两个趋势页（`/stock-trend`、`/macro-trend`）的数据**从零开始逐日积累**，不做历史回溯：
@@ -237,7 +227,6 @@ python run_server.py    # 或 ./start.sh / start.bat
 | `app/crawlers/market_data.py` | 市场行情抓取 |
 | `app/utils/macro_refresh.py` | 宏观指标抓取 |
 | `app/utils/stock_temp_refresh.py` | 股票指标抓取 |
-| `app/utils/hot_sector_refresh.py` | 今日热点抓取 |
 
 ## 常见问题排查
 
