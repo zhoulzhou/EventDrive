@@ -60,6 +60,11 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         items.sort(key=lambda it: order[it["symbol"]])
 
         # 分级着色：VIX 按绝对值分级（<20 绿 / 20~30 黄 / >=30 红），其余指标按回撤幅度分级（附峰值信息）
+        #
+        # 策略状态**一次性批量取**（云库下逐个取是 N 次往返，每次 0.25~0.9s）
+        strategy_states = crud.get_market_strategy_states(
+            db, [it["symbol"] for it in items if it["symbol"] != "VIXCLS"]
+        )
         for it in items:
             if it["value"] is None:
                 it["drawdown_level"] = "normal"
@@ -69,7 +74,7 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
                 thresholds = strategy.get("thresholds", [20, 30]) if strategy else [20, 30]
                 info = compute_level(it["value"], thresholds)
             else:
-                state = crud.get_market_strategy_state(db, it["symbol"])
+                state = strategy_states.get(it["symbol"])
                 info = compute_drawdown(it["symbol"], it["value"], state, current_date=it["date"])
             it.update(info)
 

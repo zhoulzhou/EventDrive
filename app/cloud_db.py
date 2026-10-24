@@ -30,6 +30,9 @@ WorkBuddy 云数据库对外只暴露 PostgREST REST 接口（`/.cloud/database/
 """
 import logging
 import os
+import threading
+import time
+from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import httpx
@@ -198,12 +201,130 @@ def close_client() -> None:
         _client = None
 
 
+# ================================================================ 读缓存
+#
+# 为什么要这一层
+# --------------
+# 云库单次往返 0.25~0.9 秒（网关 + 库侧开销；TCP 建连只占 50ms，慢在服务端）。
+# 而本应用的数据是「每天批量更新一次」：9:15 抓新闻、16:17 收盘轮刷新指标。
+# 于是同一份数据被反复读上千次，每次都付一次完整往返 —— 实测新闻列表一个请求
+# 要分 6 页拉完 5907 行（2.8s），宏观页一个请求把 macro_indicators 查了 5 遍。
+#
+# 这一层做两件事：
+#   1. **请求内去重**：同一请求里多次查同一张表/同一条件，第二次起零往返；
+#   2. **跨请求缓存**：数据日更，重复打开页面不必反复取。
+#
+# 一致性
+# ------
+# **任何写操作（POST / PATCH / DELETE）成功后整体失效**。抓取任务写库之后，
+# 下一次读必然回源，不会出现「抓完还是旧数据」。默认 TTL 120 秒只作用于纯读。
+#
+# 为什么不缓存到内存里的 Row 对象：Row 会被调用方原地修改（如补字段），
+# 缓存字节流、每次重新解析成新 Row，能避免调用方互相污染。
+
+_CACHE_MAX_ENTRIES = 512
+_CACHE_MAX_ITEM_BYTES = 2 * 1024 * 1024      # 单条上限：大响应不值得占内存
+_CACHE_MAX_BYTES = 32 * 1024 * 1024          # 总量上限（沙箱内存有限，留足余量）
+_cache: "OrderedDict[str, Tuple[float, int, bytes, Dict[str, str]]]" = OrderedDict()
+_cache_bytes = 0
+_cache_stat = {"hit": 0, "miss": 0, "invalidate": 0}
+_cache_lock = threading.Lock()
+
+
+def _cache_ttl() -> float:
+    """读缓存有效期（秒）。0 表示关闭。每次读配置，便于测试时临时改。"""
+    try:
+        return float(getattr(settings, "CLOUD_DB_CACHE_TTL", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cache_key(path: str, params: Optional[Dict[str, Any]]) -> str:
+    if not params:
+        return path
+    items = sorted((str(k), str(v)) for k, v in params.items())
+    return path + "?" + "&".join(f"{k}={v}" for k, v in items)
+
+
+def clear_cache() -> None:
+    """清空读缓存（写操作后自动调用；测试与「抓取完成后强刷」也可手动调）。"""
+    global _cache_bytes
+    with _cache_lock:
+        _cache.clear()
+        _cache_bytes = 0
+        _cache_stat["invalidate"] += 1
+
+
+def cache_stats() -> Dict[str, Any]:
+    """缓存命中情况，用于排查「页面为什么还慢」。"""
+    with _cache_lock:
+        return {
+            "ttl": _cache_ttl(),
+            "entries": len(_cache),
+            "bytes": _cache_bytes,
+            **_cache_stat,
+        }
+
+
+def _cache_get(key: str) -> Optional[Tuple[int, bytes, Dict[str, str]]]:
+    global _cache_bytes
+    ttl = _cache_ttl()
+    if ttl <= 0:
+        return None
+    now = time.time()
+    with _cache_lock:
+        item = _cache.get(key)
+        if item is None:
+            _cache_stat["miss"] += 1
+            return None
+        expire_at, status, body, headers = item
+        if expire_at <= now:
+            # 过期就地摘掉（顺带修正字节计数）
+            _cache.pop(key, None)
+            _cache_bytes -= len(body)
+            _cache_stat["miss"] += 1
+            return None
+        _cache.move_to_end(key)          # LRU：命中的挪到队尾
+        _cache_stat["hit"] += 1
+        return status, body, headers
+
+
+def _cache_put(key: str, status: int, body: bytes, headers: Dict[str, str]) -> None:
+    global _cache_bytes
+    ttl = _cache_ttl()
+    if ttl <= 0 or status != 200 or not body:
+        return
+    if len(body) > _CACHE_MAX_ITEM_BYTES:
+        return
+    expire_at = time.time() + ttl
+    with _cache_lock:
+        old = _cache.pop(key, None)
+        if old is not None:
+            _cache_bytes -= len(old[2])
+        _cache[key] = (expire_at, status, body, headers)
+        _cache_bytes += len(body)
+        # 淘汰：条目数超限或总量超限，从最旧的开始丢
+        while _cache and (len(_cache) > _CACHE_MAX_ENTRIES
+                          or _cache_bytes > _CACHE_MAX_BYTES):
+            _, (_, _, dropped, _) = _cache.popitem(last=False)
+            _cache_bytes -= len(dropped)
+
+
 # ================================================================ 请求封装
 
 def _request(method: str, path: str, *, params: Optional[Dict[str, Any]] = None,
              json_body: Any = None, prefer: Optional[str] = None
              ) -> httpx.Response:
-    """发一次请求；非 2xx 抛 CloudDBError（带状态码与响应片段便于定位）。"""
+    """发一次请求（GET 走读缓存）；非 2xx 抛 CloudDBError（带状态码与响应片段便于定位）。"""
+    is_read = method.upper() == "GET"
+    key = _cache_key(path, params) if is_read else ""
+
+    if is_read:
+        cached = _cache_get(key)
+        if cached is not None:
+            status, body, headers = cached
+            return httpx.Response(status_code=status, content=body, headers=headers)
+
     headers = {"Prefer": prefer} if prefer else None
     try:
         resp = _client_instance().request(
@@ -216,6 +337,16 @@ def _request(method: str, path: str, *, params: Optional[Dict[str, Any]] = None,
         raise CloudDBError(
             f"云数据库返回 {resp.status_code}: {method} {path}: {resp.text[:300]}"
         )
+
+    if is_read:
+        # 只留调用方用得上的头（content-type 决定 .json() 的解析方式）
+        keep = {k: v for k, v in resp.headers.items()
+                if k.lower() in ("content-type", "content-range")}
+        _cache_put(key, resp.status_code, resp.content, keep)
+    else:
+        # 写成功 → 整体失效：宁可多回源，也不能让页面看到写之前的旧值
+        clear_cache()
+
     return resp
 
 

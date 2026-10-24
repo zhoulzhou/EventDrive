@@ -89,6 +89,17 @@ class Settings:
         "CLOUD_DB_KEY",
         "wbpk_qSd54InvBTGATZPZuNrkZA_Nuy2RbjRqRfNnWOMEf5fJP1z5DqFzpsW")
 
+    # 云库**读缓存**有效期（秒）。0 = 关闭。
+    #
+    # 为什么需要：云库每次往返 0.25~0.9 秒（网关 + 库侧开销，与浏览器链路无关），
+    # 而本应用的数据是「每天批量更新一次」——9:15 抓新闻、16:17 收盘轮刷新指标。
+    # 同一份数据被反复读，却每次都付一次完整往返。
+    # 加读缓存后：命中时零往返，页面从 1~3 秒降到 0.2~0.4 秒（只剩反代开销）。
+    #
+    # 一致性：**任何写操作成功后整体失效**（见 cloud_db._invalidate_cache），
+    # 所以「抓取完立刻刷新页面」不会读到旧值；120 秒只覆盖纯读场景。
+    CLOUD_DB_CACHE_TTL: float = float(os.getenv("CLOUD_DB_CACHE_TTL", "120"))
+
     # 市场指标自动抓取缓存有效期（小时）。超过则下次打开页面重新抓取
     MACRO_CACHE_TTL_HOURS: float = float(os.getenv("MACRO_CACHE_TTL_HOURS", "12"))
 

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from jinja2 import Environment, FileSystemLoader
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 
 from app.config import settings
@@ -68,21 +69,30 @@ static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)
 
 
-class _NoCacheStaticFiles(StaticFiles):
-    """给静态资源加上 no-store，避免浏览器长期缓存旧的 CSS/JS。
+class _CachedStaticFiles(StaticFiles):
+    """给静态资源加**长缓存**，靠 URL 上的 ``?v={{ static_ver }}`` 做版本失效。
 
-    默认的 StaticFiles 只发 ETag、不发 Cache-Control，浏览器在「离线可用/刷新」等
-    策略下可能继续用旧副本，改完样式却看不到变化（这轮宏观温度计布局调整就踩到过）。
-    这里明确要求每次回源校验，改完刷新即生效；文件都是本地磁盘读，开销可忽略。
+    此前这里是 ``no-store``（每次都回源），起因是改完样式刷新看不到变化。
+    但代价太大：``echarts.min.js`` 有 1MB，每次打开任何图表页都要重新下载
+    （实测冷启动 4.7 秒），而反代带宽有限，这是「网页慢」最直接的一环。
+
+    改为一年 + immutable 后：同一个 ``static_ver`` 内浏览器零请求，
+    而每次部署都会重启进程 → static_ver 变 → URL 变 → 自然拿到新文件。
+    唯一要注意的是「不重启进程就改静态文件」看不到变化，本地调试用硬刷新（Ctrl+F5）。
     """
 
     def file_response(self, *args, **kwargs):
         resp = super().file_response(*args, **kwargs)
-        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return resp
 
 
-app.mount("/static", _NoCacheStaticFiles(directory=str(static_dir)), name="static")
+# 压缩中间件：**此前线上完全没有压缩**（实测 index-alarm 299KB、echarts 1MB 都是裸传）。
+# 这些响应全是 JSON / 文本，gzip 后约为 1/6~1/10，对首屏是白捡的收益。
+# 放在挂载 static 之前也覆盖静态文件（Starlette 的 middleware 包裹整个 ASGI 应用）。
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+
+app.mount("/static", _CachedStaticFiles(directory=str(static_dir)), name="static")
 
 app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(crawl.router, prefix="/api", tags=["crawl"])

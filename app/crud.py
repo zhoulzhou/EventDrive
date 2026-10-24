@@ -47,6 +47,14 @@ T_VALUATION = "company_valuations"
 NEWS_SOURCE_PRIORITY = ("东方财富",)
 _NEWS_SOURCE_RANK = {name: i for i, name in enumerate(NEWS_SOURCE_PRIORITY)}
 
+# 列表页实际用到的列 —— **不含 content**。
+# content 是正文全文（单条约几千字），而列表只显示 summary（app/templates/index.html
+# 里用的是 item.summary）。之前 `select=*` 把 1000 行正文一起拉回来，白白放大响应、
+# 拖慢解析；裁掉后同样一页的字节数降到 1/5 左右。
+# response_model 里 content 是 Optional，缺列时为 None，不影响接口契约。
+_NEWS_LIST_COLUMNS = ("id,title,summary,source,publish_time,url,"
+                      "author,image_path,created_at,updated_at")
+
 
 def _news_source_rank(source: Optional[str]) -> int:
     """来源优先级序号：越小越靠前，未知来源排最后。"""
@@ -126,6 +134,44 @@ def get_news_list(
     # 因此关键词过滤改成逐关键词查询后在内存里求交集 —— 关键词数量很少（通常 1~3个），
     # 代价是几次往返，收益是语义与 SQLite 分支完全一致。
     if _USE_CLOUD:
+        # ---- 快路径：把「时间过滤 + 排序 + 分页」下推给 PostgREST ----
+        #
+        # 原实现是 `select_all(max_rows=20000)` 把整张 news 表拉回内存再过滤：
+        # 网关单次最多 1000 行，5907 行要 6 次往返（单次 0.25~0.9s），而列表页
+        # 一次只显示 20 条 —— 一次页面加载白付 5 次往返。改为服务端过滤后只剩 1 次。
+        #
+        # 适用条件（两个前提同时满足才走快路径）：
+        #   1. 没有关键词过滤 —— 关键词是「标题含X 或 正文含X」的多组 OR，
+        #      PostgREST 虽能表达，但逐个 or 参数拼接易错，且关键词是低频操作，
+        #      保留内存过滤更稳；
+        #   2. 新闻来源优先级只有一个 —— 云库分支原本要在时间倒序之上再做一次
+        #      「来源优先级」稳定排序（东财整组提前）。若有多源，下推 limit 会把
+        #      某个源整批切掉，语义就变了；只有单源时两种排序等价，才能安全下推。
+        #      （2026-10-24 新闻源已收敛为东方财富单一来源。）
+        if (not include_keywords and not exclude_keywords
+                and len(NEWS_SOURCE_PRIORITY) <= 1):
+            filters = {}
+            if not all_history:
+                if today_only:
+                    since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                else:
+                    since = datetime.now() - timedelta(hours=24)
+                # 截断到秒再比：云库 TIMESTAMP 列只存到秒，带微秒的边界值会误判
+                since = since.replace(microsecond=0)
+                filters["publish_time"] = f"gte.{since.isoformat(sep='T', timespec='seconds')}"
+            if source:
+                filters["source"] = f"eq.{source}"
+            return _cdb.select(
+                T_NEWS,
+                columns=_NEWS_LIST_COLUMNS,
+                filters=filters or None,
+                order="publish_time.desc",
+                limit=limit,
+                offset=skip,
+                context="news:page",
+            )
+
+        # ---- 慢路径：整表拉取后在内存里做关键词过滤与来源排序 ----
         if all_history:
             rows = _cdb.select_all(T_NEWS, order="publish_time.desc", max_rows=20000,
                                    context="news:all_history")
@@ -454,6 +500,30 @@ def get_market_strategy_state(db: Session, symbol: str) -> Optional[models.Marke
         .filter(models.MarketStrategyState.symbol == symbol)
         .first()
     )
+
+
+def get_market_strategy_states(db: Session, symbols: List[str]) -> Dict[str, models.MarketStrategyState]:
+    """批量读取多个 symbol 的策略状态，返回 {symbol: state}。
+
+    为什么需要批量版：行情页要按 4 个指标逐个着色，原本在循环里逐个
+    `get_market_strategy_state()` —— 云库下就是 4 次独立往返（每次 0.25~0.9s）。
+    合成一次 `symbol=in.(...)` 查询后只剩 1 次。
+    """
+    syms = [s for s in symbols if s]
+    if not syms:
+        return {}
+    if _USE_CLOUD:
+        rows = _cdb.select(
+            T_STRATEGY, filters={"symbol": "in.(" + ",".join(syms) + ")"},
+            context="get_market_strategy_states",
+        )
+        return {row["symbol"]: row for row in rows if row.get("symbol")}
+    rows = (
+        db.query(models.MarketStrategyState)
+        .filter(models.MarketStrategyState.symbol.in_(syms))
+        .all()
+    )
+    return {row.symbol: row for row in rows}
 
 
 def save_market_strategy_state(
