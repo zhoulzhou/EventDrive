@@ -1,6 +1,6 @@
+import hashlib
 import html
 import logging
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
@@ -63,12 +63,56 @@ app = FastAPI(
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates_dir = BASE_DIR / "app" / "templates"
 jinja_env = Environment(loader=FileSystemLoader(str(templates_dir)))
-# 静态资源缓存击穿的时间戳：进程启动瞬间生成，所有页面通过 {{ static_ver }} 取用，
-# 服务重启一次 = 全部 CSS/JS 的 URL 变化，浏览器必然重新拉取。
-jinja_env.globals["static_ver"] = int(time.time())
 
 static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)
+
+# 第三方库单独版本化：echarts.min.js 有 1MB，而自己的 CSS/JS 合计才 130KB。
+# 若共用一个版本号，改一行样式也会让浏览器重下整个 echarts。
+_VENDOR_FILES = ("js/echarts.min.js",)
+
+
+def _content_version(files) -> str:
+    """按文件**内容**算版本号。传入相对 static/ 的路径序列。
+
+    这里原先用的是 ``int(time.time())``（进程启动瞬间的时间戳），后果是：
+    沙箱实例每次重启（每次发布、每次被回收后冷启动）版本号都变 → 静态资源 URL 变
+    → 浏览器长缓存在下一跳全部失效，1MB 的 echarts 又得重新下载一遍。
+    用户感知就是「每次打开都要从网上拉」。
+
+    改为内容哈希后，版本号只跟文件字节有关：部署多少次、重启多少个实例，
+    只要文件没变，URL 就完全一致，浏览器一路命中 ``immutable`` 缓存（零请求）。
+    只有真正改了那个文件，它的 URL 才变。
+
+    启动时读一遍全部静态文件约 1.2MB，耗时十几毫秒，无感。
+    """
+    h = hashlib.sha1()
+    for rel in files:
+        h.update(rel.encode("utf-8"))
+        h.update(b"\x00")
+        path = static_dir / rel
+        try:
+            h.update(path.read_bytes())
+        except OSError:
+            h.update(b"missing")
+        h.update(b"\x00")
+    return h.hexdigest()[:10]
+
+
+def _walk_static():
+    """static/ 下所有文件的相对路径（posix 风格，排序保证哈希稳定）。"""
+    return sorted(
+        p.relative_to(static_dir).as_posix()
+        for p in static_dir.rglob("*")
+        if p.is_file()
+    )
+
+
+_ALL_STATIC = _walk_static()
+# 自己的资源：排除第三方库，改了才有必要让浏览器重下
+_OWN_STATIC = [rel for rel in _ALL_STATIC if rel not in _VENDOR_FILES]
+jinja_env.globals["static_ver"] = _content_version(_OWN_STATIC) if _OWN_STATIC else 0
+jinja_env.globals["vendor_ver"] = _content_version(_VENDOR_FILES)
 
 
 class _CachedStaticFiles(StaticFiles):
@@ -78,9 +122,10 @@ class _CachedStaticFiles(StaticFiles):
     但代价太大：``echarts.min.js`` 有 1MB，每次打开任何图表页都要重新下载
     （实测冷启动 4.7 秒），而反代带宽有限，这是「网页慢」最直接的一环。
 
-    改为一年 + immutable 后：同一个 ``static_ver`` 内浏览器零请求，
-    而每次部署都会重启进程 → static_ver 变 → URL 变 → 自然拿到新文件。
-    唯一要注意的是「不重启进程就改静态文件」看不到变化，本地调试用硬刷新（Ctrl+F5）。
+    一年 + immutable 后，浏览器在 URL 不变时**完全不发请求**。
+    URL 的版本号由 `_content_version()` 按文件内容算出，与进程生命周期无关：
+    重启、重新部署不会让它变，只有真正改了文件才变。
+    本地调试改了 JS/CSS 而未重启服务时，用硬刷新（Ctrl+F5）绕过缓存。
     """
 
     def file_response(self, *args, **kwargs):

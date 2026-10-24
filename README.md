@@ -158,7 +158,7 @@ cp .env.example .env
 |---|---|---|
 | 新闻列表 `crud.get_news_list` | 整表 5907 行分 6 页拉回内存过滤 | 时间过滤/排序/分页下推给 PostgREST，并裁掉 `content` 列 |
 | 行情页策略状态 | 每个指标查一次（N 次往返） | 一次 `symbol=in.(...)` 批量取 |
-| 静态资源 | `Cache-Control: no-store`，1MB 的 echarts 每次重下 | `immutable` 长缓存，靠 `?v=static_ver` 换版本 |
+| 静态资源 | `no-store`，1MB 的 echarts 每次重下 | `immutable` 长缓存 + 内容哈希版本号（重启不变），echarts 独立 `vendor_ver` |
 | 响应压缩 | 无（299KB 的 JSON 裸传） | `GZipMiddleware`，约 1/7 |
 
 > 关键词搜索仍走「整表拉取 + 内存过滤」的慢路径：关键词是「标题或正文」的多组 OR，
@@ -402,7 +402,15 @@ TASK_DAILY_QUOTA=8
 
 - **所有曲线一律用 ECharts**（硬约定）：`static/js/echarts.min.js` 本地库，5 个图表页共用（市场行情 / 指数预警 / 财务指标 / 热度趋势 / 宏观趋势）。不使用外部 CDN，也不引入 Chart.js 或其他图表库；新增图表沿用「独立 `*_charts.js` + `echarts.init` + `chart-load-failed` 兜底」的现有模式。
 - 原 `static/js/chart.umd.min.js`（Chart.js 4.4.1）在全部页面迁移到 ECharts 后已无引用，2026-10-21 删除。
-- 静态资源统一带 `Cache-Control: no-store` 与 `?v=<启动时间戳>`（由 `jinja_env.globals["static_ver"]` 注入），服务重启即换 URL，避免改了样式却因浏览器缓存看不到变化。
+- 静态资源统一带 `Cache-Control: public, max-age=31536000, immutable`，URL 上是 `?v=<内容哈希>`
+  （`jinja_env.globals["static_ver"]` / `vendor_ver`，见下条）。
+- **版本号按文件内容哈希计算，与进程生命周期无关**：早先用 `int(time.time())`（进程启动时间戳），
+  沙箱每次重启（每次发布、每次回收后冷启动）URL 都会变，1MB 的 echarts 每次都要重下 ——
+  表现就是「明明本地加载，却每次都在拉」。
+  现在 `static_ver` 覆盖自己的 CSS/JS（约 130KB），`vendor_ver` 单独覆盖 `echarts.min.js`，
+  两者独立：改样式不会连累 echarts 缓存，升级 echarts 也不影响自己的资源。
+  部署多少次、重启多少个实例，只要文件没变 URL 就一模一样，浏览器零请求。
+  本地改了 JS/CSS 但没重启服务时，用硬刷新（Ctrl+F5）绕过缓存。
 
 ## 许可证
 
