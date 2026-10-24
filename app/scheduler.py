@@ -6,12 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.database import SessionLocal
 from app import crud, schemas
-from app.crawlers import (
-    EastmoneyDepthCrawler,
-    THSNewsCrawler,
-    SinaNewsCrawler,
-    NewsItem
-)
+from app.crawlers import EastmoneyDepthCrawler, NewsItem
 from app.crawlers.market_data import refresh_market_data
 from app.utils.anti_crawl import (
     check_task_allowed, mark_task_started, mark_task_finished,
@@ -340,7 +335,9 @@ async def full_crawl(session: str = "manual"):
     mark_task_started("news_crawl")
     start_time = datetime.now()
 
-    news_sources = [EastmoneyDepthCrawler, THSNewsCrawler, SinaNewsCrawler]
+    # 新闻源只保留东方财富（2026-10-24 用户要求下线同花顺、新浪财经两个源）。
+    # 保留 list + 并发结构：将来加回源只需在此追加类，编排无需改动。
+    news_sources = [EastmoneyDepthCrawler]
     sem = asyncio.Semaphore(CONCURRENT_CRAWLERS)
 
     log_crawl(f"并发抓取 {len(news_sources)} 个新闻源 (并发数: {CONCURRENT_CRAWLERS})")

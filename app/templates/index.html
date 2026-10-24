@@ -7,13 +7,7 @@
     <h1>新闻列表</h1>
     <div class="filter-bar">
         <input type="text" id="searchInput" placeholder="搜索新闻..." class="search-input">
-        <select id="sourceFilter" class="filter-select">
-            <option value="">全部来源</option>
-            <option value="东方财富">东方财富</option>
-            <option value="同花顺">同花顺</option>
-            <option value="新浪财经">新浪财经</option>
-        </select>
-        <span class="filter-hint">仅显示当日新闻（每日 9:15 与 16:17 自动抓取）· 东方财富优先，同来源按时间倒序</span>
+        <span class="filter-hint">仅显示当日新闻（每日 9:15 与 16:17 自动抓取）· 来源：东方财富</span>
     </div>
 </div>
 
@@ -32,15 +26,14 @@ const pageSize = 10;
 async function loadNews(page = 1) {
     currentPage = page;
     const search = document.getElementById('searchInput').value;
-    const source = document.getElementById('sourceFilter').value;
 
+    // 新闻源只保留东方财富（2026-10-24），来源筛选下拉已移除
     // 固定只看当日新闻：不再提供「仅看当日」开关（2026-10-20 起）
     // 多取一条（pageSize+1）用来判断「还有没有下一页」——
     // /api/news 返回的是纯数组、不带总数，之前用 data.length 当总数
     // 导致 totalPages 恒为 1、分页按钮从不出现（只能看到第一页 10 条）。
     let url = `/api/news?skip=${(page - 1) * pageSize}&limit=${pageSize + 1}&today_only=true`;
     if (search) url += `&include_keywords=${encodeURIComponent(search)}`;
-    if (source) url += `&source=${encodeURIComponent(source)}`;
 
     try {
         const response = await fetch(url);
@@ -105,7 +98,6 @@ function escapeHtml(text) {
 }
 
 document.getElementById('searchInput').addEventListener('input', debounce(() => loadNews(1), 300));
-document.getElementById('sourceFilter').addEventListener('change', () => loadNews(1));
 
 function debounce(func, wait) {
     let timeout;

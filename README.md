@@ -1,6 +1,6 @@
 # EventDrive
 
-基于 FastAPI 的**多源**财经资讯抓取应用。定时从东方财富、同花顺、新浪财经的公开接口抓取新闻，落库到 SQLite，首页展示当日新闻。
+基于 FastAPI 的财经资讯抓取应用。定时从**东方财富**公开接口抓取新闻，落库到 SQLite / 云库，首页展示当日新闻。
 
 > 抓取链路：**定时任务 → 接口爬虫 → SQLite → Web 页面**。
 > 不含浏览器自动化、不含大模型分析、不含飞书推送。
@@ -19,20 +19,19 @@
 
 ## 数据来源
 
-### 新闻（3 个源）
+### 新闻（1 个源：东方财富）
 
-全部通过公开 JSON 接口抓取，无需登录、无需 Cookie：
+通过公开 JSON 接口抓取，无需登录、无需 Cookie：
 
 | 源 | 接口 | 返回格式 |
 |----|------|----------|
 | **东方财富** | `np-listapi.eastmoney.com/comm/web/getNewsByColumns`（财经导读，`column=345`） | 标准 JSON |
 | | `newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html`（7x24 快讯补量） | `var ajaxResult={...};` 需剥壳 |
-| **同花顺** | `news.10jqka.com.cn/tapp/news/push/stock/`（快讯） | 标准 JSON，需带 Referer |
-| **新浪财经** | `feed.mix.sina.com.cn/api/roll/get`（滚动新闻，`pageid=153&lid=2516`） | 标准 JSON |
 
-三源均以 `ctime`（秒级 Unix 时间戳，北京时间）作为发布时间，按 URL 去重，列表**东方财富优先**、同来源内按发布时间倒序。抓到的新闻全部写入 `news` 表。
+以 `ctime`（秒级 Unix 时间戳，北京时间）作为发布时间，按 URL 去重，列表按发布时间倒序。抓到的新闻全部写入 `news` 表。
 
-> 同花顺接口对 Referer 有要求，缺失会被重定向到错误页，爬虫已在请求头中固定携带。
+> **2026-10-24 起新闻源只保留东方财富**：同花顺（`app/crawlers/ths.py`）、新浪财经（`app/crawlers/sina.py`）两个抓取器已删除，
+> 编排里的 `news_sources` 只剩 `EastmoneyDepthCrawler`。库里早期入库的同花顺 / 新浪旧数据仍可查询，但不再新增。
 
 ### 其他数据域
 
@@ -83,9 +82,7 @@ EventDrive/
 │   │   └── hot_sector.py       # 今日热点
 │   ├── crawlers/
 │   │   ├── base.py             # BaseCrawler / NewsItem
-│   │   ├── eastmoney_depth.py  # 东方财富（接口方式）
-│   │   ├── ths.py              # 同花顺（接口方式）
-│   │   ├── sina.py             # 新浪财经（接口方式）
+│   │   ├── eastmoney_depth.py  # 东方财富（接口方式，唯一新闻源）
 │   │   └── market_data.py      # 市场行情
 │   ├── utils/                  # 14 个工具模块
 │   └── templates/              # 14 个页面模板
@@ -168,7 +165,7 @@ python run_server.py
 
 | 时刻 | 云函数 | 抓取内容 |
 |------|--------|---------|
-| **09:15** | `eventdrive-morning-news` | 仅新闻（三源），补早间新增 |
+| **09:15** | `eventdrive-morning-news` | 仅新闻（东方财富），补早间新增 |
 | **16:17**（工作日） | `eventdrive-refresh` | 收盘整轮：新闻 / 市场行情 / 宏观指标 / 股票温度计 / 今日热点 |
 
 A 股 15:00 收盘，16:17 抓取即为当日最终收盘值。早盘前的 9:15 单独抓一轮新闻，
@@ -252,10 +249,9 @@ GET  /api/crawl/daily-status                 # 查进度
 - **数量限制**：每个源最多保留 `NEWS_PER_SOURCE` 条（默认 10）
 - **时间范围**：抓取时仅保留最近 `NEWS_TIME_RANGE_HOURS` 小时的新闻（默认 24）
 - **去重**：按原文 URL 去重（`news.url` 有 UNIQUE 约束），已存在的新闻不重复写入
-- **排序**：**东方财富优先** → 同来源内按发布时间倒序（`app/crud.py` 的 `NEWS_SOURCE_PRIORITY`）。
-  优先级依次为 东方财富 / 同花顺 / 新浪财经，未知来源排最后；来源筛选（`source=xxx`）时退化为纯时间倒序。
-  该口径只影响列表展示顺序，不改抓取与入库
-- **落库**：三源抓到的新闻统一写入 `news` 表，页面与 API 均从库中读取
+- **排序**：按发布时间倒序（`app/crud.py` 的 `NEWS_SOURCE_PRIORITY` 仍保留「东方财富优先」口径，
+  库里历史残留的同花顺 / 新浪旧数据会排在其后；`source=xxx` 筛选时退化为纯时间倒序）
+- **落库**：抓到的新闻统一写入 `news` 表，页面与 API 均从库中读取
 - **抓取量**：每源单轮只请求 1 页/1 个接口，抓取量收敛到「保留条数 + 少量冗余」（约 20 条），不做多页连翻
 
 ## 抓取限流（防频繁 / 防超量）
