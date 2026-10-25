@@ -7,18 +7,18 @@
 ======================  ==========================================  ==========
 7天逆回购操作利率        《公开市场业务交易公告》                       每个交易日
 社融存量同比             《金融统计数据报告》（数据解读栏目）             每月
-超储率                   《中国货币政策执行报告》（PDF 正文）           每季度
 分部门存贷款             《金融统计数据报告》第四、五节（累计口径）        每月
-（住户/企业/非银/财政）
+（住户/企业/非银/财政，
+含中长期贷款与财政存款）
 ======================  ==========================================  ==========
 
 设计约定：
 - 每个 fetch_* 函数独立失败，异常由调用方按「该指标抓取失败」处理，不影响其他指标。
-- 返回 {"value": float, "as_of": str, "detail": dict}；超储率在报告期未变时
-  返回 {"skipped": True, ...} 以避免重复下载数 MB 的 PDF。
+- 返回 {"value": float, "as_of": str, "detail": dict}。
+  （原「超储率」分项已于 2026-10-25 下线，改由 1Y AAA 同业存单收益率替代，见 ncd_rate.py；
+   故本模块不再下载解析《货币政策执行报告》PDF。）
 - 页面编码为 UTF-8；沙箱环境可能注入失效代理，故显式关闭 trust_env。
 """
-import io
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -39,10 +39,8 @@ _working_base: Optional[str] = None
 # 各栏目索引页
 COL_OMO = "/zhengcehuobisi/125207/125213/125431/125475/index.html"        # 公开市场业务交易公告
 COL_FIN_STAT = "/diaochatongjisi/116219/116225/index.html"                # 金融统计数据报告
-COL_MPR = "/zhengcehuobisi/125207/125227/125957/index.html"               # 货币政策执行报告
 
 _HTML_TIMEOUT = 25
-_PDF_TIMEOUT = 120
 
 
 # ---------------------------------------------------------------- HTTP 基础
@@ -216,23 +214,31 @@ def fetch_tsf_stock_yoy() -> Dict[str, Any]:
     raise RuntimeError("未能解析社融存量同比（%s）" % (last_error or "报告正文无匹配字段"))
 
 
-# ---------------------------------------------------------------- 分部门存贷款
+# ---------------------------------------------------------------- 信用 / 部门（分部门存贷款）
 #
-# ③「部门结构」维度看的是「钱在谁手里」，取《金融统计数据报告》第四、五节的
-# 分部门数据。注意口径是**年初至今累计**（"前八个月人民币存款增加…其中住户存款
-# 增加 6.99 万亿元"），不是当月增量 —— 央行月度报告只披露累计数。
+# ③「信用/部门」回答「钱在企业 / 住户 / 政府谁手里」，取《金融统计数据报告》第四、五节：
+#   · 贷款分部门：「分部门看，住户贷款减少 1.03 万亿元，其中，短期贷款减少…，中长期贷款增加 1062 亿元；
+#     企（事）业单位贷款增加 12.55 万亿元，其中，短期贷款…，中长期贷款…，票据融资…」
+#   · 存款分部门：「其中，住户存款增加…，非金融企业存款增加…，财政性存款增加…，非银行业金融机构存款增加…」
+#
+# 口径都是**年初至今累计**（"前九个月人民币贷款增加…"），央行不披露当月增量，故：
+#   当月增量   = 相邻两期累计相减（1 月直接取累计值）
+#   同比多增   = 当月增量 − 去年同月增量
+#   环比变动   = 当月增量 − 上月增量
+# 这样能天然消掉春节、季末年末缴税等季节性 —— 也是 ③ 全部分项都用「同比多增 / 环比变动」的原因。
 #
 # 正文里同时出现存款方与贷款方两个列表（如"非银行业金融机构存款增加…"与
 # "非银行业金融机构贷款减少…"），所以匹配式必须带上「存款」/「贷款」以免串档。
 
 _AMOUNT_PATTERN = r"([\d.]+)\s*(万亿元|亿元)"
+
+# 存款分部门：报告正文写法 → 内部键（统一折算成亿元）
 _DEPOSIT_SPLIT_FIELDS = {
     "住户存款": "住户存款",
-    "住户贷款": "住户贷款",
-    "非银行业金融机构存款": "非银存款",
     "非金融企业存款": "企业存款",
+    "财政性存款": "财政存款",
+    "非银行业金融机构存款": "非银存款",
 }
-
 
 _REPORT_PERIODS = (
     (re.compile(r"(\d{4})\s*年\s*一季度"), 3),
@@ -241,37 +247,32 @@ _REPORT_PERIODS = (
     (re.compile(r"(\d{4})\s*年\s*年度"), 12),
 )
 
+# 报告正文里的窗口描述：「前八个月 / 上半年 / 前三季度 / 一季度 / 8月份」
+_REPORT_WINDOW = r"(前[一二三四五六七八九十]+个月|上半年|前三季度|前?一季度|\d{1,2}月份)"
+_WINDOW_RE = re.compile(_REPORT_WINDOW)
+
 
 def _report_period(title: str) -> Optional[str]:
     """由报告标题推出数据期：2026年8月→2026-08；上半年→2026-06；一季度→2026-03。
 
-    季度/半年类的标题里没有「N 月」，_cn_ym_to_iso 会返回 None，故先按这些关键词归一。
+    季度/半年类的标题里没有「N 月」，_cn_ym_to_iso 会返回 None，故先按这些关键词归一；
+    「2025年金融统计数据报告」这种只有年份的即全年（12 月）口径。
     """
     for pattern, month in _REPORT_PERIODS:
         m = pattern.search(title)
         if m:
             return "%s-%02d" % (m.group(1), month)
-    return _cn_ym_to_iso(title)
+    period = _cn_ym_to_iso(title)
+    if period:
+        return period
+    year = re.search(r"(\d{4})\s*年", title)
+    return "%s-12" % year.group(1) if year else None
 
 
-# 报告正文里的窗口描述：「前八个月 / 上半年 / 前三季度 / 一季度 / 8月份」
-_REPORT_WINDOW = r"(前[一二三四五六七八九十]+个月|上半年|前三季度|前?一季度|\d{1,2}月份)"
-_WINDOW_RE = re.compile(_REPORT_WINDOW)
+def _parse_yi(flat: str, name: str) -> Optional[float]:
+    """解析「住户存款增加 6.99 万亿元」/「住户贷款减少 8271 亿元」→ 亿元（减少为负）。
 
-# 「前八个月人民币存款增加 18.99 万亿元」——温度计里「企业/非银存款占新增存款比」的分母
-_TOTAL_DEPOSIT_RE = re.compile(_REPORT_WINDOW + r"人民币存款增加" + _AMOUNT_PATTERN)
-_TOTAL_DEPOSIT_LOOSE_RE = re.compile(r"人民币存款增加" + _AMOUNT_PATTERN)
-
-
-def _wan_yi(value: float, unit: str) -> float:
-    """把「亿元」折算成「万亿元」；本来就是「万亿元」则原样返回。"""
-    return round(value / 10000.0, 4) if unit == "亿元" else round(value, 4)
-
-
-def _parse_split_amount(flat: str, name: str) -> Optional[float]:
-    """解析「住户存款增加 6.99 万亿元」/「住户贷款减少 8271 亿元」→ 万亿元（减少为负）。
-
-    取第一条匹配（报告中同一分部门只出现一次）。
+    只取第一条匹配（同一分部门在同一句里只出现一次，且「合计」总在「其中」之前）。
     """
     pattern = re.compile(
         r"%s\s*(增加|减少|下降|上升)\s*%s" % (re.escape(name), _AMOUNT_PATTERN)
@@ -280,221 +281,220 @@ def _parse_split_amount(flat: str, name: str) -> Optional[float]:
     if not m:
         return None
     value = float(m.group(2))
-    if m.group(3) == "亿元":
-        value = value / 10000.0
+    if m.group(3) == "万亿元":
+        value *= 10000.0
     sign = -1.0 if m.group(1) in ("减少", "下降") else 1.0
-    return round(sign * value, 4)
+    return round(sign * value, 2)
 
 
-def _parse_split_report(title: str, flat: str) -> Optional[Dict[str, Any]]:
-    """解析**单期**《金融统计数据报告》的分部门存贷款与新增存款总额（均为累计口径）。
+def _parse_loan_split(flat: str) -> Dict[str, Dict[str, Optional[float]]]:
+    """解析「分部门看，…」那句里的住户 / 企业贷款结构（累计口径，亿元）。
 
-    解析不出分部门数据时返回 None，由调用方继续往前翻一期。
+    返回 {"住户": {合计/短期/中长期/票据}, "企业": {...}}；解析不到返回空字典。
+    住户也有「中长期贷款」（房贷主体）、企业也有（设备更新、厂房扩建），两者靠分段区分，
+    不能全篇搜「中长期贷款」—— 那样只会命中住户那一条。
     """
-    if "住户存款" not in flat:
+    m = re.search(r"分部门看", flat)
+    if not m:
+        return {}
+    tail = flat[m.end(): m.end() + 700]
+    out: Dict[str, Dict[str, Optional[float]]] = {}
+    for seg in re.split(r"[；;]", tail):
+        # 首句常带前导标点（"分部门看，住户贷款…"），先剥掉再判部门
+        seg = seg.lstrip("，,：: 、")
+        if not seg:
+            continue
+        if seg.startswith("住户"):
+            key = "住户"
+        elif seg.startswith("企"):
+            key = "企业"
+        else:  # 非银行业金融机构贷款：不进温度计，跳过
+            continue
+        out[key] = {
+            "合计": _parse_yi(seg, "贷款"),
+            "短期": _parse_yi(seg, "短期贷款"),
+            "中长期": _parse_yi(seg, "中长期贷款"),
+            "票据": _parse_yi(seg, "票据融资"),
+        }
+    return out
+
+
+def _parse_report(title: str, flat: str) -> Optional[Dict[str, Any]]:
+    """解析**单期**《金融统计数据报告》的分部门存贷款（累计口径，亿元）。"""
+    loans = _parse_loan_split(flat)
+    deposits = {label: _parse_yi(flat, needle) for needle, label in _DEPOSIT_SPLIT_FIELDS.items()}
+    if not loans and all(v is None for v in deposits.values()):
         return None
-
-    parsed = {
-        label: _parse_split_amount(flat, needle)
-        for needle, label in _DEPOSIT_SPLIT_FIELDS.items()
-    }
-    if parsed.get("住户贷款") is None and parsed.get("住户存款") is None:
-        return None
-
-    window = None
-    total = None
-    m = _TOTAL_DEPOSIT_RE.search(flat)
-    if m:
-        window = m.group(1)
-        total = _wan_yi(float(m.group(2)), m.group(3))
-    if total is None:  # 标题/正文里没有窗口词（个别月份报告）时的兜底
-        m2 = _TOTAL_DEPOSIT_LOOSE_RE.search(flat)
-        if m2:
-            total = _wan_yi(float(m2.group(1)), m2.group(2))
-    if window is None:
-        w = _WINDOW_RE.search(flat)
-        window = w.group(1) if w else "累计"
-
+    w = _WINDOW_RE.search(flat)
     return {
         "报告": title,
-        "as_of": _report_period(title) or _cn_ym_to_iso(flat) or "",
-        "期间": window,
-        "人民币存款增加": total,
-        "住户存款": parsed.get("住户存款"),
-        "住户贷款": parsed.get("住户贷款"),
-        "非银存款": parsed.get("非银存款"),
-        "企业存款": parsed.get("企业存款"),
+        "as_of": _report_period(title) or "",
+        "期间": w.group(1) if w else "累计",
+        "存款": deposits,
+        "贷款": loans,
     }
 
 
-def fetch_deposit_loan_split(periods: int = 2) -> Dict[str, Any]:
-    """抓取分部门存贷款累计增量（住户存款 / 住户贷款 / 非银存款 / 企业存款）。
+def _shift_month(ym: Optional[str], months: int) -> Optional[str]:
+    """'2026-01' 减 1 个月 → '2025-12'。"""
+    if not ym or len(ym) < 7:
+        return None
+    try:
+        year, month = int(ym[:4]), int(ym[5:7])
+    except ValueError:
+        return None
+    total = year * 12 + (month - 1) + months
+    return "%04d-%02d" % (total // 12, total % 12 + 1)
 
-    价值口径：**年初至今累计**（万亿元），与央行《金融统计数据报告》正文一致。
-    返回 value = 住户贷款累计增量（判读「居民加杠杆还是缩表」的主口径），
-    其余分项放在 detail 里供页面展开。
 
-    默认再往前翻一期报告（periods=2），把上一期累计值一并放进
-    detail["分部门明细"]["上期"] —— 宏观温度计要用「相邻两期累计相减」得到
-    住户贷款**当月**增量，并用到该期的人民币存款新增额算存款占比。
+def _cum_map(records: Dict[str, Dict[str, Any]], section: str, key: str,
+             sub: Optional[str] = None) -> Dict[str, float]:
+    """把各期累计读数抽成 {期间: 亿元}；sub 用于取「中长期贷款」这类子项。"""
+    out: Dict[str, float] = {}
+    for period, rec in records.items():
+        node = (rec.get(section) or {}).get(key)
+        if sub is not None:
+            node = (node or {}).get(sub)
+        if isinstance(node, (int, float)):
+            out[period] = float(node)
+    return out
+
+
+def _monthly_of(cums: Dict[str, float], period: Optional[str]) -> Optional[float]:
+    """累计 → 当月增量：1 月直接取累计值，其它月需相邻上期才可相减（缺期返回 None）。"""
+    if not period or period not in cums:
+        return None
+    if int(period[5:7]) == 1:
+        return cums[period]
+    prev = _shift_month(period, -1)
+    if prev in cums:
+        return cums[period] - cums[prev]
+    return None
+
+
+def _yi_text(value: Optional[float]) -> str:
+    return "—" if value is None else "%+.0f 亿" % value
+
+
+def fetch_credit_structure(lookback: int = 24) -> Dict[str, Any]:
+    """抓取《金融统计数据报告》，产出 ③ 信用/部门 三个分项的读数。
+
+    只抓真正需要的 5 期报告（本期、上月、前月、去年同月、去年上月），
+    先按标题解析出报告期再挑页面，避免把 20 多期正文全拉一遍。
+
+    返回:
+        {
+          "as_of": "2026-09",
+          "items": {
+            "corp_ml_loan_yoy":   {value, as_of, detail},
+            "household_ml_loan_yoy": {…},
+            "fiscal_deposit_mom": {…},
+          },
+          "detail": {中文名: {子项: 显示文本}}   # 温度计「取数与口径」表用
+        }
     """
     html = _get(COL_FIN_STAT).text
-    candidates = _recent_links(html, "金融统计数据报告", limit=8)
+    candidates = _recent_links(html, "金融统计数据报告", limit=max(8, lookback))
     if not candidates:
         raise RuntimeError("《金融统计数据报告》栏目未解析到任何条目")
 
-    parsed_periods: List[Dict[str, Any]] = []
-    last_error: Optional[Exception] = None
+    by_period: Dict[str, Tuple[str, str]] = {}
     for title, href in candidates:
-        if len(parsed_periods) >= max(1, periods):
-            break
+        period = _report_period(title)
+        if period and period not in by_period:
+            by_period[period] = (title, href)  # 栏目靠前＝更新，重复期取先出现的
+    if not by_period:
+        raise RuntimeError("《金融统计数据报告》栏目未解析出任何报告期")
+
+    latest = max(by_period)
+    need = [latest] + [_shift_month(latest, -n) for n in (1, 2, 12, 13)]
+
+    records: Dict[str, Dict[str, Any]] = {}
+    errors: List[str] = []
+    for period in need:
+        if not period or period not in by_period:
+            continue
+        title, href = by_period[period]
         try:
             flat = re.sub(r"\s+", "", _page_text(href))
         except Exception as exc:
-            last_error = exc
+            errors.append("%s: %s" % (period, exc))
             continue
-        record = _parse_split_report(title, flat)
-        if record:
-            parsed_periods.append(record)
+        rec = _parse_report(title, flat)
+        if rec:
+            records[period] = rec
+    if not records:
+        raise RuntimeError("分部门存贷款解析失败（%s）" % ("；".join(errors) or "正文无匹配字段"))
 
-    if not parsed_periods:
-        raise RuntimeError("未能解析分部门存贷款（%s）" % (last_error or "报告正文无匹配字段"))
+    latest = max(records)
+    prev_m = _shift_month(latest, -1)
+    prev2_m = _shift_month(latest, -2)
+    yoy_m = _shift_month(latest, -12)
+    yoy_prev_m = _shift_month(latest, -13)
 
-    current = parsed_periods[0]
-    previous = parsed_periods[1] if len(parsed_periods) > 1 else None
-    household_loan = current.get("住户贷款")
+    corp_cums = _cum_map(records, "贷款", "企业", "中长期")
+    house_cums = _cum_map(records, "贷款", "住户", "中长期")
+    fiscal_cums = _cum_map(records, "存款", "财政存款")
 
-    # 供宏观温度计使用的完整两期明细（含上一期累计值与原币存款新增额）
-    split_detail: Dict[str, Any] = dict(current)
-    if previous:
-        split_detail["上期"] = previous
+    def _yoy_diff(cums: Dict[str, float]) -> Tuple[Optional[float], Dict[str, Any]]:
+        cur = _monthly_of(cums, latest)
+        last = _monthly_of(cums, yoy_m)
+        detail: Dict[str, Any] = {
+            "本期当月": "%s（%s）" % (_yi_text(cur), latest),
+            "去年同月": "%s（%s）" % (_yi_text(last), yoy_m or "—"),
+        }
+        value = None
+        if cur is not None and last is not None:
+            value = cur - last
+            detail["同比多增"] = _yi_text(value)
+        else:
+            detail["同比多增"] = "—（缺去年同月数据）"
+        return value, detail
 
-    return {
-        "value": household_loan if household_loan is not None else 0.0,
-        "as_of": current.get("as_of") or "",
-        "detail": {
-            "报告": current["报告"],
-            "住户存款": current.get("住户存款"),
-            "住户贷款": household_loan,
-            "非银存款": current.get("非银存款"),
-            "企业存款": current.get("企业存款"),
-            "人民币存款增加": current.get("人民币存款增加"),
-            "口径": "年初至今累计（%s）" % (current.get("期间") or "累计"),
-            "来源": "中国人民银行《金融统计数据报告》分部门存贷款",
-            "分部门明细": split_detail,
-        },
+    corp_yoy, corp_detail = _yoy_diff(corp_cums)
+    house_yoy, house_detail = _yoy_diff(house_cums)
+
+    # 财政存款：当月环比变动 = 当月 − 上月（都用累计相减得到当月）
+    fiscal_cur = _monthly_of(fiscal_cums, latest)
+    fiscal_prev = _monthly_of(fiscal_cums, prev_m)
+    fiscal_mom = fiscal_cur - fiscal_prev if fiscal_cur is not None and fiscal_prev is not None else None
+    fiscal_detail: Dict[str, Any] = {
+        "本月变动": "%s（%s）" % (_yi_text(fiscal_cur), latest),
+        "上月变动": "%s（%s）" % (_yi_text(fiscal_prev), prev_m or "—"),
+        "环比变动": _yi_text(fiscal_mom),
     }
 
+    # 辅助观测（不进打分）：企业短贷 / 票据冲量、住户短贷、非银存款
+    corp_short = _monthly_of(_cum_map(records, "贷款", "企业", "短期"), latest)
+    corp_bill = _monthly_of(_cum_map(records, "贷款", "企业", "票据"), latest)
+    house_short = _monthly_of(_cum_map(records, "贷款", "住户", "短期"), latest)
+    nonbank_dep = (records.get(latest, {}).get("存款") or {}).get("非银存款")
 
-# ---------------------------------------------------------------- 超储率（PDF）
-
-_ER_PRIMARY = re.compile(
-    r"(\d{1,2})\s*月末[^。；]{0,60}?超额(?:存款)?准备金率[为是约]\s*([0-9]+(?:\.[0-9]+)?)\s*%"
-)
-_ER_FALLBACK = re.compile(r"超额(?:存款)?准备金率[为是约]?\s*([0-9]+(?:\.[0-9]+)?)\s*%")
-
-_QUARTER_CN = {"一": 3, "二": 6, "三": 9, "四": 12}
-
-
-def _quarter_end_iso(title: str) -> Optional[str]:
-    """从「2026年第二季度中国货币政策执行报告」推出报告期末月份。"""
-    m = re.search(r"(\d{4})\s*年第([一二三四])季度", title)
-    if m:
-        return "%s-%02d" % (m.group(1), _QUARTER_CN[m.group(2)])
-    return _cn_ym_to_iso(title)
-
-
-def _pdf_text_pages(content: bytes, max_pages: int = 25):
-    """逐页产出 PDF 文本（惰性，便于命中即停）。"""
-    try:
-        import pypdf
-    except Exception as exc:
-        raise RuntimeError("缺少 pypdf，无法解析《货币政策执行报告》PDF：%s" % exc)
-    reader = pypdf.PdfReader(io.BytesIO(content))
-    for page in reader.pages[:max_pages]:
-        try:
-            text = page.extract_text() or ""
-        except Exception as exc:  # 单页解析失败不影响整体
-            logger.debug("PDF 单页解析失败: %s", exc)
-            continue
-        if text:
-            yield text
-
-
-def excess_reserve_from_report(title: str, href: str) -> Dict[str, Any]:
-    """给定一份《中国货币政策执行报告》的标题与页面链接，下载 PDF 并提取超额准备金率。
-
-    单期抓取，供两处共用，避免各写一套导致口径漂移：
-    - fetch_excess_reserve()：只取最新一期，用于「最新快照」刷新
-    - macro_backfill.series_excess_reserve()：逐期回溯，用于曲线历史
-
-    解析失败抛异常，由调用方按「该期失败」处理。
-    """
-    page_html = _get(href).text
-    pdfs = re.findall(r'href="([^"]+\.pdf)"', page_html, flags=re.I)
-    if not pdfs:
-        raise RuntimeError("报告页面未找到 PDF 附件：%s" % title)
-
-    resp = _get(pdfs[0], timeout=_PDF_TIMEOUT)
-    content = resp.content
-    if not content[:4].startswith(b"%PDF"):
-        raise RuntimeError("PDF 下载异常（返回内容非 PDF）")
-
-    value = None
-    month = None
-    # 早年报告篇幅长、超储率可能在靠后章节，故放宽到 40 页（命中即停）
-    for page_text in _pdf_text_pages(content, max_pages=40):
-        flat = re.sub(r"\s+", "", page_text)
-        m = _ER_PRIMARY.search(flat)
-        if m:
-            month = int(m.group(1))
-            value = float(m.group(2))
-            break
-        m = _ER_FALLBACK.search(flat)
-        if m:
-            value = float(m.group(1))
-            break
-    if value is None:
-        raise RuntimeError("未能在《%s》正文中提取到超额准备金率" % title)
-
-    as_of = _quarter_end_iso(title) or ""
-    if month and not as_of:
-        year = re.search(r"(\d{4})\s*年", title)
-        as_of = "%s-%02d" % (year.group(1), month) if year else as_of
-
-    return {
-        "value": value,
-        "as_of": as_of,
-        "detail": {
-            "报告期": title,
-            "来源": "中国人民银行《货币政策执行报告》",
-            "口径": "季末金融机构超额准备金率",
-            "as_of": as_of,
-        },
+    items = {
+        "corp_ml_loan_yoy": {"value": corp_yoy, "as_of": latest, "detail": corp_detail},
+        "household_ml_loan_yoy": {"value": house_yoy, "as_of": latest, "detail": house_detail},
+        "fiscal_deposit_mom": {"value": fiscal_mom, "as_of": latest, "detail": fiscal_detail},
     }
+    for key, item in items.items():
+        if item["value"] is not None:
+            item["value"] = round(item["value"], 1)
 
+    detail_out: Dict[str, Any] = {
+        "企业中长期贷款（当月同比多增）": corp_detail,
+        "住户中长期贷款（当月同比多增）": house_detail,
+        "财政存款（当月环比变动）": fiscal_detail,
+        "同比多增算法": "当月增量 = 相邻两期累计相减（1 月直接取累计）；同比多增 = 当月 − 去年同月",
+        "辅助观测（不进打分）": {
+            "企业短贷当月": _yi_text(corp_short),
+            "票据融资当月": _yi_text(corp_bill),
+            "住户短贷当月": _yi_text(house_short),
+            "非银存款累计": _yi_text(nonbank_dep),
+        },
+        "报告期": "%s（%s）" % (latest, (records.get(latest) or {}).get("期间") or "累计"),
+        "来源": "中国人民银行《金融统计数据报告》分部门存贷款",
+    }
+    if errors:
+        detail_out["部分报告抓取失败"] = "；".join(errors)
 
-def fetch_excess_reserve(current_detail: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """抓取季度《中国货币政策执行报告》里的金融机构超额准备金率（最新一期）。
-
-    报告为 1~4MB 的 PDF，且每季度才更新一次；若最新报告期与已存记录一致，
-    直接返回 skipped，避免每次刷新都重复下载。逐期回溯见 macro_backfill。
-    """
-    html = _get(COL_MPR).text
-    candidates = [
-        (title, href) for title, href in _recent_links(html, "中国货币政策执行报告", limit=12)
-        if "季度" in title
-    ]
-    if not candidates:
-        raise RuntimeError("《货币政策执行报告》栏目未解析到季度报告条目")
-
-    title, href = candidates[0]
-    as_of = _quarter_end_iso(title) or ""
-
-    # 报告期未变 -> 无需重复下载 PDF
-    if current_detail and current_detail.get("报告期") == title and (
-        current_detail.get("as_of") or as_of
-    ):
-        return {"skipped": True, "as_of": current_detail.get("as_of") or as_of}
-
-    return excess_reserve_from_report(title, href)
+    return {"as_of": latest, "items": items, "detail": detail_out,
+            "periods": sorted(records.keys())}

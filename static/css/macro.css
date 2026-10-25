@@ -502,6 +502,58 @@
 .macro-note-body { font-size: 0.79rem; color: #555; line-height: 1.8; margin-top: 0.55rem; }
 .macro-note-body b { color: #333; }
 
+/* 季节标记（季末财政脉冲 / 春节月）：挂在指标卡片副标题后，纯提示、不参与打分 */
+.macro-season {
+    display: inline-block;
+    margin-left: 0.4rem;
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: #b45309;
+    background: rgba(245,158,11,0.16);
+    border: 1px solid rgba(245,158,11,0.35);
+    padding: 0.05rem 0.4rem;
+    border-radius: 9px;
+    vertical-align: middle;
+    cursor: help;
+    white-space: nowrap;
+}
+
+/* 模型边界与风控规则：后端 MODEL_LIMITS 的渲染 */
+.macro-limits { list-style: none; margin: 0.7rem 0 0; padding: 0; display: grid; gap: 0.6rem; }
+.macro-limit {
+    border-left: 3px solid rgba(239,68,68,0.45);
+    background: rgba(239,68,68,0.045);
+    border-radius: 0 7px 7px 0;
+    padding: 0.55rem 0.8rem;
+}
+.macro-limit-head { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; font-size: 0.84rem; color: #333; }
+.macro-limit-tag {
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: #b91c1c;
+    background: rgba(239,68,68,0.12);
+    padding: 0.05rem 0.4rem;
+    border-radius: 9px;
+}
+.macro-limit-sev {
+    margin-left: auto;
+    font-size: 0.66rem;
+    color: #b91c1c;
+    background: rgba(239,68,68,0.1);
+    padding: 0.05rem 0.4rem;
+    border-radius: 9px;
+    white-space: nowrap;
+}
+.macro-limit-sev-soft { color: #92400e; background: rgba(245,158,11,0.14); }
+.macro-limit-row { font-size: 0.78rem; color: #555; line-height: 1.75; margin-top: 0.3rem; }
+.macro-limit-row > span:first-child {
+    display: inline-block;
+    min-width: 2.4em;
+    color: #9aa3af;
+    font-size: 0.72rem;
+}
+.macro-limit-why { font-size: 0.75rem; color: #8a94a6; line-height: 1.75; margin-top: 0.3rem; padding-top: 0.3rem; border-top: 1px dashed rgba(0,0,0,0.07); }
+
 /* 分项明细表 */
 .macro-thermo-breakdown { display: grid; grid-template-columns: 1fr; gap: 1rem; margin-bottom: 1.15rem; }
 .macro-thermo-bd-score { font-size: 0.95rem; font-weight: 700; margin-left: 0.4rem; }

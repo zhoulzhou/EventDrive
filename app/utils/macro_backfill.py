@@ -15,6 +15,7 @@ R001 − DR001            akshare repo_rate_hist（FR001/FDR001）      逐月�
 PPI 同比                akshare macro_china_ppi                      全量（默认取近 60 期）
 M1 / M2 同比            akshare macro_china_money_supply             全量（默认取近 60 期）
 社融存量同比            央行《金融统计数据报告》逐期解析               栏目可列出的最近 13 期
+1Y AAA 同业存单         中国货币网收盘收益率曲线（接口只回溯近几日）      最近若干个交易日
 ======================  ==========================================  ==================
 
 两处需要注意的口径问题：
@@ -317,66 +318,33 @@ def series_tsf(limit: int = 13) -> List[Dict[str, Any]]:
     return deduped
 
 
-# ---------------------------------------------------------------- 季度：央行超储率
+# ---------------------------------------------------------------- 日度：1Y AAA 同业存单
 
+def series_ncd() -> List[Dict[str, Any]]:
+    """回溯 1Y AAA 同业存单收益率的日频序列。
 
-def series_excess_reserve(limit: int = 20) -> List[Dict[str, Any]]:
-    """逐期解析央行《货币政策执行报告》PDF，回溯季末金融机构超额准备金率。
-
-    超储率只在季报正文里以文字给出，每期要下载一份 1~4MB 的 PDF（约 5~10 秒），
-    所以 limit 控制回溯的季度数（20 期≈5 年，约 2 分钟），不适合每天全量跑。
-    单期解析失败只跳过该期，不影响其余——早年报告的排版差异会体现在这里。
+    中国货币网接口只提供最近几个交易日（单页 50 行上限），能拿多少补多少；
+    之后靠每日快照慢慢累积。存的是**当日值**，与卡片上的 5 日均值口径分开，
+    趋势图画的是原始日线。
     """
-    from app.utils import pbc_data
+    from app.utils import ncd_rate
 
-    html = pbc_data._get(pbc_data.COL_MPR).text
-    links = pbc_data._recent_links(
-        html, "中国货币政策执行报告", limit=max(12, limit + 10)
-    )
-    quarters = [(t, h) for t, h in links if "季度" in t][: max(1, limit)]
-    if not quarters:
-        raise RuntimeError("《货币政策执行报告》栏目未解析到季度条目")
-
-    rows: List[Dict[str, Any]] = []
-    for title, href in quarters:
-        as_of = pbc_data._quarter_end_iso(title)
-        if not as_of:
-            continue
-        try:
-            item = pbc_data.excess_reserve_from_report(title, href)
-        except Exception as exc:
-            logger.warning("超储率回溯：解析失败 %s: %s", title, exc)
-            continue
-        rows.append({
-            "key": "excess_reserve",
-            "value": item["value"],
-            "as_of": item.get("as_of") or as_of,
-            "source": "pbc",
-            "detail": item.get("detail") or {},
-        })
-
-    # rows 已按栏目顺序（新 → 旧），同一季度若出现多条则保留更靠前＝更新的那条
-    seen = set()
-    deduped: List[Dict[str, Any]] = []
-    for rec in rows:
-        if rec["as_of"] in seen:
-            continue
-        seen.add(rec["as_of"])
-        deduped.append(rec)
-    deduped.sort(key=lambda rec: rec["as_of"])
-    logger.info("超储率回溯完成: %d 期", len(deduped))
-    return deduped
+    series = ncd_rate.fetch_series(need=10)
+    return [{
+        "key": "ncd_1y_aaa",
+        "value": p["value"],
+        "as_of": p["as_of"],
+        "source": "chinamoney",
+        "detail": {"曲线": "中债 AAA 同业存单 1Y 到期收益率"},
+    } for p in series]
 
 
 # ---------------------------------------------------------------- 汇总
 
 
 def backfill_all(months_daily: int = 24, months_monthly: int = 60,
-                 tsf_limit: int = 13, er_limit: int = 0) -> Dict[str, Any]:
-    """执行全量回溯，返回 {series: {key: [...]}, counts, errors, anchor_steps}。
-
-    er_limit > 0 时额外回溯超储率（每期一份央行季报 PDF，较慢），默认 0 跳过。
-    """
+                 tsf_limit: int = 13) -> Dict[str, Any]:
+    """执行全量回溯，返回 {series: {key: [...]}, counts, errors, anchor_steps}。"""
     series: Dict[str, List[Dict[str, Any]]] = {}
     errors: Dict[str, str] = {}
 
@@ -396,13 +364,11 @@ def backfill_all(months_daily: int = 24, months_monthly: int = 60,
         errors["tsf_yoy"] = str(exc)
         logger.error("回溯失败 [tsf_yoy]: %s", exc)
 
-    # 超储率要逐份下载央行季报 PDF，较慢：由调用方按需开启（er_limit=0 即跳过）
-    if er_limit and er_limit > 0:
-        try:
-            series["excess_reserve"] = series_excess_reserve(er_limit)
-        except Exception as exc:
-            errors["excess_reserve"] = str(exc)
-            logger.error("回溯失败 [excess_reserve]: %s", exc)
+    try:
+        series["ncd_1y_aaa"] = series_ncd()
+    except Exception as exc:
+        errors["ncd_1y_aaa"] = str(exc)
+        logger.error("回溯失败 [ncd_1y_aaa]: %s", exc)
 
     counts = {k: len(v) for k, v in series.items()}
     return {"series": series, "counts": counts, "errors": errors,

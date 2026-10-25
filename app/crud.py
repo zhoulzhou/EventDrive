@@ -924,7 +924,7 @@ def upsert_macro_indicators(db: Session, records: List[dict]) -> int:
 def seed_macro_fallbacks(db: Session, defaults: Dict[str, dict]) -> int:
     """为尚未入库的指标写入兜底读数（已存在则不覆盖），返回新增条数。
 
-    defaults 形如 {"excess_reserve": {"value": 1.3, "as_of": "兜底默认值"}}。
+    defaults 形如 {"tsf_yoy": {"value": 7.2, "as_of": "兜底默认值"}}。
     这些记录 source 标记为 fallback，首次自动抓取成功后会被真实读数替换。
     """
     existing = set(get_macro_indicators(db).keys()) if _USE_CLOUD else {

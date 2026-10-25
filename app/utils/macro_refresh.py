@@ -30,15 +30,11 @@ logger = logging.getLogger(__name__)
 SPARSE_HISTORY_ROWS = 120
 
 # 全量回溯窗口
-FULL_WINDOWS = {"months_daily": 24, "months_monthly": 60, "tsf_limit": 13, "er_limit": 20}
+FULL_WINDOWS = {"months_daily": 24, "months_monthly": 60, "tsf_limit": 13}
 
 # 直接调用 backfill_history() 且不传窗口时的默认值（只补最近几个月，请求量小）。
 # 页面按钮走 POST /api/macro/backfill，会显式传全量窗口（24 个月日度 / 60 个月月度）。
-# er_limit=0：超储率要逐份下载央行季报 PDF（每份数 MB），默认不回溯
-INCREMENTAL_WINDOWS = {"months_daily": 2, "months_monthly": 3, "tsf_limit": 3, "er_limit": 0}
-
-# 超储率历史少于这个期数时，才在回填里顺带回溯一次（之后靠快照更新最新一期）
-ER_MIN_ROWS = 4
+INCREMENTAL_WINDOWS = {"months_daily": 2, "months_monthly": 3, "tsf_limit": 3}
 
 
 def anchor_value(db: Session) -> float:
@@ -192,7 +188,6 @@ def backfill_history(
     months_daily: int = INCREMENTAL_WINDOWS["months_daily"],
     months_monthly: int = INCREMENTAL_WINDOWS["months_monthly"],
     tsf_limit: int = INCREMENTAL_WINDOWS["tsf_limit"],
-    er_limit: Optional[int] = None,
     escalate_if_sparse: bool = True,
 ) -> Dict[str, Any]:
     """回溯历史序列并写入历史表（幂等：按「指标 + 数据日期」覆盖写）。
@@ -201,11 +196,6 @@ def backfill_history(
     不再调用本函数**（见 app/scheduler.py，定时任务只抓当前读数）。不传窗口时走增量
     窗口（只补最近几个月，请求量小）；当历史表条数少于 SPARSE_HISTORY_ROWS
     （新部署、历史被清空）时自动升级为全量窗口。
-
-    超储率（er_limit）单独处理：它只在央行季报 PDF 正文里，要逐份下载解析
-    （每份数 MB、约 5~10 秒）。er_limit=None 时按「已有历史是否够」自动判断——
-    不足 ER_MIN_ROWS 期才回溯一次；补过之后只靠快照抓取写入最新一期，不再重复
-    下载几十份 PDF。
 
     返回 {generated, added, updated, counts, errors, history_total, escalated, windows}。
     """
@@ -221,13 +211,7 @@ def backfill_history(
             escalated = True
             logger.info("市场指标历史偏少，本次回填升级为全量窗口 (%s)", FULL_WINDOWS)
 
-        if er_limit is None:
-            er_have = crud.count_macro_history(db, "excess_reserve")
-            er_limit = FULL_WINDOWS["er_limit"] if er_have < ER_MIN_ROWS else 0
-            if er_limit:
-                logger.info("超储率历史仅 %d 期，本次回溯 %d 个季度", er_have, er_limit)
-
-        result = mbf.backfill_all(months_daily, months_monthly, tsf_limit, er_limit)
+        result = mbf.backfill_all(months_daily, months_monthly, tsf_limit)
 
         records = []
         for series in (result.get("series") or {}).values():
@@ -257,7 +241,6 @@ def backfill_history(
                 "months_daily": months_daily,
                 "months_monthly": months_monthly,
                 "tsf_limit": tsf_limit,
-                "er_limit": er_limit,
             },
         }
     finally:

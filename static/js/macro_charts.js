@@ -7,7 +7,7 @@
 const CH = {
     ink: "#334155", sub: "#94a3b8", grid: "#e8ebf0", axis: "#cbd5e1", slate: "#64748b",
     blue: "#3b82f6", cyan: "#06b6d4", green: "#22c55e", lime: "#84cc16",
-    amber: "#f59e0b", orange: "#f97316", red: "#ef4444"
+    amber: "#f59e0b", orange: "#f97316", red: "#ef4444", violet: "#8b5cf6"
 };
 // 图上文字一律加白色描边：标签难免与折线/色带重叠，描边保证始终可读
 const HALO = { textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5 };
@@ -120,10 +120,11 @@ function pmiState(v) {
     return ["深度收缩", CH.blue];
 }
 function ppiState(v) {
-    if (v > 5) return ["过热，成本挤压中下游", CH.red];
-    if (v >= 2) return ["偏热、供需两旺", CH.amber];
-    if (v >= 0) return ["温和回升", CH.lime];
-    if (v >= -3) return ["通缩阴影", CH.cyan];
+    if (v > 9) return ["过热，成本挤压中下游", CH.red];
+    if (v >= 6) return ["偏热、供需两旺", CH.amber];
+    if (v >= 3) return ["温和涨价、毛利修复", CH.lime];
+    if (v >= 0) return ["弱修复", CH.lime];
+    if (v >= -2) return ["通缩阴影", CH.cyan];
     return ["深度通缩", CH.blue];
 }
 function m1m2State(v) {
@@ -134,11 +135,16 @@ function m1m2State(v) {
 }
 
 // 短状态词：直接标在「最新点」旁（第 5 个细节：状态词写进图里）
-function excessReserveState(v) {
-    if (v > 1.5) return ["充裕", CH.blue];
-    if (v >= 1.2) return ["中性", CH.green];
-    if (v >= 1.0) return ["偏低、资金波动放大", CH.amber];
-    return ["偏紧，全靠央行投放吊着", CH.red];
+function ncdState(v) {
+    if (v < 1.00) return ["极低位，负债端极宽松", CH.blue];
+    if (v < 1.30) return ["偏低位", CH.cyan];
+    if (v < 1.60) return ["中性偏松", CH.green];
+    if (v < 1.95) return ["偏高，揽存压力显现", CH.amber];
+    return ["高位，负债端吃紧", CH.red];
+}
+function shortNcd(v) {
+    if (v < 1.00) return "极低位"; if (v < 1.30) return "偏低位"; if (v < 1.60) return "中性偏松";
+    if (v < 1.95) return "偏高"; return "高位";
 }
 function shortDr007(v) {
     if (v < -20) return "松"; if (v < -10) return "偏松"; if (v <= 10) return "平稳";
@@ -157,8 +163,8 @@ function shortPmi(v) {
     if (v >= 48) return "磨底"; if (v >= 45) return "明显收缩"; return "深度收缩";
 }
 function shortPpi(v) {
-    if (v > 5) return "过热"; if (v >= 2) return "偏热"; if (v >= 0) return "温和回升";
-    if (v >= -3) return "通缩阴影"; return "深度通缩";
+    if (v > 9) return "过热"; if (v >= 6) return "偏热"; if (v >= 3) return "温和涨价";
+    if (v >= 0) return "弱修复"; if (v >= -2) return "通缩阴影"; return "深度通缩";
 }
 
 /* ---------------- ECharts 通用骨架 ---------------- */
@@ -367,50 +373,69 @@ function drawR001(bag) {
     mount("mpR001", opt);
 }
 
-/* ---------------- ① 资金松紧：超储率（季末·水位） ---------------- */
-function drawExcessReserve(bag) {
-    const rows = pick(bag, "excess_reserve");
-    if (!rows.length) { chartEmpty("mpER", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
+/* ---------------- ① 资金松紧：1Y AAA 同业存单（银行负债成本） ---------------- */
+//
+// 替代原「超储率」季频图：存单是日频、直接反映银行中期负债成本。
+// 锚点（1.00 / 1.30 / 1.60 / 1.95%，2026-10-25 按低利率环境下移）与后端
+// macro_thermometer 的打分阈值同源，图上除了日线还叠 5 日均线 —— 温度计正是用 5 日均值打分的。
+function drawNcd(bag) {
+    const rows = pick(bag, "ncd_1y_aaa");
+    if (!rows.length) { chartEmpty("mpNcd", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
+    const ma5 = movingAvg(vals, 5);
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
-    const yMin = Math.min(Math.floor((lo - 0.15) / 0.1) * 0.1, 1.0);
-    const yMax = Math.max(Math.ceil((hi + 0.15) / 0.1) * 0.1, 1.8);
+    const pad = Math.max(0.03, (hi - lo) * 0.2);
+    const yMin = Math.floor((lo - pad) * 100) / 100;
+    const yMax = Math.ceil((hi + pad) * 100) / 100;
     const x0 = dates[0], x1 = dates[dates.length - 1];
 
+    // 色带/参考线只在可视区间内画（当前读数常低于锚点下限，硬画会挤出画面）
     const bands = [];
-    pushBand(bands, x0, x1, yMin, 1.2, yMin, yMax, CH.amber, "偏低 <1.2%");
-    pushBand(bands, x0, x1, 1.2, 1.5, yMin, yMax, CH.green, "中性 1.2~1.5%");
-    pushBand(bands, x0, x1, 1.5, yMax, yMin, yMax, CH.blue, "充裕 >1.5%");
+    const band = function (a, b, color, label) {
+        const l = Math.max(a, yMin), h = Math.min(b, yMax);
+        if (h > l) pushBand(bands, x0, x1, l, h, yMin, yMax, color, label);
+    };
+    band(yMin, 1.30, CH.blue, "低位 <1.30%");
+    band(1.30, 1.60, CH.green, "中性偏松 1.30~1.60%");
+    band(1.60, yMax, CH.amber, "偏高 >1.60%");
+
+    const lines = [1.00, 1.30, 1.60, 1.95]
+        .filter(function (v) { return v > yMin && v < yMax; })
+        .map(function (v) {
+            return { yAxis: v, lineStyle: { color: v === 1.30 || v === 1.60 ? CH.green : CH.amber },
+                     label: { formatter: v.toFixed(2) } };
+        });
 
     const opt = baseOption(dates, {
         yName: "%", yMin: yMin, yMax: yMax,
         tooltip: function (p) {
-            const i = p[0].dataIndex, v = vals[i], st = excessReserveState(v);
+            const i = p[0].dataIndex, v = vals[i], st = ncdState(v);
             return "<b>" + escapeHtml(dates[i]) + "</b><br>"
-                + '<span style="color:' + CH.green + '">●</span> 季末超额准备金率：<b>' + num(v, 2) + " %</b><br>"
+                + '<span style="color:' + CH.violet + '">●</span> 1Y AAA 存单收益率：<b>' + num(v, 3) + " %</b><br>"
+                + (ma5[i] !== null ? '<span style="color:' + CH.amber + '">●</span> 5日均线：' + num(ma5[i], 3) + " %<br>" : "")
                 + '<span style="color:' + st[1] + '">状态：' + escapeHtml(st[0]) + "</span>";
         },
-        series: [Object.assign(lineSeries("超储率", vals, CH.green), {
-            areaStyle: { color: withAlpha(CH.green, 0.12) },
-            markArea: { silent: true, data: bands },
-            markLine: {
-                silent: true, symbol: "none",
-                lineStyle: { color: CH.amber, width: 1, type: "dashed", opacity: 0.85 },
-                label: { position: "insideStartTop", color: CH.slate, textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5, fontSize: 9 },
-                data: [
-                    { yAxis: 1.2, lineStyle: { color: CH.amber }, label: { formatter: "1.2" } },
-                    { yAxis: 1.5, lineStyle: { color: CH.green }, label: { formatter: "1.5" } }
-                ]
-            },
-            markPoint: marksFor(
-                dates, vals, CH.green,
-                "超储率 " + num(vals[vals.length - 1], 2) + "%",
-                function (tag, v) { return tag + " " + num(v, 2) + "%"; }
-            )
-        })]
+        series: [
+            Object.assign(lineSeries("1Y AAA 存单", vals, CH.violet), {
+                areaStyle: { color: withAlpha(CH.violet, 0.10) },
+                markArea: { silent: true, data: bands },
+                markLine: lines.length ? {
+                    silent: true, symbol: "none",
+                    lineStyle: { color: CH.amber, width: 1, type: "dashed", opacity: 0.85 },
+                    label: { position: "insideStartTop", color: CH.slate, textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5, fontSize: 9 },
+                    data: lines
+                } : undefined,
+                markPoint: marksFor(
+                    dates, vals, CH.violet,
+                    shortNcd(vals[vals.length - 1]) + " " + num(vals[vals.length - 1], 2) + "%",
+                    function (tag, v) { return tag + " " + num(v, 2) + "%"; }
+                )
+            }),
+            lineSeries("5 日均线", ma5, CH.amber, { dash: true, width: 1.4 })
+        ]
     });
-    mount("mpER", opt);
+    mount("mpNcd", opt);
 }
 
 /* ---------------- 宏观温度计（总览：总分 + 三个子温度计） ---------------- */
@@ -420,7 +445,7 @@ function drawExcessReserve(bag) {
 // 冷热段位沿用全站五段配色（0-20 冰点 / 20-40 偏冷 / 40-60 中性 / 60-80 偏热 / 80-100 亢奋），
 // 与 macro_thermometer.ZONE_BANDS 一致。
 const MACRO_ZONE_BANDS = [
-    [0, 20, "ice", "冰点 <20"],
+    [0, 20, "ice", "低迷 <20"],
     [20, 40, "cold", "偏冷 20-40"],
     [40, 60, "neutral", "中性 40-60"],
     [60, 80, "warm", "偏热 60-80"],
@@ -762,7 +787,7 @@ function panelHtml() {
     return '<section class="mp-wrap">'
         + '<div class="mp-head">'
         + "<h2>宏观监测面板 · 三组一定位</h2>"
-        + '<p class="form-hint">日度 / 月度 / 季度分开 · 每个面板 = 主图 + 辅图 + 判读。'
+        + '<p class="form-hint">日频 / 月频分开 · 每个面板 = 主图 + 辅图 + 判读。'
         + "阈值线与色带已内置，落在哪条泳道直接读；当前值、极值都标在图上。<b>曲线从现在开始逐日积累</b>，不再回溯补历史。</p>"
         + "</div>"
         + '<div class="mp-card mp-thermo">'
@@ -775,11 +800,11 @@ function panelHtml() {
         + "分项缺失时按可用权重归一化，缺失项不参与合成。</div>"
         + "</div>"
         + '<div class="mp-grid">'
-        + panelCard("mp-liq", "① 资金松紧", "日度 / 季度", [
+        + panelCard("mp-liq", "① 资金松紧", "日频", [
             panelChart("主图 · DR007 − 7天逆回购利率", "偏离度线 + 0 轴 + ±20bp 带 + 5 日均线", "mpDr007"),
             panelChart("辅图 · R001 − DR001", "分层利差 + 15 / 30 / 50bp 警戒线", "mpR001"),
-            panelChart("水位 · 金融机构超额准备金率（季末）", "季度慢变量 + 1.2 / 1.5% 参考线", "mpER")
-        ], "高偏离且分层走阔 = 真紧；只高不阔 = 结构性问题；超储率是资金面的「水位」")
+            panelChart("负债成本 · 1Y AAA 同业存单", "日线 + 5 日均线 + 1.30 / 1.60% 中性带", "mpNcd")
+        ], "高偏离且分层走阔 = 真紧；只高不阔 = 结构性问题；存单抬升 = 银行负债端吃紧、信用供给受抑")
         + panelCard("mp-credit", "② 信用扩张", "月度 · 领先 2-3 季", [
             panelChart("主图 · 社融存量同比", "阈值带：<8 收缩 / 8~10 中性 / >12 宽信用", "mpTsf"),
             panelChart("辅图 · M1、M2 同比 + 剪刀差", "M1>M2 绿、M1<M2 红（面积填充）", "mpM1M2")
@@ -799,7 +824,7 @@ function notesHtml() {
         + '<div class="mp-note">'
         + "<h3>一、组合三原则</h3>"
         + "<ol>"
-        + "<li><b>频率对齐</b>：日度（DR007 / R001 / GC001）一张图，月度（社融 / PMI / PPI / M1）一张图，季度（超储率）单独。混频率 = 看不清。</li>"
+        + "<li><b>频率对齐</b>：日频（DR007 / R001 / 1Y 存单）一张图，月频（社融 / PMI / PPI / M1）一张图。混频率 = 看不清。</li>"
         + "<li><b>量纲配对</b>：同量纲直接叠（DR007 vs 政策利率）；不同量纲先转成利差 / 偏离度 / 剪刀差再叠。</li>"
         + "<li><b>领先验证</b>：信用（社融、M1−M2）领先实体 2-3 个季度，用于<b>预判</b>；PMI / PPI 是<b>同步确认</b>。两者背离时，以信用为方向、以景气验证。</li>"
         + "</ol></div>"
@@ -807,7 +832,7 @@ function notesHtml() {
         + "<h3>二、四种呈现形态</h3>"
         + "<ol>"
         + "<li><b>偏离度图</b>（资金面首选）：不裸画两条线让人自己算差，直接画 DR007 − 7天逆回购利率单线 + 0 轴 + ±20bp 色带 + 5 日均线。高于 0 越多越紧、低于 0 越多越松，一眼定生死。</li>"
-        + "<li><b>阈值带图</b>（区间类指标首选）：给指标画「泳道」。社融背景分三段色带（&lt;8% 收缩 / 8~10% 中性 / &gt;12% 宽信用）；R001−DR001 画 15 / 30 / 50bp 三条横线；PPI 画 −3 / 0 / 2 / 5% 四档带。泳道比裸线强在<b>阈值内置，不用记</b>。</li>"
+        + "<li><b>阈值带图</b>（区间类指标首选）：给指标画「泳道」。社融背景分三段色带（&lt;8% 收缩 / 8~10% 中性 / &gt;12% 宽信用）；R001−DR001 画 15 / 30 / 50bp 三条横线；1Y 存单画 1.30 / 1.60% 中性带。泳道比裸线强在<b>阈值内置，不用记</b>。</li>"
         + "<li><b>双线 + 剪刀差填充</b>（配对指标首选）：M1、M2 两条线，中间差值用面积填充，M1&gt;M2 绿色、M1&lt;M2 红色。剪刀差的「转正 / 转负」比两条线的绝对值信息量大得多。</li>"
         + "</ol></div>"
         + '<div class="mp-note">'
@@ -832,7 +857,7 @@ function drawCharts(d) {
     drawThermometer(d.thermometer || []);
     drawDr007(bag, steps);
     drawR001(bag);
-    drawExcessReserve(bag);
+    drawNcd(bag);
     drawTsf(bag);
     drawM1M2(bag);
     drawPmi(bag);
@@ -841,7 +866,7 @@ function drawCharts(d) {
 }
 
 /** 本页全部图表容器 id（兜底时统一提示）。 */
-const MP_CHART_IDS = ["mpThermo", "mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"];
+const MP_CHART_IDS = ["mpThermo", "mpDr007", "mpR001", "mpNcd", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"];
 
 /** 图表库（ECharts，本地 /static/js/echarts.min.js）是否可用。 */
 function echartsReady() {
@@ -930,7 +955,7 @@ function setTrendMeta(d, failed) {
         : (s.total < 30
             ? '<div class="macro-alert">目前已积累 ' + s.total + ' 个数据点，曲线尚短。定时任务每天收盘会自动追加，'
               + "无需手动操作。注意各指标频率不同：日度（DR007 / R001）逐日累积，月度（社融 / M1-M2 / PMI / PPI）每月一点，"
-              + "季度（超储率）每季一点，所以月度和季度指标需要等更久才有明显曲线。</div>"
+              + "月频指标每月一点，需要等两三个月才有明显曲线。</div>"
             : "");
 }
 

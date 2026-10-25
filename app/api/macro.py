@@ -1,4 +1,4 @@
-"""宏观盯盘清单接口（三个维度 / 9 项指标）。
+"""宏观盯盘清单接口（三个维度 / 10 项指标）。
 
 - GET  /api/macro           读取当前指标与组合解读（**只读库，不再自行抓取**）
 - POST /api/macro/refresh   强制重新抓取全部指标（页面「刷新数据」按钮走这里）
@@ -6,10 +6,10 @@
 - GET  /api/macro/series    读取各指标的历史序列（热度趋势页用）
 - POST /api/macro/backfill  回溯补齐历史（**页面已无入口**，仅备必要时手动调用）
 
-三个维度（每维 3 项），全部自动获取、无手工录入：
-- ① 资金面      akshare：DR007 偏离、R001−DR001；央行：超储率
-- ② 经济热度    akshare：PMI、PPI；央行：社融存量同比
-- ③ 部门结构    akshare：M1−M2；央行《金融统计数据报告》：住户存款/贷款、非银存款
+三个维度（3 / 4 / 3 项），全部自动获取、无手工录入：
+- ① 资金面      akshare：DR007 偏离、R001−DR001；中国货币网：1Y AAA 同业存单收益率
+- ② 实体热度    akshare：PMI、PPI、M1−M2；央行：社融存量同比
+- ③ 信用/部门   央行《金融统计数据报告》：企业中长贷同比多增、住户中长贷同比多增、财政存款当月环比
 
 A股估值/情绪类读数不在本页，见「股票指标」页（/stock-temp）。
 
@@ -160,6 +160,10 @@ def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth))
 
     数据由 `./start.sh` 启动的定时任务在**北京时间每天 16:00** 抓取写入；需要立刻更新时
     走 POST /api/macro/refresh（页面「刷新数据」按钮）。
+
+    响应里的 `thermometer.model_limits` 是**模型缺陷与风控规则**（存单失真 / 季末脉冲 /
+    春节错月 / 定位边界四条，定义见 macro_thermometer.MODEL_LIMITS），页面原样渲染；
+    指标卡片的 `season_tag` 是上述 ②③ 两条的落地标记（不参与打分，仅提示别把季节性当趋势）。
     """
     try:
         crud.seed_macro_fallbacks(db, mi.FALLBACK_DEFAULTS)
@@ -246,8 +250,9 @@ def get_macro_history(
 ):
     """查询市场指标历史读数（只增不改的历史表）。
 
-    - key   ：指标键；不传则返回全部指标的历史（如 dr007_spread / excess_reserve /
-              r001_dr001 / pmi / tsf_yoy / m1_m2 / ppi_yoy / reverse_repo_rate）
+    - key   ：指标键；不传则返回全部指标的历史（如 dr007_spread / ncd_1y_aaa /
+              r001_dr001 / pmi / tsf_yoy / m1_m2 / ppi_yoy / corp_ml_loan_yoy /
+              household_ml_loan_yoy / fiscal_deposit_mom / reverse_repo_rate）
     - limit ：返回条数，1~2000，默认 200
     - order ：desc（默认，最新在前）/ asc
     """
@@ -294,7 +299,7 @@ def get_macro_series(
 ):
     """返回「三组一定位」图表面板所需的全部历史序列。
 
-    - daily  ：日度序列（DR007 偏离、R001 − DR001），用于偏离度图与分层利差图
+    - daily  ：日频序列（DR007 偏离、R001 − DR001、1Y AAA 同业存单收益率）
     - monthly：月度序列（PMI、PPI、社融存量同比、M1/M2 同比、M1−M2 剪刀差），
                用于阈值带图、双线剪刀差图、归一化叠加与四象限轨迹
     - thermometer：宏观温度计序列（总分 + 三个子温度计 + 价差）。温度计是**合成值**，
