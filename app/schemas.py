@@ -58,12 +58,15 @@ class MarketPrice(BaseModel):
 
 
 class CompanyValuationBase(BaseModel):
+    """公司估值记录。
+
+    ⚠ 2026-10-25 起「放缓期」下线：表里 `transition_years` / `growth_transition` 两列仍保留
+    （nullable，仅存历史行），但不再映射到 schema、不再写入，也不再展示。
+    """
     company_name: str
     base_profit: Optional[float] = None
     forecast_years: Optional[int] = None
     growth_forecast: Optional[float] = None
-    transition_years: Optional[int] = None
-    growth_transition: Optional[float] = None
     growth_perpetual: Optional[float] = None
     discount_rate: Optional[float] = None
     current_market_value: Optional[float] = None

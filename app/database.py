@@ -125,13 +125,7 @@ def ensure_schema_compatibility(engine=engine):
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE company_valuations ADD COLUMN current_market_value FLOAT"))
                 print("[database] company_valuations 表已补充 current_market_value 列")
-            if "transition_years" not in columns:
-                with engine.begin() as conn:
-                    conn.execute(text("ALTER TABLE company_valuations ADD COLUMN transition_years INTEGER"))
-                print("[database] company_valuations 表已补充 transition_years 列")
-            if "growth_transition" not in columns:
-                with engine.begin() as conn:
-                    conn.execute(text("ALTER TABLE company_valuations ADD COLUMN growth_transition FLOAT"))
-                print("[database] company_valuations 表已补充 growth_transition 列")
+            # transition_years / growth_transition 已于 2026-10-25 下线（不再写入/展示），
+            # 故不再为老库补这两列；已有列保留不动，历史行仍可查。
     except Exception as e:
         print(f"[database] 表结构检测失败: {e}")

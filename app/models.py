@@ -79,8 +79,8 @@ class CompanyValuation(Base):
     base_profit = Column(Float, nullable=False)  # 基期净利润（亿元）
     forecast_years = Column(Integer, nullable=False)  # 高增长期年限（年）
     growth_forecast = Column(Float, nullable=False)  # 高增长期增长率（%）
-    transition_years = Column(Integer, nullable=True)  # 放缓期年限（年）
-    growth_transition = Column(Float, nullable=True)  # 放缓期增长率（%）
+    transition_years = Column(Integer, nullable=True)  # 【已下线 2026-10-25】放缓期年限（年），列保留仅存历史行，不再写入/展示
+    growth_transition = Column(Float, nullable=True)  # 【已下线 2026-10-25】放缓期增长率（%），同上
     growth_perpetual = Column(Float, nullable=False)  # 永续增长率（%）
     discount_rate = Column(Float, nullable=False)  # 折现率（%）
     current_market_value = Column(Float, nullable=True)  # 当前市值（亿元），仅用于记录展示，不参与计算
