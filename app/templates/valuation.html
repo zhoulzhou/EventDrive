@@ -85,6 +85,19 @@ window.onload = function () {
     loadHistory();
 };
 
+// 禁止鼠标滚轮改变数字输入框的值（滚轮只用于滚动页面）。
+// 背景：Chrome/Edge/Firefox 里，number 输入框获得焦点后滚一下鼠标就会加减数值，
+// 填参数时鼠标稍有移动就会把「15」滚成「16」，而且没有任何提示。
+// 做法：滚轮落在聚焦中的 number 输入框上时，拦掉默认的数值增减并顺手 blur()，
+// 让紧接着的滚轮恢复成正常滚动页面；输入框未聚焦时不动它，页面照常滚。
+document.addEventListener('wheel', function (e) {
+    const el = e.target;
+    if (el && el.tagName === 'INPUT' && el.type === 'number' && document.activeElement === el) {
+        e.preventDefault();   // 必须 passive:false，否则拦不住
+        el.blur();
+    }
+}, { passive: false });
+
 // 核心计算逻辑：前端校验，后端计算并入库
 async function calculateValue() {
     const companyName = document.getElementById('companyName').value.trim() || '未命名';
@@ -255,7 +268,7 @@ function resetInputs() {
     color: #333;
 }
 .input-group input:focus { outline: none; border-color: #2563eb; }
-/* 隐藏数字输入框的增减箭头 */
+/* 隐藏数字输入框的增减箭头（滚轮改值另由 JS 拦截，见下方 wheel 监听） */
 .input-group input[type="number"]::-webkit-outer-spin-button,
 .input-group input[type="number"]::-webkit-inner-spin-button {
     -webkit-appearance: none;
