@@ -47,9 +47,9 @@ else:
     elif not index_alarm.ensure_index_data_loaded():
         print("⚠ 数据库中也无指数预警数据,该页面将为空")
 
-# ---- 实例生命周期（保活探针的判据）----
+# ---- 实例生命周期 ----
 # 云沙箱会被回收，进程随时可能被换成一个新实例。这里记下本进程的启动时刻：
-# /health 会带上它，保活探针看到 boot_at 变了，就等于「这期间死过又重新拉起」，
+# /health 会带上它，两次请求的 boot_at 不同，就等于「这期间死过又重新拉起」，
 # 比事后靠「某个域没落库」反推「大概是被回收了」可靠得多。
 _BOOT_AT = datetime.now(timezone.utc).replace(microsecond=0)
 _BOOT_MONO = time.monotonic()
@@ -61,8 +61,8 @@ def _log_instance_boot() -> None:
     为什么要这条：沙箱被回收是**静默事件** —— 事后翻 crawl_logs 只能看到
     「某个域某天没有行」，答不出「今天到底重启过几次、间隔多久」。
     有了 boot 行，重启频率一目了然，也能和 /health 的 boot_at 交叉验证
-    （比如保活上线后 boot 行本该只剩发布那几次，若仍频繁出现，说明
-    回收不是「空闲」触发的，保活挡不住，得换思路）。
+    （如果某天的 boot 行明显多于发布次数，说明回收比预期频繁，值得查
+    平台侧的实例策略 —— 保活云函数已于 2026-10-26 下线，别指望它兜底）。
 
     放进后台线程：写云库一次 0.3~0.9 秒，绝不该拖慢启动。
     """
@@ -253,15 +253,16 @@ def render_template(template_name: str, context: dict = None) -> HTMLResponse:
 async def health_check():
     """极轻探针：不查库、不鉴权、不渲染模板。
 
-    被 CloudBase 保活云函数（cloudfunctions/eventdrive-keepalive）每 5 分钟
-    打一次，用于把沙箱实例「焐热」，避免空闲回收后再冷启动。
+    ⚠ 保活云函数（eventdrive-keepalive）已于 2026-10-26 下线，沙箱回到
+    「空闲即回收」状态：一段时间没人访问，下次请求就要冷启动（约 3 秒）。
+    这个端点现在只用于人工排查和外部监控按需来打，没有常驻心跳了。
 
     `Cache-Control: no-store` 不能省：这个响应一旦被反代/浏览器缓存，
-    请求就到不了进程，保活等于没做。
+    请求就到不了进程，看到的 uptime 就是缓存里的旧值。
 
-    `uptime_s` 是判断「两次心跳之间有没有死过」的关键：正常情况下它应该
-    随时间单调增长且 ≥ 心跳间隔；若某次心跳看到它掉回几十秒，说明实例
-    在这 5 分钟里被回收过又重新拉起 —— 这是空闲回收之外的原因，保活挡不住。
+    `boot_at` / `uptime_s` 依然有用：沙箱被回收后进程会换新，对比两次
+    手工请求的 boot_at 就能判断「这期间死过没有」；配合 crawl_logs 里
+    task=instance_boot 的行，可以数出重启频率。
     """
     return JSONResponse(
         {

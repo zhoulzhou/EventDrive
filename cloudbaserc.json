@@ -1,24 +1,4 @@
 {
   "envId": "eventdrive-cron-d3fhxi8a34aa096e",
-  "functionRoot": "./cloudfunctions",
-  "functions": [
-    {
-      "name": "eventdrive-keepalive",
-      "handler": "index.main",
-      "runtime": "Nodejs18.15",
-      "timeout": 120,
-      "memorySize": 128,
-      "description": "沙箱保活探针：每 1 分钟打一次 /health",
-      "envVariables": {
-        "EVENTDRIVE_CLOUD_DB_KEY": "wbpk_qSd54InvBTGATZPZuNrkZA_Nuy2RbjRqRfNnWOMEf5fJP1z5DqFzpsW"
-      },
-      "triggers": [
-        {
-          "name": "keepalive-1min",
-          "type": "timer",
-          "config": "0 * * * * * *"
-        }
-      ]
-    }
-  ]
+  "functionRoot": "./cloudfunctions"
 }
