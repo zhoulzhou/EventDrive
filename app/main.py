@@ -1,7 +1,11 @@
 import hashlib
 import html
 import logging
+import os
+import threading
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +47,43 @@ else:
     elif not index_alarm.ensure_index_data_loaded():
         print("⚠ 数据库中也无指数预警数据,该页面将为空")
 
+# ---- 实例生命周期（保活探针的判据）----
+# 云沙箱会被回收，进程随时可能被换成一个新实例。这里记下本进程的启动时刻：
+# /health 会带上它，保活探针看到 boot_at 变了，就等于「这期间死过又重新拉起」，
+# 比事后靠「某个域没落库」反推「大概是被回收了」可靠得多。
+_BOOT_AT = datetime.now(timezone.utc).replace(microsecond=0)
+_BOOT_MONO = time.monotonic()
+
+
+def _log_instance_boot() -> None:
+    """记录一次进程启动（crawl_logs: task=instance_boot）。
+
+    为什么要这条：沙箱被回收是**静默事件** —— 事后翻 crawl_logs 只能看到
+    「某个域某天没有行」，答不出「今天到底重启过几次、间隔多久」。
+    有了 boot 行，重启频率一目了然，也能和 /health 的 boot_at 交叉验证
+    （比如保活上线后 boot 行本该只剩发布那几次，若仍频繁出现，说明
+    回收不是「空闲」触发的，保活挡不住，得换思路）。
+
+    放进后台线程：写云库一次 0.3~0.9 秒，绝不该拖慢启动。
+    """
+    def _run() -> None:
+        try:
+            from app.database import SessionLocal
+            from app import crud as _crud
+            db = SessionLocal()
+            try:
+                _crud.write_crawl_log(
+                    db, task="instance_boot", session="boot",
+                    source="app", item_count=0, status="ok",
+                )
+            finally:
+                db.close()
+        except Exception as exc:  # 写日志失败绝不影响服务
+            logger.warning("记录实例启动失败（不影响服务）: %s", exc)
+
+    threading.Thread(target=_run, name="instance-boot-log", daemon=True).start()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 定时抓取由**外部自动任务**调用 POST /api/crawl/daily-refresh 点火
@@ -50,6 +91,8 @@ async def lifespan(app: FastAPI):
     # 进程内 APScheduler 已停用 —— 云沙箱会回收进程，job 只在进程启动那一刻
     # 算出 next_run_time、无持久化 job store，定时点过后不会补跑。
     print("ℹ️  定时抓取由外部自动任务点火（POST /api/crawl/daily-refresh），进程内调度器已停用")
+    # 记一行启动日志：沙箱重启从此可见（详见 _log_instance_boot 注释）
+    _log_instance_boot()
     yield
     print("🛑 服务关闭")
 
@@ -208,13 +251,36 @@ def render_template(template_name: str, context: dict = None) -> HTMLResponse:
 
 @app.get("/health")
 async def health_check():
-    return JSONResponse({
-        "status": "ok",
-        "app": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        # 定时抓取由外部自动任务点火，不在本进程内调度
-        "scheduler": "external",
-    })
+    """极轻探针：不查库、不鉴权、不渲染模板。
+
+    被 CloudBase 保活云函数（cloudfunctions/eventdrive-keepalive）每 5 分钟
+    打一次，用于把沙箱实例「焐热」，避免空闲回收后再冷启动。
+
+    `Cache-Control: no-store` 不能省：这个响应一旦被反代/浏览器缓存，
+    请求就到不了进程，保活等于没做。
+
+    `uptime_s` 是判断「两次心跳之间有没有死过」的关键：正常情况下它应该
+    随时间单调增长且 ≥ 心跳间隔；若某次心跳看到它掉回几十秒，说明实例
+    在这 5 分钟里被回收过又重新拉起 —— 这是空闲回收之外的原因，保活挡不住。
+    """
+    return JSONResponse(
+        {
+            "status": "ok",
+            "app": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            # 定时抓取由外部自动任务点火，不在本进程内调度
+            "scheduler": "external",
+            # 本进程启动时刻（UTC）。变化 = 换了新实例（被回收后冷启动 / 重新发布）
+            "boot_at": _BOOT_AT.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            # 已存活秒数
+            "uptime_s": int(time.monotonic() - _BOOT_MONO),
+            "now": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @app.get("/")

@@ -1,0 +1,13 @@
+{
+  "_comment": "沙箱保活探针：每 5 分钟 GET 一次 /health，让应用实例不退化成冷启动。cron 为北京时间七段式：0 */5 * * * * * = 每小时的 0/5/10/… 分钟。Timeout 需 ≥90 秒（3 次重试 × 15 秒请求 + 2 × 10 秒间隔）；不需要任何环境变量（写异常日志才用 EVENTDRIVE_CLOUD_DB_KEY，缺失时只打控制台日志）。",
+  "name": "eventdrive-keepalive",
+  "timeout": 120,
+  "memorySize": 128,
+  "triggers": [
+    {
+      "name": "keepalive-5min",
+      "type": "timer",
+      "config": "0 */5 * * * * *"
+    }
+  ]
+}
