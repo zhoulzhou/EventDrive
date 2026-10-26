@@ -1,5 +1,5 @@
 /**
- * CloudBase 云函数：EventDrive 沙箱保活（每 5 分钟一次）
+ * CloudBase 云函数：EventDrive 沙箱保活（每 1 分钟一次）
  *
  * 为什么需要它
  * ------------
@@ -19,7 +19,7 @@
  *    /health 都会中）。只看 statusCode 会把网关抖动当成「沙箱活着」，
  *    探针形同虚设。这里要求：200 且能 JSON.parse 且 body.status === 'ok'。
  * 2) **必须重试。** 上述假 404 是随机出现的，单次失败说明不了任何事。
- * 3) **只看 /health，绝不碰 /api/\*。** 保活一天 288 次，必须足够轻：
+ * 3) **只看 /health，绝不碰 /api/\*。** 保活一天 1440 次，必须足够轻：
  *    /health 不查库、不鉴权、不渲染模板，几十毫秒返回。打业务接口会白白
  *    消耗云库往返与配额。
  *
@@ -31,9 +31,11 @@
  * 正常心跳不写，避免一天 288 行噪音）。若平台是「非空闲原因」强制回收，
  * 保活挡不住 —— 那时的证据就是这些 warn 行 + instance_boot 行。
  *
- * ⚠️ CloudBase cron 是**七段**（首位为秒），北京时间；具体表达式见 config.json。
- *    分钟位用「步进」写法 = 每小时的第 0/5/10/… 分钟触发（每 5 分钟一次）。
- *    想更激进就把步进改成 1（每分钟），成本仍可忽略。
+ * ⚠️ 频率：**每 1 分钟**（见 config.json）。这不是拍脑袋 —— 2026-10-26 实测：
+ *    5 分钟档位下，心跳打到时实例已经死了，每次心跳都在触发冷启动
+ *    （13:51:43 起的实例，13:55:03 的心跳又拉起一个新实例），等于没保活。
+ *    回收窗口在 2~3 分钟量级，只有 ≤1 分钟的心跳才续得上。
+ *    CloudBase cron 是**七段**（首位为秒），北京时间。
  *    （注意：这里不能直接写出表达式 —— 其中的「星号 + 斜杠」会提前结束本段
  *      块注释，是 JS 里非常常见的自伤，改注释时别踩。）
  */
@@ -52,9 +54,9 @@ const RETRY_GAP_MS = parseInt(
   process.env.EVENTDRIVE_KEEPALIVE_RETRY_GAP_MS || '10000',
   10
 );
-// 心跳间隔（秒）与「疑似中途重启」的判定阈值（留 60s 给调度/网络抖动）
-const HEARTBEAT_S = 300;
-const RESTART_HINT_S = HEARTBEAT_S - 60;
+// 心跳间隔（秒）与「疑似中途重启」的判定阈值（留 15s 给调度/网络抖动）
+const HEARTBEAT_S = 60;
+const RESTART_HINT_S = HEARTBEAT_S - 15;
 
 /** 统一请求：返回 {status, body}；网络层错误直接 reject */
 function request(path, opts) {
@@ -93,7 +95,8 @@ function utcNow() {
 }
 
 /**
- * 只在异常（保活失败 / 疑似中途重启）时写一行 crawl_logs，正常心跳不写。
+ * 只在**保活失败**时写一行 crawl_logs（status=failed），正常心跳不写。
+ * 应用挂掉时它自己写不了 instance_boot，这条是唯一的云端证据。
  * 写库失败不影响返回值 —— 探针的第一职责是把「活没活」告诉调用方。
  */
 async function logEvent(status, message) {
@@ -148,20 +151,16 @@ exports.main = async () => {
           suspicious_restart: restarted,
         };
         if (restarted) {
+          // 只告警、不写库：应用启动时已经写了一条 crawl_logs(instance_boot)，
+          // 那才是权威证据（精确到启动时刻）。这里只是「看起来像重启」的推断，
+          // 而且发布本身也会造成 uptime 很小 —— 再落一条 warn 只会污染日志。
           console.warn(
-            `[keepalive] 疑似中途重启：uptime=${uptime}s < ${RESTART_HINT_S}s ` +
-              `(boot_at=${body.boot_at})，说明实例在这 5 分钟内被回收过`
-          );
-          out.logged = await logEvent(
-            'warn',
-            `疑似中途重启 uptime=${uptime}s boot_at=${body.boot_at || '-'}`
-          );
-        } else {
-          console.log(
-            `[keepalive] ok attempts=${i} latency=${out.latency_ms}ms ` +
-              `uptime=${uptime === null ? '-' : uptime + 's'}`
+            `[keepalive] 实例 uptime 仅 ${uptime}s（< ${RESTART_HINT_S}s），` +
+              `说明在本轮心跳间隔内启动过：发布重启或被平台回收。boot_at=${body.boot_at}`
           );
         }
+        // 正常心跳**不打印**：一分钟一次、一天 1440 次，全打会把日志刷满。
+        // 要确认心跳在跑，看 crawl_logs 里 instance_boot 是否停止增长即可。
         return out;
       }
 
