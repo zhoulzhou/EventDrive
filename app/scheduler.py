@@ -280,10 +280,14 @@ async def full_crawl(session: str = "manual"):
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     source_results: Dict[str, Tuple[int, List[Dict[str, Any]]]] = {}
+    failed_sources: Dict[str, str] = {}
     total_saved = 0
-    for r in results:
+    # 按位置对齐回新闻源：gather 结果顺序与 tasks 一致，据此才能知道
+    # 「是哪个源挂了」——只拿异常对象的话，落库时只能记一条无主的 failed。
+    for cls, r in zip(news_sources, results):
         if isinstance(r, Exception):
-            logger.error(f"并发抓取出错: {r}", exc_info=True)
+            logger.error(f"并发抓取出错: {type(r).__name__}: {r}", exc_info=r)
+            failed_sources[cls.__name__] = f"{type(r).__name__}: {r}"
             continue
         cls_name, count, news = r
         source_results[cls_name] = (count, news)
@@ -294,6 +298,15 @@ async def full_crawl(session: str = "manual"):
         saved, src_news = source_results.get(cls.__name__, (0, []))
         # source_name 是类属性，直接取用，无需实例化
         src_label = cls.source_name
+        if cls.__name__ in failed_sources:
+            # 抓取抛异常 → 写 failed（2026-10-26）。原先这里会落一条 empty，
+            # 把「源挂了」伪装成「今天没新新闻」，是排查时最容易骗人的一类假信号。
+            log_crawl(f"{src_label} 抓取失败: {failed_sources[cls.__name__]}")
+            _write_crawl_log(task="news", session=session, source=src_label,
+                             item_count=0, status="failed",
+                             error_message=failed_sources[cls.__name__][:500],
+                             duration=elapsed)
+            continue
         if src_news:
             log_crawl(f"{src_label} 抓取到 {len(src_news)} 条新新闻")
         else:

@@ -6,6 +6,7 @@ from typing import Optional, List, Dict
 from fastapi import APIRouter, Depends
 
 from app.scheduler import (
+    _write_crawl_log,
     full_crawl,
     set_crawl_progress_callback,
     close_session,
@@ -207,11 +208,22 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
             else:
                 # 单域失败不应连累其它域：逐个捕获异常，最后汇总
                 async def _one(name: str):
+                    t0 = datetime.now()
                     try:
                         await _DOMAIN_TASKS[name]()
                         return name, None
                     except Exception as e:  # noqa: BLE001
                         logger.error("补跑数据域 %s 失败: %s", name, e, exc_info=True)
+                        # **失败必须落库**（2026-10-26）：
+                        # 原先只在内存 result 里记一笔，进程一重启就没了，
+                        # 而 crawl_logs 只有成功才写行 —— 结果「没执行」和「执行失败」
+                        # 在数据上完全同形，排查时只能靠猜（见 10-26 那次事故）。
+                        _write_crawl_log(
+                            task=name, session=session, source=name,
+                            item_count=0, status="failed",
+                            error_message=str(e)[:500],
+                            duration=int((datetime.now() - t0).total_seconds()),
+                        )
                         return name, str(e)[:200]
 
                 done, failed = [], {}
@@ -228,6 +240,17 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
         except Exception as e:
             logger.error("每日定时抓取失败: %s", e, exc_info=True)
             _daily_refresh_state["error"] = str(e)[:500]
+            # 整轮级别的失败同样要留痕。task 用 "all"（models.CrawlLog 已登记的
+            # 通用任务键），云函数按 NEED=[market,macro,stock_temp] 判缺失，
+            # 不会被这一行干扰。
+            _write_crawl_log(
+                task="all", session=session, source="daily-refresh",
+                item_count=0, status="failed",
+                error_message=str(e)[:500],
+                duration=int((datetime.now() - datetime.fromisoformat(
+                    _daily_refresh_state["started_at"]
+                )).total_seconds()) if _daily_refresh_state.get("started_at") else 0,
+            )
         finally:
             try:
                 loop.close()

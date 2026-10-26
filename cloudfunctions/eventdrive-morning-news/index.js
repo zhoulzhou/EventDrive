@@ -48,10 +48,25 @@ exports.main = async (event, context) => {
   const out = { ok: false, step: 'start' };
 
   // 1) 点火（只抓 news）。接口立即返回，抓取在沙箱后台跑。
+  //    2026-10-26：加 3 次重试（间隔 15s）—— 沙箱冷启动时首个请求常超过
+  //    本函数 40s 的单请求超时，一次失败就 return 会让整轮彻底落空。
   try {
-    const r = await request('/api/crawl/daily-refresh?domains=' + NEED, cookie, 'POST');
+    let lastErr = null;
+    let r = null;
+    for (let i = 1; i <= 3; i++) {
+      try {
+        r = await request('/api/crawl/daily-refresh?domains=' + NEED, cookie, 'POST');
+        if (r.status === 200) break;
+        lastErr = new Error('HTTP ' + r.status + ' ' + String(r.body).slice(0, 120));
+      } catch (e) {
+        lastErr = e;
+      }
+      console.log(`[1] 点火第 ${i}/3 次失败:`, lastErr.message);
+      if (i < 3) await sleep(15 * 1000);
+      r = null;
+    }
+    if (!r) throw lastErr || new Error('点火失败');
     console.log('[1] 点火响应:', r.body);
-    if (r.status !== 200) throw new Error('HTTP ' + r.status);
     out.ignite = r.body;
     out.step = 'ignited';
   } catch (e) {
@@ -83,14 +98,20 @@ exports.main = async (event, context) => {
       );
       const rows = JSON.parse(r.body);
       const nowBJT = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+      // 2026-10-26：失败也会写 status=failed，不能把 failed 当成「已落库」，
+      // 否则源挂了也会报成功（记到 lastError 里照实说明）。
+      let lastError = null;
       for (const row of rows) {
         const t = new Date(row.crawl_time + 'Z');
         const d = new Date(t.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-        if (d === nowBJT && row.task === NEED) {
+        if (d !== nowBJT || row.task !== NEED) continue;
+        if (row.status === 'ok' || row.status === 'empty') {
           landed = { item_count: row.item_count, status: row.status };
           break;
         }
+        if (!lastError) lastError = { status: row.status };
       }
+      if (lastError) console.log('[3] 今日 news 无成功记录，最新状态:', JSON.stringify(lastError));
       console.log('[3] 今日 news 落库:', JSON.stringify(landed));
     } catch (e) {
       console.log('[3] 拉 crawl_logs 失败:', e.message);
