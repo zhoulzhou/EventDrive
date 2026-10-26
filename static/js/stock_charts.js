@@ -293,25 +293,6 @@ function drawCapital(bag) {
         }]
     });
 }
-
-function drawStruct(bag) {
-    const s = pts(bag.structure_div);
-    if (!s.length) return chartEmpty("stStruct", "暂无结构分化序列，等待定时任务每日收盘写入（可点「刷新数据」立即抓一次）");
-    mount("stStruct", {
-        grid: baseGrid(), tooltip: tipAxis(" pp"),
-        xAxis: xAxis(s.map(function (p) { return p[0]; })),
-        yAxis: [yAxis("分位差（pp）")],
-        series: [lineSeries("科创50 − 创业板 分位差", s, CH.violet, {
-            areaStyle: { color: withAlpha(CH.violet, 0.10) },
-            markLine: thresholdLines([
-                [40, "+40pp 极端分化", CH.red], [20, "+20pp", CH.orange],
-                [0, "0 轴", CH.slate], [-20, "−20pp", CH.cyan], [-40, "−40pp 极端反向", CH.blue]
-            ]),
-            markPoint: lastMark("分位差", s, CH.violet, 1, "pp")
-        })]
-    });
-}
-
 function drawTemp(tp, greedSeries) {
     const rows = (tp || {}).daily || [];
     const greedPts = pts(greedSeries || []);
@@ -412,10 +393,6 @@ function panelHtml() {
         + "<div class=\"st-fig-block-head\">资金层 · 资金变量定底气</div>"
         + fig("新基金发行（权益类，亿元）", "月频；新成立股票型/混合型/指数型基金的募集份额合计", "stFund")
         + fig("产业资本净增持（滚动30日，亿元）", "红柱=净增持 · 绿柱=净减持（A 股涨红跌绿惯例）", "stCapital")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-structure\">"
-        + "<div class=\"st-fig-block-head\">结构 · 热度在哪个市场</div>"
-        + fig("科创50 vs 创业板 · 价格分位差", "按月；±20 / ±40pp 分化阈值线", "stStruct")
         + "</div></section>";
 }
 
@@ -432,7 +409,7 @@ function trendNotesHtml() {
         + "可直接比高低。但口径不同——综合温度是「热度分合成」，贪婪指数是「分位合成」，"
         + "不是同一把尺子；它更贴近「贵不贵」，综合温度更贴近「热不热」。</li>"
         + "<li><b>阈值线已内置</b>：成交额 7000 亿地量 / 2 万亿亢奋 / 3 万亿极端、两融占流通市值 2.0 / 2.5 / 3.0 / 3.5%、ERP 均值 ±1σ、破净率 10 / 6 / 3 / 1%、"
-        + "产业资本 ±100 / −400 亿、结构分化 ±20 / ±40pp。落在线哪一侧，直接读状态。</li>"
+        + "产业资本 ±100 / −400 亿。落在线哪一侧，直接读状态。</li>"
         + "<li><b>末端数值标签</b>在每条线最右侧单独一列，是「最新一个数据点」的读数（不是当前快照，含日期差）。</li>"
         + "<li><b>缺数据的图层自动断线</b>——某一层在早期没有数据，曲线就从有数据那天开始画，不做插补。</li>"
         + "<li>红涨绿跌按 A 股惯例：温度计与状态热=红橙、冷=蓝绿；产业资本红柱=净增持、绿柱=净减持。</li>"
@@ -450,7 +427,6 @@ function trendNotesHtml() {
         + "<li><b>各指标频率不同</b>：估值层月频（PE / ERP）、新基金发行月频、成交额 / 换手率 / 两融 / 破净率日频，"
         + "同一张图里日期轴按各自实际有数据的点绘制，不会强行对齐。</li>"
         + "<li><b>缺数据的图层自动断线</b>——某指标当天没取到就断开，不做插补。</li>"
-        + "<li><b>结构分化</b>用「价格分位」而非 PE 分位（科创50 上市时间较短，估值序列覆盖不足十年）。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
         + "</ul></div>"
         + "</div></section>";
@@ -459,15 +435,15 @@ function trendNotesHtml() {
 /* ---------------- 加载与绘制 ---------------- */
 function drawCharts(d) {
     const bag = d.series || {};
-    // 绘制顺序与页面顺序一致：综合温度在最上（总览），然后估值/情绪/资金/结构分层
+    // 绘制顺序与页面顺序一致：综合温度在最上（总览），然后估值/情绪/资金分层
     // 贪婪指数与综合温度同图同轴（都是 0-100、越高越热），数据取自 series.greed_index
     drawTemp(d.temperature || {}, bag.greed_index || []);
     drawPE(bag); drawERP(bag); drawBelowNa(bag); drawTurnover(bag);
-    drawMargin(bag); drawFund(bag); drawCapital(bag); drawStruct(bag);
+    drawMargin(bag); drawFund(bag); drawCapital(bag);
     Object.keys(chartReg).forEach(function (k) { if (chartReg[k]) chartReg[k].resize(); });
 }
 
-const CHART_IDS = ["stPE", "stERP", "stBelowNa", "stTurnover", "stMargin", "stFund", "stCapital", "stStruct", "stTemp"];
+const CHART_IDS = ["stPE", "stERP", "stBelowNa", "stTurnover", "stMargin", "stFund", "stCapital", "stTemp"];
 
 async function loadSeries(force) {
     // 前置兜底：库没加载出来就没必要再请求数据了，直接给提示（避免白跑一趟请求）

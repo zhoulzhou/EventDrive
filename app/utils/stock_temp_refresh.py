@@ -387,7 +387,7 @@ def backfill_history(
                     })
                 counts[key] = len(series)
             else:
-                # 无自带历史的指标（宽度 / ETF 份额 / 结构分化）：至少落下当前读数
+                # 无自带历史的指标（宽度 / ETF 份额）：至少落下当前读数
                 if item.get("value") is not None and item.get("as_of"):
                     records.append({
                         "key": key,

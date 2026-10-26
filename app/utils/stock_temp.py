@@ -3,16 +3,26 @@
 体系来自「A 股冷热要分三层看」的方法论：估值层（贵不贵）、情绪层（亢奋不亢奋）、
 资金层（钱进不进），最后合成一个 0-100 的市场温度计，全部用历史分位说话。
 
-四组指标：
+三组指标（2026-10-26 移除「结构 · 科创50 vs 创业板分位差」）：
 - 估值层（valuation）：沪深300 PE-TTM / 沪深300 PB / ERP 股债性价比 / 破净率
 - 情绪层（sentiment）：两市成交额 / 全A换手率 / 融资余额占流通市值 / 市场宽度
 - 资金层（capital）  ：股票ETF份额 / 新基金发行 / 产业资本净增持
-- 结构  （structure）：科创50 vs 创业板 分位差
 
 数据获取方式（全部自动，来源统一记为 source="akshare"，实际站点见各指标 note）：
-- 乐咕乐股（legulegu，经 akshare）
-      · stock_index_pe_lg / stock_index_pb_lg        → 沪深300 PE-TTM / PB（月频，2005 年起）
-      · stock_a_below_net_asset_statistics           → 全部A股破净率（日频，2005 年起）
+
+⚠️ 2026-10-26 换源：legulegu 在沙箱出口 IP 上会被风控（连续 6~7 次即 429，
+akshare 报「未找到 _csrf 令牌」），估值层 4 个指标改用**当日快照**接口，
+不再拉长历史 —— 分位由本页历史表逐日累积样本自算（`_fill_percentiles`）。
+
+- 韭圈儿指数估值（api.jiucaishuo.com，经 akshare）
+      · index_value_name_funddb                       → 沪深300 最新 PE / PB（当日快照，一次拿全市场）
+- 东财全A快照（quote.eastmoney.com，经 akshare，一次请求出两个指标）
+      · stock_zh_a_spot_em                            → 全A 市净率 <1 家数占比（破净率）
+                                                        与涨跌幅分布（市场宽度）
+- 乐咕乐股（legulegu，经 akshare）—— **仅作兜底**，主源失败时才走
+      · stock_index_pe_lg / stock_index_pb_lg         → 沪深300 PE-TTM / PB
+      · stock_a_below_net_asset_statistics            → 全部A股破净率
+      · stock_market_activity_legu                    → 涨跌家数（市场宽度）
 - 交易所官网（经 akshare，无反爬、按日可取，用于回填）
       · stock_sse_deal_daily / stock_szse_summary    → 沪/深 股票成交金额与流通市值
 - 中债 / 新浪（经 akshare）
@@ -21,10 +31,8 @@
       · 融资融券账户信息                              → 两融余额（stock_margin_account_info）
       · RPT_SHARE_HOLDER_INCREASE                    → 重要股东增减持（产业资本净增持）
 - 新浪 / 东财（经 akshare）
-      · stock_market_activity_legu                   → 涨跌家数（市场宽度）
       · fund_scale_open_sina                         → 宽基股票ETF 份额快照
       · fund_new_found_em                            → 新成立基金募集份额
-      · stock_zh_index_daily                         → 科创50 / 创业板指 收盘
 
 任一项抓取失败时不做异常抛出：该指标返回 error，页面按「数据缺失」展示并保留上一次
 成功读数，不影响其余指标与页面渲染。
@@ -48,27 +56,23 @@ logger = logging.getLogger(__name__)
 GROUP_VALUATION = "valuation"
 GROUP_SENTIMENT = "sentiment"
 GROUP_CAPITAL = "capital"
-GROUP_STRUCTURE = "structure"
 
 GROUP_TITLES = {
     GROUP_VALUATION: "① 估值层 · 贵不贵",
     GROUP_SENTIMENT: "② 情绪层 · 亢奋还是低迷",
     GROUP_CAPITAL: "③ 资金层 · 钱进不进",
-    GROUP_STRUCTURE: "④ 结构 · 热度在哪个市场",
 }
 
 GROUP_SUBTITLES = {
     GROUP_VALUATION: "月频慢变量 · 决定能不能长期拿",
     GROUP_SENTIMENT: "日频快变量 · 决定短线热不热",
     GROUP_CAPITAL: "日频/月频 · 决定行情有没有持续性",
-    GROUP_STRUCTURE: "观察分化：同一个 A 股，热度可能不在一个市场",
 }
 
 GROUP_TONES = {
     GROUP_VALUATION: "blue",
     GROUP_SENTIMENT: "amber",
     GROUP_CAPITAL: "green",
-    GROUP_STRUCTURE: "violet",
 }
 
 TONES = {
@@ -134,7 +138,7 @@ CHART_KEYS = [
     "hs300_pe", "hs300_pb", "erp", "below_na",
     "turnover_amt", "turnover_rate", "margin", "total_float_mcap", "breadth",
     "new_fund", "industry_capital", "etf_share",
-    "structure_div", "temperature", "greed_index",
+    "temperature", "greed_index",
 ]
 
 # ---------------------------------------------------------------- 指标清单
@@ -310,8 +314,8 @@ INDICATORS: List[Dict[str, Any]] = [
         ),
         "guide": (
             "方法论上用十年分位（不看绝对值，绝对水平会随市场结构漂移）。"
-            "本页同时给出「读数区间档」与「十年分位」：分位样本不足 12 期时先按读数区间判读，"
-            "历史积累到 12 期以上后以分位为准。经验区间：<1% 冰点 / 1~1.5% 偏冷 / "
+            "本页同时给出「读数区间档」与「十年分位」：分位始终按**现有样本**计算（不设最小期数），"
+            "样本越多越准，详情里会标注实际期数。经验区间：<1% 冰点 / 1~1.5% 偏冷 / "
             "1.5~2.5% 中性 / 2.5~4% 偏热 / >4% 亢奋。"
         ),
         "warning": "日频历史由本页逐日积累（回填窗口有限），分位窗口会在详情里标注实际样本量。",
@@ -334,8 +338,8 @@ INDICATORS: List[Dict[str, Any]] = [
         "temp_weight": 0.20,
         "temp_invert": False,
         # 历史序列与快照同口径（都是「占流通市值%」），但**历史点极少**：交易所逐日流通市值
-        # 只能取到最新一天，所以占比序列是从启用起逐日累积的。样本不足 12 期时算不出
-        # 分位，温度重建跳过它，等曲线攒够样本后自动参与。
+        # 只能取到最新一天，所以占比序列是从启用起逐日累积的。分位不设最小样本期数
+        # （样本少时分位就粗），故该指标暂不参与历史温度重建。
         "temp_reconstruct": False,
         "freq": "日频",
         "judge": "value",
@@ -470,36 +474,6 @@ INDICATORS: List[Dict[str, Any]] = [
         ],
     },
 
-    # ------------------------------------------------------------ ④ 结构
-    {
-        "key": "structure_div",
-        "group": GROUP_STRUCTURE,
-        "name": "科创50 vs 创业板 · 分位差",
-        "subtitle": "同期价格分位之差（pp），衡量热度是否在同一市场",
-        "unit": "pp",
-        "digits": 1,
-        "temp_layer": None,
-        "temp_weight": 0.0,
-        "temp_invert": False,
-        "freq": "日频",
-        "judge": "value",
-        "meaning": (
-            "科创50 指数价格所处历史分位减去创业板指价格分位。差值为正说明资金集中在科创板（硬科技），"
-            "为负说明热度在创业板（成长/新能源/医药等）。"
-        ),
-        "guide": (
-            "分化超过 40pp 属极端分化：涨幅由单一市场驱动，属于结构性行情而不是全面牛。"
-            "极端分化之后，往往出现方向切换（补涨或高位板块回撤）。"
-        ),
-        "warning": "这里用的是「价格分位」而非 PE 分位（科创50 上市时间较短，估值序列覆盖不足）。",
-        "bands": [
-            {"lo": 40, "hi": None, "range": "> +40pp", "state": "极端分化 · 单市场独热", "tone": "red", "score": 90},
-            {"lo": 20, "hi": 40, "range": "+20 ~ +40pp", "state": "明显分化", "tone": "orange", "score": 70},
-            {"lo": -20, "hi": 20, "range": "−20 ~ +20pp", "state": "相对均衡", "tone": "lime", "score": 50},
-            {"lo": -40, "hi": -20, "range": "−40 ~ −20pp", "state": "反向分化", "tone": "cyan", "score": 30},
-            {"lo": None, "hi": -40, "range": "< −40pp", "state": "极端反向 · 成长独热", "tone": "blue", "score": 10},
-        ],
-    },
 ]
 
 INDICATOR_MAP = {ind["key"]: ind for ind in INDICATORS}
@@ -561,23 +535,29 @@ def percentile_rank(value: Optional[float], series: List[Dict[str, Any]],
                     freq: str = "M", invert: bool = False) -> Tuple[Optional[float], Optional[str]]:
     """value 在 series（正序历史序列）最近 N 个点中的分位（0-100）。
 
-    返回 (分位, 分位窗口说明)。样本点少于 12 个时视为样本不足，返回 (None, 说明)。
-    分位一律返回「原始分位」（高 = 数值高），是否反向由调用方按 temp_invert 处理。
+    ⚠️ **不设最小样本门槛**（2026-10-26 用户要求）：样本只有几期也照算 ——
+    样本少时分位粗、样本多了自然准，不需要人为卡「攒够 N 期才给分位」。
+
+    唯一的下限是「至少 2 个样本」：**1 个样本算不出分位**（当前值跟它自己比，
+    「≤ 自己」恒成立 → 分位恒为 100%），那是伪信号而非精度问题。窗口里只有
+    1 个点的指标会返回 (None, None)，交给 `_fill_percentiles` 用历史表里
+    累积的样本补算（历史表通常不止 1 期）。
+
+    返回 (分位, 分位窗口说明)。分位一律返回「原始分位」（高 = 数值高），
+    是否反向由调用方按 temp_invert 处理。
     """
     vals = [x["value"] for x in series if x.get("value") is not None]
-    if value is None or not vals:
+    if value is None or len(vals) < 2:
         return None, None
     cap = PCT_WINDOW_POINTS.get(freq, 120)
     windowed = vals[-cap:] if len(vals) > cap else vals
-    if len(windowed) < 12:
-        label = "样本仅 %d 期，不足 12 期" % len(windowed)
-        return None, label
     below = sum(1 for v in windowed if v <= value)
     pct = round(below / len(windowed) * 100, 1)
     if len(windowed) >= cap:
         label = FREQ_LABELS.get(freq, "近十年")
     else:
-        label = "自 %s 起共 %d 期" % (series[-len(windowed)]["as_of"], len(windowed))
+        start_as_of = next((x["as_of"] for x in series if x.get("value") is not None), None)
+        label = "自 %s 起共 %d 期" % (start_as_of, len(windowed))
     return pct, label
 
 
@@ -790,7 +770,65 @@ def _legu_series(df, date_col: str, value_col: str) -> List[Dict[str, Any]]:
     return _clean_series(rows)
 
 
-def fetch_hs300_pe() -> Dict[str, Any]:
+# ------------------------------------------------------------ 当日快照源（2026-10-26 换源）
+#
+# 为什么换：乐咕乐股（legulegu）在沙箱出口 IP 上会被风控 —— 连续 6~7 次请求即 429，
+# akshare 把它包装成「页面中未找到 _csrf 令牌」，导致 stock_temp 整轮抓取失败。
+# 本地网络出口与沙箱不同，本地跑通不代表线上跑通。
+#
+# 用户口径（2026-10-26 明确）：**不需要历史数据，只要当日值**；分位由本页历史表
+# 逐日累积的样本自算（见 stock_temp_refresh._fill_percentiles），不拉长历史。
+#
+# 于是把 4 个 legu 调用换成 2 个「当日快照」接口：
+#   ① 韭圈儿 index_value_name_funddb：一次拿全市场指数的 最新PE / 最新PB（沪深300 取一行）
+#   ② 东财 stock_zh_a_spot_em：一次拿全 A 的 市净率 + 涨跌幅 → 破净率、涨跌家数（宽度）
+# 两个源都不需 cookie。legu 保留为**兜底**（失败仍走原实现，行为不比现在差）。
+
+_SNAPSHOT_TTL = 120  # 秒：同一轮刷新里 PE/PB/破净率/宽度复用同一次请求
+_snapshot_cache: Dict[str, Any] = {}
+
+
+def _cached_snapshot(name: str, loader):
+    """轮内缓存：一次刷新里多个指标共用同一份快照，避免重复打同一接口。"""
+    hit = _snapshot_cache.get(name)
+    now = time.time()
+    if hit and now - hit[0] < _SNAPSHOT_TTL:
+        return hit[1]
+    data = loader()
+    _snapshot_cache[name] = (now, data)
+    return data
+
+
+def _funddb_snapshot(name: str = "沪深300") -> Dict[str, Any]:
+    """韭圈儿指数估值快照 → {pe, pb, as_of}（只取当日一行，不碰历史序列）。"""
+    ak = _ak()
+    df = _cached_snapshot("funddb", lambda: ak.index_value_name_funddb())
+    if df is None or len(df) == 0:
+        raise RuntimeError("韭圈儿指数估值快照为空")
+    if "指数名称" not in df.columns:
+        raise RuntimeError(f"韭圈儿快照字段异常: {list(df.columns)[:8]}")
+    hit = None
+    for _, r in df.iterrows():
+        if str(r.get("指数名称") or "").strip() == name:
+            hit = r
+            break
+    if hit is None:
+        raise RuntimeError(f"韭圈儿快照里没有「{name}」")
+    return {
+        "pe": _num(hit.get("最新PE")),
+        "pb": _num(hit.get("最新PB")),
+        "as_of": _d(hit.get("更新时间")),
+    }
+
+
+def _spot_snapshot():
+    """东财全 A 实时快照（约 5600 行 × 23 列），破净率与宽度共用这一次请求。"""
+    ak = _ak()
+    return _cached_snapshot("spot_em", lambda: ak.stock_zh_a_spot_em())
+
+
+def _fetch_hs300_pe_legu() -> Dict[str, Any]:
+    """兜底：乐咕乐股 PE（带限流退避）。仅在韭圈儿快照不可用时调用。"""
     ak = _ak()
     df = _legu_call(ak.stock_index_pe_lg, symbol="沪深300")
     series = _legu_series(df, "日期", "滚动市盈率")
@@ -809,13 +847,39 @@ def fetch_hs300_pe() -> Dict[str, Any]:
             "分位": pct,
             "分位窗口": pct_window,
             "样本期数": len(series),
-            "数据源": "乐咕乐股 stock_index_pe_lg",
+            "数据源": "乐咕乐股 stock_index_pe_lg（兜底）",
         },
         "series": series,
     }
 
 
-def fetch_hs300_pb() -> Dict[str, Any]:
+def fetch_hs300_pe() -> Dict[str, Any]:
+    """沪深300 PE-TTM：优先韭圈儿当日快照，失败回退乐咕乐股。
+
+    只返回当日一个点（series 为空）—— 分位由历史表累积样本补算，不拉长历史。
+    """
+    try:
+        snap = _funddb_snapshot("沪深300")
+        if not snap.get("pe"):
+            raise RuntimeError("韭圈儿未返回沪深300 最新PE")
+        return {
+            "value": round(snap["pe"], 2),
+            "as_of": snap.get("as_of"),
+            "source": "akshare",
+            "detail": {
+                "PE-TTM": round(snap["pe"], 2),
+                "分位": None,       # 交给 _fill_percentiles 用本页历史样本补算
+                "数据源": "韭圈儿 index_value_name_funddb（当日快照）",
+            },
+            "series": [],
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("韭圈儿 PE 快照失败，回退乐咕乐股：%s", e)
+        return _fetch_hs300_pe_legu()
+
+
+def _fetch_hs300_pb_legu() -> Dict[str, Any]:
+    """兜底：乐咕乐股 PB（带限流退避）。"""
     ak = _ak()
     df = _legu_call(ak.stock_index_pb_lg, symbol="沪深300")
     series = _legu_series(df, "日期", "市净率")
@@ -834,16 +898,45 @@ def fetch_hs300_pb() -> Dict[str, Any]:
             "分位": pct,
             "分位窗口": pct_window,
             "样本期数": len(series),
-            "数据源": "乐咕乐股 stock_index_pb_lg",
+            "数据源": "乐咕乐股 stock_index_pb_lg（兜底）",
         },
         "series": series,
     }
 
 
-def fetch_y10_series() -> List[Dict[str, Any]]:
-    """中国 10 年期国债收益率日频序列（2014 年起，覆盖十年分位所需窗口）。"""
+def fetch_hs300_pb() -> Dict[str, Any]:
+    """沪深300 PB：优先韭圈儿当日快照，失败回退乐咕乐股（同样只给当日值）。"""
+    try:
+        snap = _funddb_snapshot("沪深300")
+        if not snap.get("pb"):
+            raise RuntimeError("韭圈儿未返回沪深300 最新PB")
+        return {
+            "value": round(snap["pb"], 2),
+            "as_of": snap.get("as_of"),
+            "source": "akshare",
+            "detail": {
+                "PB": round(snap["pb"], 2),
+                "分位": None,
+                "数据源": "韭圈儿 index_value_name_funddb（当日快照）",
+            },
+            "series": [],
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("韭圈儿 PB 快照失败，回退乐咕乐股：%s", e)
+        return _fetch_hs300_pb_legu()
+
+
+def fetch_y10_series(days: int = 40) -> List[Dict[str, Any]]:
+    """中国 10 年期国债收益率日频序列（**默认只取最近 40 天**）。
+
+    2026-10-26 调整：原先拉 11 年（覆盖「十年分位」窗口）。现在 ERP 走当日口径
+    （100/PE − 当日 10Y），分位由历史表累积样本补算，长序列在这里不再有用 ——
+    拉 11 年纯粹是白下载 2700 多行。40 天足够容忍长假 + 取到最新一个发布日。
+
+    仅在需要重建长序列（回填）时传更大的 days。
+    """
     ak = _ak()
-    start = (date.today() - timedelta(days=365 * 11)).strftime("%Y%m%d")
+    start = (date.today() - timedelta(days=days)).strftime("%Y%m%d")
     df = ak.bond_zh_us_rate(start_date=start)
     rows = []
     for _, r in df.iterrows():
@@ -878,17 +971,38 @@ def build_erp_series(pe_series: List[Dict[str, Any]],
 
 
 def fetch_erp(pe_series: Optional[List[Dict[str, Any]]] = None,
-              y10_daily: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-    if pe_series is None:
-        pe_series = fetch_hs300_pe()["series"]
+              y10_daily: Optional[List[Dict[str, Any]]] = None,
+              pe_now: Optional[float] = None,
+              pe_as_of: Optional[str] = None) -> Dict[str, Any]:
+    """ERP = 100/PE-TTM − 10Y 国债收益率（%）。
+
+    两条路径：
+    ① 传了长 PE 序列 → 原逻辑，按月对齐合成整条 ERP 序列（回填/兜底用）；
+    ② 只有当日 PE（2026-10-26 起的默认路径）→ 直接用当日 PE 与最新 10Y 合成**一个点**，
+       分位交给 _fill_percentiles 用本页历史样本补算，不再拉长历史。
+    """
+    if pe_series is None and pe_now is None:
+        res = fetch_hs300_pe()
+        pe_series = res.get("series") or []
+        pe_now = res.get("value")
+        pe_as_of = res.get("as_of")
     if y10_daily is None:
         y10_daily = fetch_y10_series()
-    series = build_erp_series(pe_series, y10_daily)
+
+    series = build_erp_series(pe_series or [], y10_daily)
+    if not series and pe_now:
+        y10 = y10_daily[-1] if y10_daily else None
+        if not y10 or y10.get("value") is None:
+            raise RuntimeError("10 年期国债收益率不可用，无法合成 ERP")
+        series = [{
+            "as_of": pe_as_of or y10["as_of"],
+            "value": round(100.0 / pe_now - y10["value"], 2),
+        }]
     if not series:
         raise RuntimeError("无法合成 ERP 序列（PE 与国债收益率无重叠月份）")
     last = series[-1]
     pct, pct_window = percentile_rank(last["value"], series, "M")
-    pe_now = next((p["value"] for p in reversed(pe_series)), None)
+    pe_now = pe_now or next((p["value"] for p in reversed(pe_series or [])), None)
     y_now = y10_daily[-1] if y10_daily else None
     return {
         "value": round(last["value"], 2),
@@ -909,7 +1023,8 @@ def fetch_erp(pe_series: Optional[List[Dict[str, Any]]] = None,
     }
 
 
-def fetch_below_na() -> Dict[str, Any]:
+def _fetch_below_na_legu() -> Dict[str, Any]:
+    """兜底：乐咕乐股破净统计（带限流退避）。"""
     ak = _ak()
     df = _legu_call(ak.stock_a_below_net_asset_statistics, symbol="全部A股")
     rows = []
@@ -932,10 +1047,42 @@ def fetch_below_na() -> Dict[str, Any]:
             "公司总数": int(_num(head.get("total_company")) or 0),
             "分位": pct,
             "分位窗口": pct_window,
-            "数据源": "乐咕乐股 stock_a_below_net_asset_statistics（全部A股）",
+            "数据源": "乐咕乐股 stock_a_below_net_asset_statistics（全部A股·兜底）",
         },
         "series": series,
     }
+
+
+def fetch_below_na() -> Dict[str, Any]:
+    """破净率：用东财全 A 快照自算（市净率 < 1 的家数占比），失败回退乐咕乐股。
+
+    该指标 judge=value，靠绝对档位打分，不依赖历史分位 —— 换源不影响判档。
+    """
+    try:
+        df = _spot_snapshot()
+        if df is None or len(df) == 0 or "市净率" not in df.columns:
+            raise RuntimeError("东财快照无「市净率」列")
+        pb = [x for x in (_num(v) for v in df["市净率"]) if x is not None]
+        if len(pb) < 1000:
+            raise RuntimeError(f"东财快照有效市净率样本过少（{len(pb)}）")
+        below = sum(1 for x in pb if x < 1)
+        rate = round(below / len(pb) * 100, 2)
+        return {
+            "value": rate,
+            "as_of": date.today().strftime("%Y-%m-%d"),
+            "source": "akshare",
+            "detail": {
+                "破净率": rate,
+                "破净家数": below,
+                "样本家数": len(pb),
+                "分位": None,
+                "数据源": "东财 stock_zh_a_spot_em（全A快照自算）",
+            },
+            "series": [],
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("东财快照算破净率失败，回退乐咕乐股：%s", e)
+        return _fetch_below_na_legu()
 
 
 # ------------------------------------------------------------ 交易所（成交额 / 流通市值）
@@ -1130,13 +1277,17 @@ def _szse_day(day: str) -> Dict[str, Optional[float]]:
 
 
 def trading_days_ago(n: int) -> List[str]:
-    """最近 n 个交易日（含今天）的日期列表，正序。取不到交易日历时退化为工作日。"""
+    """最近 n 个交易日（含今天）的日期列表，正序。取不到交易日历时退化为工作日。
+
+    交易日历（约 9000 行全表）走轮内缓存：一轮刷新里成交额 / 换手率都会调到这里，
+    没必要重复下载同一份日历。
+    """
     days: List[str] = []
+    today = date.today().strftime("%Y-%m-%d")
     try:
         ak = _ak()
-        cal = ak.tool_trade_date_hist_sina()
+        cal = _cached_snapshot("trade_cal", lambda: ak.tool_trade_date_hist_sina())
         col = "trade_date" if "trade_date" in cal.columns else cal.columns[0]
-        today = date.today().strftime("%Y-%m-%d")
         days = [str(v)[:10] for v in cal[col].tolist() if str(v)[:10] <= today]
     except Exception as e:  # 交易日历不可用时退化为工作日，不影响主流程
         logger.warning("获取交易日历失败，退化为一周工作日: %s", e)
@@ -1301,7 +1452,8 @@ def fetch_margin(float_mcap_yi: Optional[float] = None,
 
 # ------------------------------------------------------------ 市场宽度
 
-def fetch_breadth() -> Dict[str, Any]:
+def _fetch_breadth_legu() -> Dict[str, Any]:
+    """兜底：乐咕乐股赚钱效应（带限流退避）。"""
     ak = _ak()
     df = _legu_call(ak.stock_market_activity_legu)
     kv = {}
@@ -1331,10 +1483,45 @@ def fetch_breadth() -> Dict[str, Any]:
             "平盘": int(_f("平盘") or 0),
             "活跃度": str(kv.get("活跃度") or ""),
             "统计时间": str(kv.get("统计日期") or ""),
-            "数据源": "乐咕乐股 stock_market_activity_legu",
+            "数据源": "乐咕乐股 stock_market_activity_legu（兜底）",
         },
         "series": None,
     }
+
+
+def fetch_breadth() -> Dict[str, Any]:
+    """市场宽度：用东财全 A 快照的「涨跌幅」列统计涨跌家数，失败回退乐咕乐股。
+
+    与 fetch_below_na 共用同一次快照请求（_cached_snapshot 轮内缓存）。
+    """
+    try:
+        df = _spot_snapshot()
+        if df is None or len(df) == 0 or "涨跌幅" not in df.columns:
+            raise RuntimeError("东财快照无「涨跌幅」列")
+        chg = [x for x in (_num(v) for v in df["涨跌幅"]) if x is not None]
+        if len(chg) < 1000:
+            raise RuntimeError(f"东财快照有效涨跌幅样本过少（{len(chg)}）")
+        up = sum(1 for x in chg if x > 0)
+        down = sum(1 for x in chg if x < 0)
+        flat = sum(1 for x in chg if x == 0)
+        if (up + down) <= 0:
+            raise RuntimeError("东财快照涨跌家数全为 0（非交易时段？）")
+        return {
+            "value": round(up / (up + down) * 100, 1),
+            "as_of": date.today().strftime("%Y-%m-%d"),
+            "source": "akshare",
+            "detail": {
+                "上涨家数": up,
+                "下跌家数": down,
+                "平盘家数": flat,
+                "样本家数": len(chg),
+                "数据源": "东财 stock_zh_a_spot_em（全A快照自算）",
+            },
+            "series": None,
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("东财快照算市场宽度失败，回退乐咕乐股：%s", e)
+        return _fetch_breadth_legu()
 
 
 # ------------------------------------------------------------ 股票ETF份额
@@ -1442,7 +1629,7 @@ def fetch_new_fund() -> Dict[str, Any]:
     value = windows["近30日"]
     # 用月度序列算「近 30 日」这一读数在历史月度分布中的位置：先按月均值折算
     monthly_avg = round(mean([p["value"] for p in series]), 2) if series else None
-    pct, pct_window = percentile_rank(value, series, "M", ) if len(series) >= 12 else (None, None)
+    pct, pct_window = percentile_rank(value, series, "M")
 
     return {
         "value": value,
@@ -1564,7 +1751,7 @@ def fetch_industry_capital(months: int = 1) -> Dict[str, Any]:
         raise RuntimeError("未取到重要股东增减持数据")
 
     last = series[-1]
-    pct, pct_window = percentile_rank(last["value"], series, "M") if len(series) >= 12 else (None, None)
+    pct, pct_window = percentile_rank(last["value"], series, "M")
 
     return {
         "value": last["value"],
@@ -1580,72 +1767,6 @@ def fetch_industry_capital(months: int = 1) -> Dict[str, Any]:
             "数据源": "东财数据中心 RPT_SHARE_HOLDER_INCREASE（重要股东增减持）",
         },
         "series": [{"as_of": p["as_of"], "value": p["value"]} for p in series],
-    }
-
-
-# ------------------------------------------------------------ 结构分化
-
-def _index_close_series(symbol: str) -> List[Dict[str, Any]]:
-    ak = _ak()
-    df = ak.stock_zh_index_daily(symbol=symbol)
-    return _clean_series([(_d(r.get("date")), _num(r.get("close"))) for _, r in df.iterrows()])
-
-
-def _month_end_pct_series(series: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """把日频收盘序列压成「每个月末的价格分位」序列（用截至该点的历史分布）。"""
-    if not series:
-        return []
-    last_of_month: Dict[str, Dict[str, Any]] = {}
-    for p in series:
-        last_of_month[p["as_of"][:7]] = p
-    months = sorted(last_of_month)
-    out = []
-    for m in months:
-        point = last_of_month[m]
-        upto = [x["value"] for x in series if x["as_of"] <= point["as_of"]]
-        windowed = upto[-PCT_WINDOW_POINTS["D"]:]
-        if len(windowed) < 60:
-            continue
-        below = sum(1 for v in windowed if v <= point["value"])
-        out.append({"as_of": point["as_of"], "value": round(below / len(windowed) * 100, 1)})
-    return out
-
-
-def fetch_structure() -> Dict[str, Any]:
-    """科创50 与创业板指的价格分位及其差值（结构分化）。"""
-    kc = _index_close_series("sh000688")   # 科创50
-    cy = _index_close_series("sz399006")   # 创业板指
-    if not kc or not cy:
-        raise RuntimeError("指数日线未取到（科创50 / 创业板指）")
-
-    kc_last, cy_last = kc[-1], cy[-1]
-    kc_pct, kc_win = percentile_rank(kc_last["value"], kc, "D")
-    cy_pct, cy_win = percentile_rank(cy_last["value"], cy, "D")
-    spread = round(kc_pct - cy_pct, 1) if (kc_pct is not None and cy_pct is not None) else None
-
-    # 月度分位差序列（画「分化走势」用）
-    kc_m = {p["as_of"]: p["value"] for p in _month_end_pct_series(kc)}
-    cy_m = {p["as_of"]: p["value"] for p in _month_end_pct_series(cy)}
-    series = [
-        {"as_of": d, "value": round(kc_m[d] - cy_m[d], 1)}
-        for d in sorted(set(kc_m) & set(cy_m))
-    ]
-
-    return {
-        "value": spread,
-        "as_of": max(kc_last["as_of"], cy_last["as_of"]),
-        "source": "akshare",
-        "detail": {
-            "科创50 分位%": kc_pct,
-            "创业板 分位%": cy_pct,
-            "分位差(pp)": spread,
-            "科创50 收盘": round(kc_last["value"], 2),
-            "创业板 收盘": round(cy_last["value"], 2),
-            "科创50 窗口": kc_win,
-            "创业板 窗口": cy_win,
-            "数据源": "新浪指数日线 stock_zh_index_daily（价格分位口径）",
-        },
-        "series": series or None,
     }
 
 
@@ -1686,7 +1807,15 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
     except Exception as e:
         logger.warning("10 年期国债收益率抓取失败: %s", e)
     try:
-        out["erp"] = fetch_erp(pe_res["series"] if pe_res else None, y10)
+        pe_payload = out.get("hs300_pe") or {}
+        if pe_payload.get("error"):
+            raise RuntimeError(f"PE 不可用，ERP 跳过：{pe_payload['error']}")
+        out["erp"] = fetch_erp(
+            pe_payload.get("series") or [],
+            y10,
+            pe_now=pe_payload.get("value"),
+            pe_as_of=pe_payload.get("as_of"),
+        )
     except Exception as e:
         logger.warning("股票指标 erp 抓取失败: %s", e)
         out["erp"] = {"error": str(e)[:200]}
@@ -1699,7 +1828,7 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
         t_series, r_series, m_series, latest_market = fetch_market_series(exchange_days)
         if t_series:
             t_last = t_series[-1]
-            t_pct, t_win = percentile_rank(t_last["value"], t_series, "D") if len(t_series) >= 12 else (None, None)
+            t_pct, t_win = percentile_rank(t_last["value"], t_series, "D")
             out["turnover_amt"] = {
                 "value": t_last["value"],
                 "as_of": t_last["as_of"],
@@ -1726,7 +1855,7 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
                 "detail": {
                     "全A换手率%": r_last["value"],
                     "分位": r_pct,
-                    "分位窗口": r_win or "样本不足 12 个交易日",
+                    "分位窗口": r_win or "无历史样本",
                     "样本交易日": len(r_series),
                     "数据源": "两市成交额 ÷ 两市流通市值（交易所官方数据合成）",
                 },
@@ -1764,19 +1893,12 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
     _run("new_fund", fetch_new_fund)
     _run("industry_capital", fetch_industry_capital, industry_months)
 
-    # 结构
-    try:
-        out["structure_div"] = fetch_structure()
-    except Exception as e:
-        logger.warning("股票指标 structure_div 抓取失败: %s", e)
-        out["structure_div"] = {"error": str(e)[:200]}
-
     return out
 
 
 # ================================================================ 响应组装
 
-def _detail_pairs(detail: dict, skip=("数据源", "分位窗口", "科创50窗口", "创业板窗口")) -> List[str]:
+def _detail_pairs(detail: dict, skip=("数据源", "分位窗口")) -> List[str]:
     """把 detail 里适合展示的键值对格式化成「k v」列表。"""
     parts = []
     for k, v in (detail or {}).items():
@@ -1804,8 +1926,8 @@ def judge(ind: Dict[str, Any], value: Optional[float], pct: Optional[float],
     mode = ind.get("judge") or "value"
     if mode == "percentile":
         if pct is not None:
-            return band_of(ind, pct), pct, "按十年分位判定"
-        return None, None, "分位样本不足（需 ≥12 期历史），暂不定档"
+            return band_of(ind, pct), pct, "按分位判定（现有样本）"
+        return None, None, "无历史样本，暂不定档"
     if mode == "rate":
         rate = detail.get("较上次快照变化%")
         if rate is None:
@@ -2031,7 +2153,7 @@ def build_response(raw: Dict[str, dict]) -> dict:
         items[ind["key"]] = build_item(ind, raw.get(ind["key"]))
 
     groups = []
-    for gkey in (GROUP_VALUATION, GROUP_SENTIMENT, GROUP_CAPITAL, GROUP_STRUCTURE):
+    for gkey in (GROUP_VALUATION, GROUP_SENTIMENT, GROUP_CAPITAL):
         members = [items[k] for k in INDICATOR_KEYS if INDICATOR_MAP[k]["group"] == gkey]
         if not members:
             continue
@@ -2089,14 +2211,14 @@ def _rolling_pct_series(series: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     分位是相对量，必须逐点重算；用今天的分布去评价十年前的点会让曲线形状失真。
     """
     pts = _to_month_end(series)
-    if len(pts) < 12:
+    if not pts:
         return []
     vals = [p["value"] for p in pts]
     cap = PCT_WINDOW_POINTS["M"]
     out = []
     for i in range(len(pts)):
         windowed = vals[max(0, i + 1 - cap): i + 1]
-        if len(windowed) < 12:
+        if len(windowed) < 2:  # 同上：单点分位恒 100%
             continue
         below = sum(1 for v in windowed if v <= vals[i])
         out.append({"as_of": pts[i]["as_of"], "value": round(below / len(windowed) * 100, 1)})
@@ -2179,7 +2301,7 @@ def reconstruct_temperature(series_map: Dict[str, List[Dict[str, Any]]]) -> Dict
     return {
         "monthly": monthly,
         "note": (
-            "分位为逐点滚动口径（每点只用当时可见的历史）；分位样本不足 12 期的指标退回按读数档位打分，"
+            "分位为逐点滚动口径（每点只用当时可见的历史，不设最小样本期数）；取不到分位的指标退回按读数档位打分，"
             "并按该月可得数据标注覆盖。三层齐备才给综合温度：日频情绪指标的历史由本页逐日积累，"
             "所以综合温度线会从「三个层都有数据」的月份才开始出现。"
         ),

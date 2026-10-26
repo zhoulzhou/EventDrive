@@ -278,7 +278,6 @@
 .st-f-valuation { background: linear-gradient(165deg, rgba(139,200,234,0.14), rgba(139,200,234,0.03)); }
 .st-f-sentiment { background: linear-gradient(165deg, rgba(244,179,147,0.16), rgba(244,179,147,0.03)); }
 .st-f-capital { background: linear-gradient(165deg, rgba(162,221,170,0.18), rgba(162,221,170,0.03)); }
-.st-f-structure { background: linear-gradient(165deg, rgba(167,139,250,0.16), rgba(167,139,250,0.03)); }
 .st-f-temp { background: linear-gradient(165deg, rgba(148,163,184,0.16), rgba(148,163,184,0.03)); }
 .st-fig-block-head { font-size: 0.88rem; font-weight: 600; color: #334155; margin-bottom: 0.5rem; }
 .st-fig + .st-fig { margin-top: 0.7rem; }
