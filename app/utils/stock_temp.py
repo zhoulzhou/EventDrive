@@ -14,11 +14,14 @@
 akshare 报「未找到 _csrf 令牌」），估值层 4 个指标改用**当日快照**接口，
 不再拉长历史 —— 分位由本页历史表逐日累积样本自算（`_fill_percentiles`）。
 
-- 韭圈儿指数估值（api.jiucaishuo.com，经 akshare）
-      · index_value_name_funddb                       → 沪深300 最新 PE / PB（当日快照，一次拿全市场）
-- 东财全A快照（quote.eastmoney.com，经 akshare，一次请求出两个指标）
-      · stock_zh_a_spot_em                            → 全A 市净率 <1 家数占比（破净率）
-                                                        与涨跌幅分布（市场宽度）
+- 中证指数官网（csindex.com.cn，经 akshare，xls 直取）
+      · stock_zh_index_value_csindex("000300")        → 沪深300 市盈率（滚动/静态）与股息率
+- 腾讯证券全A快照（qt.gtimg.cn，经 akshare，一次请求出三个指标）
+      · stock_zh_a_spot_tx                            → 全A 市净率 <1 占比（破净率）、
+                                                        涨跌幅分布（市场宽度）、
+                                                        沪深300 成分加权 PB
+- 中证官网成分清单（000300cons.xls，直连 requests）
+      · 300 只成分券代码                          → 供沪深300 PB 加权使用
 - 乐咕乐股（legulegu，经 akshare）—— **仅作兜底**，主源失败时才走
       · stock_index_pe_lg / stock_index_pb_lg         → 沪深300 PE-TTM / PB
       · stock_a_below_net_asset_statistics            → 全部A股破净率
@@ -545,14 +548,20 @@ def percentile_rank(value: Optional[float], series: List[Dict[str, Any]],
 
     返回 (分位, 分位窗口说明)。分位一律返回「原始分位」（高 = 数值高），
     是否反向由调用方按 temp_invert 处理。
+
+    ⚠️ 用**中位秩**而不是「≤ 当前值的个数」（2026-10-26 修正）：样本里常有大量
+    重复值（PB 连续几天都是 1.37），若把「等于」全算作低于，当前值等于历史值时
+    分位会被顶到 100%，1.37 这种中枢读数会被误判成「极热·贵」。改成
+    (小于数 + 等于数/2) / 总数，全等时落在 50%，是统计上标准的百分位定义。
     """
     vals = [x["value"] for x in series if x.get("value") is not None]
     if value is None or len(vals) < 2:
         return None, None
     cap = PCT_WINDOW_POINTS.get(freq, 120)
     windowed = vals[-cap:] if len(vals) > cap else vals
-    below = sum(1 for v in windowed if v <= value)
-    pct = round(below / len(windowed) * 100, 1)
+    less = sum(1 for v in windowed if v < value - 1e-9)
+    equal = sum(1 for v in windowed if abs(v - value) <= 1e-9)
+    pct = round((less + equal / 2) / len(windowed) * 100, 1)
     if len(windowed) >= cap:
         label = FREQ_LABELS.get(freq, "近十年")
     else:
@@ -779,10 +788,13 @@ def _legu_series(df, date_col: str, value_col: str) -> List[Dict[str, Any]]:
 # 用户口径（2026-10-26 明确）：**不需要历史数据，只要当日值**；分位由本页历史表
 # 逐日累积的样本自算（见 stock_temp_refresh._fill_percentiles），不拉长历史。
 #
-# 于是把 4 个 legu 调用换成 2 个「当日快照」接口：
-#   ① 韭圈儿 index_value_name_funddb：一次拿全市场指数的 最新PE / 最新PB（沪深300 取一行）
-#   ② 东财 stock_zh_a_spot_em：一次拿全 A 的 市净率 + 涨跌幅 → 破净率、涨跌家数（宽度）
-# 两个源都不需 cookie。legu 保留为**兜底**（失败仍走原实现，行为不比现在差）。
+# 于是把 4 个 legu 调用换成「当日快照」接口。**注意 2026-10-26 线上实测的二次修正**：
+#   ① 韭圈儿 index_value_name_funddb —— **不存在**（akshare 最新 1.19.3 里也没有此函数），
+#      原先按它设计的方案作废，改用中证指数官网 stock_zh_index_value_csindex（0.2 秒）
+#   ② 东财 stock_zh_a_spot_em —— 沙箱出口 RemoteDisconnected，改用腾讯
+#      stock_zh_a_spot_tx（5577 行 / 5 秒，含 pn 市净率、zdf 涨跌幅、zsz 总市值）
+#   ③ 沪深300 PB 没有现成当日源，用「中证成分清单 + 腾讯个股 pn 按总市值加权」现算
+# 三个源都不需 cookie，也没有请求次数限制。legu 仅保留为**兜底**。
 
 _SNAPSHOT_TTL = 120  # 秒：同一轮刷新里 PE/PB/破净率/宽度复用同一次请求
 _snapshot_cache: Dict[str, Any] = {}
@@ -799,32 +811,116 @@ def _cached_snapshot(name: str, loader):
     return data
 
 
-def _funddb_snapshot(name: str = "沪深300") -> Dict[str, Any]:
-    """韭圈儿指数估值快照 → {pe, pb, as_of}（只取当日一行，不碰历史序列）。"""
+def _tx_snapshot():
+    """腾讯证券全 A 实时快照（约 5577 行）。
+
+    字段：code（带交易所前缀）/ name / pn（市净率）/ pe_ttm / zdf（涨跌幅%）/
+    hsl（换手率）/ zsz（总市值）/ ltsz（流通市值）/ stock_type。
+
+    2026-10-26：东财 stock_zh_a_spot_em 在沙箱出口直接 RemoteDisconnected，
+    改用腾讯同口径快照。一次请求同时供「破净率 / 市场宽度 / 沪深300 加权 PB」三处使用。
+    """
     ak = _ak()
-    df = _cached_snapshot("funddb", lambda: ak.index_value_name_funddb())
+    return _cached_snapshot("tx_all", lambda: ak.stock_zh_a_spot_tx())
+
+
+def _tx_frame():
+    df = _tx_snapshot()
     if df is None or len(df) == 0:
-        raise RuntimeError("韭圈儿指数估值快照为空")
-    if "指数名称" not in df.columns:
-        raise RuntimeError(f"韭圈儿快照字段异常: {list(df.columns)[:8]}")
-    hit = None
-    for _, r in df.iterrows():
-        if str(r.get("指数名称") or "").strip() == name:
-            hit = r
-            break
-    if hit is None:
-        raise RuntimeError(f"韭圈儿快照里没有「{name}」")
-    return {
-        "pe": _num(hit.get("最新PE")),
-        "pb": _num(hit.get("最新PB")),
-        "as_of": _d(hit.get("更新时间")),
-    }
+        raise RuntimeError("腾讯全A快照为空")
+    return df
 
 
-def _spot_snapshot():
-    """东财全 A 实时快照（约 5600 行 × 23 列），破净率与宽度共用这一次请求。"""
+def _csindex_pe() -> Dict[str, Any]:
+    """中证指数官网沪深300 估值（xls 直取，取最新一个交易日）。
+
+    只给当日一行用：市盈率1 = 总市值/最近年报净利润（静态），
+    市盈率2 = 总市值/最近四个季度净利润（滚动 TTM），本模块主值取**滚动**。
+    """
     ak = _ak()
-    return _cached_snapshot("spot_em", lambda: ak.stock_zh_a_spot_em())
+    df = _cached_snapshot("csindex300", lambda: ak.stock_zh_index_value_csindex(symbol="000300"))
+    if df is None or len(df) == 0:
+        raise RuntimeError("中证估值表为空")
+    best = None
+    for _, r in df.iterrows():
+        d = _d(r.get("日期"))
+        if not d:
+            continue
+        row = (d, _num(r.get("市盈率2")), _num(r.get("市盈率1")), _num(r.get("股息率1")))
+        if best is None or row[0] > best[0]:
+            best = row
+    if best is None or not best[1]:
+        raise RuntimeError("中证估值表未解析出市盈率")
+    return {"as_of": best[0], "pe_ttm": best[1], "pe_static": best[2], "dividend": best[3]}
+
+
+# 沪深300 成分券清单（中证官网 xls，当日成分 300 只，约 67KB / 0.3 秒）
+_HS300_CONS_URL = (
+    "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/"
+    "file/autofile/cons/000300cons.xls"
+)
+
+
+def _load_hs300_cons() -> Dict[str, str]:
+    """下载并解析成分清单 → {腾讯代码: 成分券名称}，如 {'sh600519': '贵州茅台'}。
+
+    中证文件里「成份券代码」是纯数字（1 = 平安银行），必须靠「交易所」列补前缀，
+    不能按首位数字猜 —— 000001 与 600xxx 的规则虽可推，但北交所/新老代码会出错。
+    """
+    import io
+
+    import pandas as pd
+    import requests
+
+    r = requests.get(_HS300_CONS_URL, timeout=20)
+    r.raise_for_status()
+    df = pd.read_excel(io.BytesIO(r.content))
+    out: Dict[str, str] = {}
+    for _, row in df.iterrows():
+        raw = row.get("成份券代码Constituent Code")
+        if raw is None:
+            continue
+        digit = str(raw).strip().split(".")[0].zfill(6)
+        if not digit.isdigit():
+            continue
+        ex = str(row.get("交易所Exchange") or "")
+        prefix = "sh" if "上海" in ex else ("sz" if "深圳" in ex else "bj")
+        out[prefix + digit] = str(row.get("成份券名称Constituent Name") or "").strip()
+    if len(out) < 250:
+        raise RuntimeError(f"沪深300 成分清单解析异常，仅 {len(out)} 只")
+    return out
+
+
+def _hs300_pb_weighted() -> Dict[str, Any]:
+    """沪深300 PB ≈ Σ总市值 / Σ(总市值 / 个股PB)，用中证成分 + 腾讯快照现算。
+
+    指数 PB 的定义就是「成分股总市值 ÷ 成分股净资产合计」，逐只个股按 1/PB 折出
+    净资产再汇总即可，不需要任何历史序列。口径与中证官方（自由流通加权）有差异，
+    但每天用同一套算法，**时间序列自洽**，分位不受影响。
+    """
+    cons = _cached_snapshot("hs300cons", _load_hs300_cons)
+    df = _tx_frame()
+    if "code" not in df.columns or "pn" not in df.columns:
+        raise RuntimeError(f"腾讯快照字段异常: {list(df.columns)[:10]}")
+    idx = {}
+    for _, r in df.iterrows():
+        idx[str(r.get("code") or "").strip().lower()] = r
+    mv = nav = 0.0
+    hit = 0
+    for code in cons:
+        row = idx.get(code)
+        if row is None:
+            continue
+        pb = _num(row.get("pn"))
+        mv_i = _num(row.get("zsz"))
+        if not pb or pb <= 0 or not mv_i or mv_i <= 0:
+            continue
+        mv += mv_i
+        nav += mv_i / pb
+        hit += 1
+    if hit < 200 or nav <= 0:
+        raise RuntimeError(f"沪深300 加权 PB 可用成分过少（{hit}/{len(cons)}）")
+    return {"pb": mv / nav, "hit": hit, "total": len(cons)}
 
 
 def _fetch_hs300_pe_legu() -> Dict[str, Any]:
@@ -854,27 +950,27 @@ def _fetch_hs300_pe_legu() -> Dict[str, Any]:
 
 
 def fetch_hs300_pe() -> Dict[str, Any]:
-    """沪深300 PE-TTM：优先韭圈儿当日快照，失败回退乐咕乐股。
+    """沪深300 PE-TTM：优先中证指数官网当日估值，失败回退乐咕乐股。
 
     只返回当日一个点（series 为空）—— 分位由历史表累积样本补算，不拉长历史。
     """
     try:
-        snap = _funddb_snapshot("沪深300")
-        if not snap.get("pe"):
-            raise RuntimeError("韭圈儿未返回沪深300 最新PE")
+        snap = _csindex_pe()
         return {
-            "value": round(snap["pe"], 2),
+            "value": round(snap["pe_ttm"], 2),
             "as_of": snap.get("as_of"),
             "source": "akshare",
             "detail": {
-                "PE-TTM": round(snap["pe"], 2),
+                "PE-TTM": round(snap["pe_ttm"], 2),
+                "PE-静态": round(snap["pe_static"], 2) if snap.get("pe_static") else None,
+                "股息率": round(snap["dividend"], 2) if snap.get("dividend") else None,
                 "分位": None,       # 交给 _fill_percentiles 用本页历史样本补算
-                "数据源": "韭圈儿 index_value_name_funddb（当日快照）",
+                "数据源": "中证指数官网 stock_zh_index_value_csindex（000300 当日估值，市盈率2=滚动）",
             },
             "series": [],
         }
     except Exception as e:  # noqa: BLE001
-        logger.warning("韭圈儿 PE 快照失败，回退乐咕乐股：%s", e)
+        logger.warning("中证 PE 失败，回退乐咕乐股：%s", e)
         return _fetch_hs300_pe_legu()
 
 
@@ -905,24 +1001,23 @@ def _fetch_hs300_pb_legu() -> Dict[str, Any]:
 
 
 def fetch_hs300_pb() -> Dict[str, Any]:
-    """沪深300 PB：优先韭圈儿当日快照，失败回退乐咕乐股（同样只给当日值）。"""
+    """沪深300 PB：用中证成分 + 腾讯快照加权现算（当日值），失败回退乐咕乐股。"""
     try:
-        snap = _funddb_snapshot("沪深300")
-        if not snap.get("pb"):
-            raise RuntimeError("韭圈儿未返回沪深300 最新PB")
+        w = _hs300_pb_weighted()
         return {
-            "value": round(snap["pb"], 2),
-            "as_of": snap.get("as_of"),
+            "value": round(w["pb"], 2),
+            "as_of": date.today().strftime("%Y-%m-%d"),
             "source": "akshare",
             "detail": {
-                "PB": round(snap["pb"], 2),
+                "PB": round(w["pb"], 2),
+                "成分覆盖": f"{w['hit']}/{w['total']}",
                 "分位": None,
-                "数据源": "韭圈儿 index_value_name_funddb（当日快照）",
+                "数据源": "中证成分 000300cons + 腾讯全A快照（个股市净率按总市值加权）",
             },
             "series": [],
         }
     except Exception as e:  # noqa: BLE001
-        logger.warning("韭圈儿 PB 快照失败，回退乐咕乐股：%s", e)
+        logger.warning("加权 PB 失败，回退乐咕乐股：%s", e)
         return _fetch_hs300_pb_legu()
 
 
@@ -1054,17 +1149,17 @@ def _fetch_below_na_legu() -> Dict[str, Any]:
 
 
 def fetch_below_na() -> Dict[str, Any]:
-    """破净率：用东财全 A 快照自算（市净率 < 1 的家数占比），失败回退乐咕乐股。
+    """破净率：用腾讯全 A 快照自算（市净率 < 1 的家数占比），失败回退乐咕乐股。
 
     该指标 judge=value，靠绝对档位打分，不依赖历史分位 —— 换源不影响判档。
     """
     try:
-        df = _spot_snapshot()
-        if df is None or len(df) == 0 or "市净率" not in df.columns:
-            raise RuntimeError("东财快照无「市净率」列")
-        pb = [x for x in (_num(v) for v in df["市净率"]) if x is not None]
+        df = _tx_frame()
+        if "pn" not in df.columns:
+            raise RuntimeError(f"腾讯快照无 pn（市净率）列: {list(df.columns)[:10]}")
+        pb = [x for x in (_num(v) for v in df["pn"]) if x is not None and x > 0]
         if len(pb) < 1000:
-            raise RuntimeError(f"东财快照有效市净率样本过少（{len(pb)}）")
+            raise RuntimeError(f"腾讯快照有效市净率样本过少（{len(pb)}）")
         below = sum(1 for x in pb if x < 1)
         rate = round(below / len(pb) * 100, 2)
         return {
@@ -1076,12 +1171,12 @@ def fetch_below_na() -> Dict[str, Any]:
                 "破净家数": below,
                 "样本家数": len(pb),
                 "分位": None,
-                "数据源": "东财 stock_zh_a_spot_em（全A快照自算）",
+                "数据源": "腾讯 stock_zh_a_spot_tx（全A快照自算）",
             },
             "series": [],
         }
     except Exception as e:  # noqa: BLE001
-        logger.warning("东财快照算破净率失败，回退乐咕乐股：%s", e)
+        logger.warning("腾讯快照算破净率失败，回退乐咕乐股：%s", e)
         return _fetch_below_na_legu()
 
 
@@ -1490,22 +1585,22 @@ def _fetch_breadth_legu() -> Dict[str, Any]:
 
 
 def fetch_breadth() -> Dict[str, Any]:
-    """市场宽度：用东财全 A 快照的「涨跌幅」列统计涨跌家数，失败回退乐咕乐股。
+    """市场宽度：用腾讯全 A 快照的「涨跌幅」列统计涨跌家数，失败回退乐咕乐股。
 
     与 fetch_below_na 共用同一次快照请求（_cached_snapshot 轮内缓存）。
     """
     try:
-        df = _spot_snapshot()
-        if df is None or len(df) == 0 or "涨跌幅" not in df.columns:
-            raise RuntimeError("东财快照无「涨跌幅」列")
-        chg = [x for x in (_num(v) for v in df["涨跌幅"]) if x is not None]
+        df = _tx_frame()
+        if "zdf" not in df.columns:
+            raise RuntimeError(f"腾讯快照无 zdf（涨跌幅）列: {list(df.columns)[:10]}")
+        chg = [x for x in (_num(v) for v in df["zdf"]) if x is not None]
         if len(chg) < 1000:
-            raise RuntimeError(f"东财快照有效涨跌幅样本过少（{len(chg)}）")
+            raise RuntimeError(f"腾讯快照有效涨跌幅样本过少（{len(chg)}）")
         up = sum(1 for x in chg if x > 0)
         down = sum(1 for x in chg if x < 0)
         flat = sum(1 for x in chg if x == 0)
         if (up + down) <= 0:
-            raise RuntimeError("东财快照涨跌家数全为 0（非交易时段？）")
+            raise RuntimeError("腾讯快照涨跌家数全为 0（非交易时段？）")
         return {
             "value": round(up / (up + down) * 100, 1),
             "as_of": date.today().strftime("%Y-%m-%d"),
@@ -1515,12 +1610,12 @@ def fetch_breadth() -> Dict[str, Any]:
                 "下跌家数": down,
                 "平盘家数": flat,
                 "样本家数": len(chg),
-                "数据源": "东财 stock_zh_a_spot_em（全A快照自算）",
+                "数据源": "腾讯 stock_zh_a_spot_tx（全A快照自算）",
             },
             "series": None,
         }
     except Exception as e:  # noqa: BLE001
-        logger.warning("东财快照算市场宽度失败，回退乐咕乐股：%s", e)
+        logger.warning("腾讯快照算市场宽度失败，回退乐咕乐股：%s", e)
         return _fetch_breadth_legu()
 
 
@@ -2220,8 +2315,12 @@ def _rolling_pct_series(series: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         windowed = vals[max(0, i + 1 - cap): i + 1]
         if len(windowed) < 2:  # 同上：单点分位恒 100%
             continue
-        below = sum(1 for v in windowed if v <= vals[i])
-        out.append({"as_of": pts[i]["as_of"], "value": round(below / len(windowed) * 100, 1)})
+        # 与 percentile_rank 同口径：中位秩（等于按半数计），避免重复值顶到 100%
+        cur = vals[i]
+        less = sum(1 for v in windowed if v < cur - 1e-9)
+        equal = sum(1 for v in windowed if abs(v - cur) <= 1e-9)
+        out.append({"as_of": pts[i]["as_of"],
+                    "value": round((less + equal / 2) / len(windowed) * 100, 1)})
     return out
 
 

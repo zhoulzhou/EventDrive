@@ -12,7 +12,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, login, market, index_alarm, finance, valuation, macro, stock_temp, probe
+from app.api import news, crawl, login, market, index_alarm, finance, valuation, macro, stock_temp
 from app.api.login import is_logged_in
 
 logger = logging.getLogger(__name__)
@@ -197,7 +197,6 @@ app.include_router(valuation.router, prefix="/api", tags=["valuation"])
 app.include_router(macro.router, prefix="/api", tags=["macro"])
 app.include_router(stock_temp.router, prefix="/api", tags=["stock-temp"])
 # 数据源探测（诊断用；验证候选源在沙箱网络里是否可用，验证完可删）
-app.include_router(probe.router, prefix="/api", tags=["probe"])
 
 
 def render_template(template_name: str, context: dict = None) -> HTMLResponse:
