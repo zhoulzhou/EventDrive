@@ -1,12 +1,12 @@
 {
-  "_comment": "Timeout 必须设为 900 秒（默认 3 秒会被杀），函数内部 deadline 取 800 秒。环境变量（EVENTDRIVE_SESSION_TOKEN / EVENTDRIVE_CLOUD_DB_KEY）在 CloudBase 控制台「函数配置 → 环境变量」配置，不要写进本文件。cron 为北京时间七段式：0 17 16 * * 1-5 * = 周一至周五 16:17:00。",
+  "_comment": "Timeout 必须设为 900 秒（默认 3 秒会被杀），函数内部 deadline 取 800 秒。环境变量（EVENTDRIVE_SESSION_TOKEN / EVENTDRIVE_CLOUD_DB_KEY）在 CloudBase 控制台「函数配置 → 环境变量」配置，不要写进本文件。cron 为北京时间七段式：0 34 21 * * 1-5 * = 周一至周五 21:34:00（2026-10-27 由 16:17 后移）。",
   "name": "eventdrive-refresh",
   "timeout": 900,
   "triggers": [
     {
-      "name": "daily-1617",
+      "name": "daily-2134",
       "type": "timer",
-      "config": "0 17 16 * * 1-5 *"
+      "config": "0 34 21 * * 1-5 *"
     }
   ]
 }
