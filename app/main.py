@@ -16,7 +16,8 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, login, market, index_alarm, finance, valuation, macro, stock_temp
+from app.api import (news, crawl, login, market, index_alarm, finance, valuation,
+                     macro, stock_temp, lhb)
 from app.api.login import is_logged_in
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,8 @@ static_dir.mkdir(exist_ok=True)
 # 本地开发时文件本来就不存在，unlink 抛 FileNotFoundError 被忽略，无副作用。
 _OBSOLETE_STATIC = (
     "js/chart.umd.min.js",  # Chart.js：2026-10-21 全站改用 ECharts 后废弃
+    # 本地截图用的自动登录跳转页（账号密码写死在页面里），**绝不能留在线上**
+    "_preview.html",
 )
 
 
@@ -239,6 +242,7 @@ app.include_router(finance.router, prefix="/api", tags=["finance"])
 app.include_router(valuation.router, prefix="/api", tags=["valuation"])
 app.include_router(macro.router, prefix="/api", tags=["macro"])
 app.include_router(stock_temp.router, prefix="/api", tags=["stock-temp"])
+app.include_router(lhb.router, prefix="/api", tags=["lhb"])
 # 数据源探测（诊断用；验证候选源在沙箱网络里是否可用，验证完可删）
 
 
@@ -374,6 +378,17 @@ async def stock_trend_page(request: Request):
     return render_template("stock_trend.html", {"request": request})
 
 
+@app.get("/lhb")
+async def lhb_page(request: Request):
+    """龙虎榜：当日榜单 + 席位明细 + 打分告警（口径见 docs/龙虎榜*.txt）。
+
+    页面只读库（GET /api/lhb），抓取走 POST /api/lhb/refresh 或收盘轮定时任务。
+    """
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("lhb.html", {"request": request})
+
+
 _PAGE_LINKS = [
     ("/home", "首页"),
     ("/crawl", "抓取"),
@@ -385,6 +400,7 @@ _PAGE_LINKS = [
     ("/macro-trend", "宏观趋势"),
     ("/stock-temp", "股市热度"),
     ("/stock-trend", "热度趋势"),
+    ("/lhb", "龙虎榜"),
 ]
 
 

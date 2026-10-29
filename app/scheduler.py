@@ -13,6 +13,7 @@ from app.utils.anti_crawl import (
 )
 from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
+from app.utils import lhb_refresh as lhb_refresh_mod
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,62 @@ async def refresh_stock_temp(session: str = "manual"):
     log_crawl("=" * 50)
 
 
+async def refresh_lhb(session: str = "manual", days: int = 1):
+    """抓取龙虎榜（榜单 + 买卖前五席位）并落库。
+
+    龙虎榜是**收盘后披露**的日频数据（沪市约 18:00 齐），收盘轮 21:34 抓当日正合适。
+    单日成本：4 次榜单/席位请求 + 每只上榜股 1 次日线（约 70 只，10~30 秒）。
+
+    与页面「刷新」按钮共用 app/utils/lhb_refresh.py 的实现；
+    限流按任务级配额 + 防重入（同 refresh_macro_indicators）。
+    """
+    if not check_task_allowed("lhb"):
+        log_crawl("龙虎榜：已达今日配额或正在运行，跳过")
+        _write_crawl_log(task="lhb", session=session, source="lhb",
+                         item_count=0, status="skipped",
+                         error_message="已达今日配额或正在运行")
+        return
+
+    log_crawl("=" * 50)
+    log_crawl(f"开始更新龙虎榜... (轮次: {session})")
+    log_crawl("=" * 50)
+    mark_task_started("lhb")
+    t0 = datetime.now()
+    try:
+        payload = await asyncio.to_thread(_refresh_lhb_sync, days)
+        count = payload.get("records") or 0
+        for d in payload.get("days") or []:
+            log_crawl(f"  {d['trade_date']}: {d['records']} 条榜单 / "
+                      f"{d['seats']} 条席位")
+        for msg in (payload.get("errors") or [])[:5]:
+            log_crawl(f"  ! {msg}")
+        _write_crawl_log(task="lhb", session=session, source="lhb",
+                         item_count=count, status="ok" if count else "empty",
+                         duration=int((datetime.now() - t0).total_seconds()))
+    except Exception as e:
+        log_crawl(f"龙虎榜更新出错: {str(e)}")
+        logger.error(f"!!! 龙虎榜更新出错: {e}", exc_info=True)
+        _write_crawl_log(task="lhb", session=session, source="lhb",
+                         item_count=0, status="failed", error_message=str(e)[:500],
+                         duration=int((datetime.now() - t0).total_seconds()))
+    finally:
+        mark_task_finished("lhb")
+
+    log_crawl("=" * 50)
+
+
+def _refresh_lhb_sync(days: int = 1) -> dict:
+    """在线程里跑：自己开 session（云库下 SessionLocal 只是壳，读写走 PostgREST）。"""
+    db = SessionLocal()
+    try:
+        return lhb_refresh_mod.refresh_recent(db, days=days)
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def full_crawl(session: str = "manual"):
     """抓取新闻。
 
@@ -347,11 +404,12 @@ async def close_session():
     fast_results = await asyncio.gather(
         crawl_market_data(session=SESSION_CLOSE),
         refresh_macro_indicators(session=SESSION_CLOSE),
+        refresh_lhb(session=SESSION_CLOSE),
         return_exceptions=True,
     )
     for key, name, r in zip(
-        ["market", "macro"],
-        ["市场行情", "宏观指标"],
+        ["market", "macro", "lhb"],
+        ["市场行情", "宏观指标", "龙虎榜"],
         fast_results,
     ):
         if isinstance(r, Exception):

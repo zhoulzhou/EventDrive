@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, List, Optional, Dict
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,8 @@ T_MACRO_HIST = "macro_indicator_history"
 T_TEMP_SNAP = "stock_temp_indicators"
 T_TEMP_HIST = "stock_temp_history"
 T_CRAWL_LOG = "crawl_logs"
+T_LHB_RECORD = "lhb_records"
+T_LHB_SEAT = "lhb_seats"
 
 # ---- 大表（第二步迁移）----
 T_NEWS = "news"
@@ -1449,3 +1452,237 @@ def list_crawl_logs(db: Session, *, limit: int = 200, task: Optional[str] = None
         query = query.filter(models.CrawlLog.session == session)
     return query.order_by(models.CrawlLog.crawl_time.desc(),
                           models.CrawlLog.id.desc()).limit(limit).all()
+
+
+# ------------------------------------------------------------ 龙虎榜
+#
+# 口径与落库时机见 app/utils/lhb.py 顶部注释：榜单 + 席位两张表，
+# 均以 (trade_date, trade_id[, flag, seq]) 唯一定位，重复抓取是「覆盖修正」而非追加。
+# 云库分支的两个坑在这里一次性处理掉：
+#   1) 单响应 ≤1000 行 → 读一律带 limit 或分页；
+#   2) 同批 upsert 的 key 集合必须一致 → 写入前统一列集合（_cdb.upsert 内部已做）。
+
+def upsert_lhb_day(db: Session, records: List[dict], seats: List[dict]) -> Dict[str, int]:
+    """写入某交易日的榜单与席位（先删该日旧数据，再批量 upsert）。
+
+    为什么要先删：同一交易日的席位名次可能变化（东财盘中会修正数据），
+    若只 upsert，(trade_date, trade_id, flag, seq) 之外的旧行会残留成幽灵席位；
+    而按日删除粒度很干净（一天最多 300 条记录 / 3000 条席位），代价可接受。
+    """
+    if not records and not seats:
+        return {"records": 0, "seats": 0, "deleted": 0}
+
+    dates = sorted({r["trade_date"] for r in records} or {s["trade_date"] for s in seats})
+    deleted = 0
+    for d in dates:
+        deleted += delete_lhb_day(db, d)
+
+    saved_r = 0
+    saved_s = 0
+    if _USE_CLOUD:
+        for i in range(0, len(records), 300):
+            chunk = records[i:i + 300]
+            saved_r += len(_cdb.upsert(T_LHB_RECORD, chunk,
+                                       on_conflict="trade_date,trade_id",
+                                       context="upsert_lhb_records"))
+        for i in range(0, len(seats), 500):
+            chunk = seats[i:i + 500]
+            saved_s += len(_cdb.upsert(T_LHB_SEAT, chunk,
+                                       on_conflict="trade_date,trade_id,flag,seq",
+                                       context="upsert_lhb_seats"))
+        return {"records": saved_r, "seats": saved_s, "deleted": deleted}
+
+    for rec in records:
+        row = (
+            db.query(models.LhbRecord)
+            .filter(models.LhbRecord.trade_date == rec["trade_date"],
+                    models.LhbRecord.trade_id == rec["trade_id"])
+            .first()
+        )
+        if row is None:
+            row = models.LhbRecord(trade_date=rec["trade_date"],
+                                   trade_id=rec["trade_id"])
+            db.add(row)
+        for col, val in rec.items():
+            if hasattr(row, col):
+                setattr(row, col, val)
+        row.fetched_at = func.now()
+        saved_r += 1
+    for seat in seats:
+        row = (
+            db.query(models.LhbSeat)
+            .filter(models.LhbSeat.trade_date == seat["trade_date"],
+                    models.LhbSeat.trade_id == seat["trade_id"],
+                    models.LhbSeat.flag == seat["flag"],
+                    models.LhbSeat.seq == seat["seq"])
+            .first()
+        )
+        if row is None:
+            row = models.LhbSeat(trade_date=seat["trade_date"],
+                                 trade_id=seat["trade_id"],
+                                 flag=seat["flag"], seq=seat["seq"])
+            db.add(row)
+        for col, val in seat.items():
+            if hasattr(row, col):
+                setattr(row, col, val)
+        row.fetched_at = func.now()
+        saved_s += 1
+    db.commit()
+    return {"records": saved_r, "seats": saved_s, "deleted": deleted}
+
+
+def delete_lhb_day(db: Session, trade_date: str) -> int:
+    """删除某个交易日的榜单与席位（重抓前清场）。返回删除行数。"""
+    if _USE_CLOUD:
+        n = 0
+        n += len(_cdb.select(T_LHB_RECORD, columns="id",
+                             filters={"trade_date": f"eq.{trade_date}"},
+                             limit=_cdb.MAX_PAGE_ROWS, context="delete_lhb_record"))
+        n += len(_cdb.select(T_LHB_SEAT, columns="id",
+                             filters={"trade_date": f"eq.{trade_date}"},
+                             limit=_cdb.MAX_PAGE_ROWS, context="delete_lhb_seat"))
+        _cdb.delete(T_LHB_RECORD, filters={"trade_date": f"eq.{trade_date}"},
+                    context="delete_lhb_day")
+        _cdb.delete(T_LHB_SEAT, filters={"trade_date": f"eq.{trade_date}"},
+                    context="delete_lhb_day")
+        return n
+    n = db.query(models.LhbRecord).filter(
+        models.LhbRecord.trade_date == trade_date).delete(synchronize_session=False)
+    n += db.query(models.LhbSeat).filter(
+        models.LhbSeat.trade_date == trade_date).delete(synchronize_session=False)
+    db.commit()
+    return n
+
+
+def get_lhb_dates(db: Session, limit: int = 30) -> List[str]:
+    """有数据的交易日列表（倒序）。
+
+    云库没有 distinct 语法糖，这里按日期倒序取一页榜单再自己收敛；
+    一天最多几百行，取 500 行足够覆盖 1~3 个交易日，所以用「逐日探底」的做法：
+    直接读最近 N 天窗口内的全部行（分页），再用集合去重。
+    """
+    if _USE_CLOUD:
+        rows = _cdb.select(T_LHB_RECORD, columns="trade_date",
+                           order="trade_date.desc", limit=_cdb.MAX_PAGE_ROWS,
+                           context="get_lhb_dates")
+        dates = sorted({r["trade_date"] for r in rows}, reverse=True)
+        return dates[:limit]
+    rows = db.query(models.LhbRecord.trade_date).order_by(
+        models.LhbRecord.trade_date.desc()).limit(2000).all()
+    dates = sorted({r[0] for r in rows if r[0]}, reverse=True)
+    return dates[:limit]
+
+
+def get_lhb_records(db: Session, trade_date: str,
+                    min_score: Optional[int] = None,
+                    grade: Optional[str] = None,
+                    only_alert: bool = False) -> List[Any]:
+    """某交易日榜单（按分数倒序）。筛选在内存里做：单日最多几百行，代价可忽略。"""
+    if _USE_CLOUD:
+        rows = _cdb.select(T_LHB_RECORD, filters={"trade_date": f"eq.{trade_date}"},
+                           order="score.desc,net_amt.desc",
+                           limit=_cdb.MAX_PAGE_ROWS, context="get_lhb_records")
+    else:
+        rows = (
+            db.query(models.LhbRecord)
+            .filter(models.LhbRecord.trade_date == trade_date)
+            .order_by(models.LhbRecord.score.desc(), models.LhbRecord.net_amt.desc())
+            .all()
+        )
+    out = []
+    for r in rows:
+        if min_score is not None and (r.score or 0) < min_score:
+            continue
+        if grade and r.grade != grade:
+            continue
+        if only_alert and not _json_nonempty(getattr(r, "alerts", None)):
+            continue
+        out.append(r)
+    return out
+
+
+def _json_nonempty(text) -> bool:
+    if not text:
+        return False
+    try:
+        return len(json.loads(text)) > 0
+    except (ValueError, TypeError):
+        return False
+
+
+def get_lhb_record(db: Session, trade_date: str, trade_id: str):
+    """取单条榜单记录。"""
+    if _USE_CLOUD:
+        return _cdb.select_one(T_LHB_RECORD, filters={
+            "trade_date": f"eq.{trade_date}", "trade_id": f"eq.{trade_id}"},
+            context="get_lhb_record")
+    return (
+        db.query(models.LhbRecord)
+        .filter(models.LhbRecord.trade_date == trade_date,
+                models.LhbRecord.trade_id == trade_id)
+        .first()
+    )
+
+
+def get_lhb_seats(db: Session, trade_date: str, trade_id: str) -> List[Any]:
+    """某条榜单记录的买卖前五席位（买榜在前，按名次）。"""
+    if _USE_CLOUD:
+        rows = _cdb.select(T_LHB_SEAT, filters={
+            "trade_date": f"eq.{trade_date}", "trade_id": f"eq.{trade_id}"},
+            order="flag.asc,seq.asc", limit=20, context="get_lhb_seats")
+        return sorted(rows, key=lambda r: (r["flag"] != "buy", r["seq"]))
+    rows = (
+        db.query(models.LhbSeat)
+        .filter(models.LhbSeat.trade_date == trade_date,
+                models.LhbSeat.trade_id == trade_id)
+        .all()
+    )
+    return sorted(rows, key=lambda r: (r.flag != "buy", r.seq))
+
+
+def get_lhb_stock_history(db: Session, code: str, limit: int = 20) -> List[Any]:
+    """某只股票的历史上榜记录（时序跟踪：连续多日龙虎才是高价值信号）。"""
+    if _USE_CLOUD:
+        return _cdb.select(T_LHB_RECORD, filters={"code": f"eq.{code}"},
+                           order="trade_date.desc", limit=limit,
+                           context="get_lhb_stock_history")
+    return (
+        db.query(models.LhbRecord)
+        .filter(models.LhbRecord.code == code)
+        .order_by(models.LhbRecord.trade_date.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def get_lhb_seat_history(db: Session, dept_name: str, days: int = 45) -> List[Any]:
+    """某个席位近 N 天的全部上榜席位行（算隔日兑现率等实测指标）。"""
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    if _USE_CLOUD:
+        return _cdb.select(T_LHB_SEAT, columns="trade_date,code,flag,buy,sell,net",
+                           filters={"dept_name": f"eq.{dept_name}",
+                                    "trade_date": f"gte.{since}"},
+                           order="trade_date.asc", limit=_cdb.MAX_PAGE_ROWS,
+                           context="get_lhb_seat_history")
+    return (
+        db.query(models.LhbSeat)
+        .filter(models.LhbSeat.dept_name == dept_name,
+                models.LhbSeat.trade_date >= since)
+        .order_by(models.LhbSeat.trade_date.asc())
+        .limit(1000)
+        .all()
+    )
+
+
+def get_lhb_last_updated(db: Session) -> Optional[datetime]:
+    """最近一次落库时间（页面「数据更新于」）。
+
+    ⚠ 不能用 ``_cdb.max_updated_at``：龙虎榜表的时间列叫 ``fetched_at``（没有
+    updated_at），照抄会让云库分支永远返回 None，页面一直显示「—」。
+    """
+    if _USE_CLOUD:
+        rows = _cdb.select(T_LHB_RECORD, columns="fetched_at",
+                           order="fetched_at.desc", limit=1,
+                           context="lhb_last_updated")
+        return _as_utc(rows[0]["fetched_at"]) if rows else None
+    return db.query(func.max(models.LhbRecord.fetched_at)).scalar()

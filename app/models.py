@@ -210,6 +210,86 @@ class FinancialReport(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class LhbRecord(Base):
+    """龙虎榜榜单：一行 = 一个交易日 × 一只股票 × 一个上榜原因（东财 TRADE_ID 唯一）。
+
+    口径见 docs/龙虎榜.txt 与 docs/龙虎榜案例.txt：
+    - 榜单本身只披露买卖前五席位，**是收盘后的滞后快照**，不是买入信号；
+    - 单日榜与三日榜（连续三个交易日）**必须分开看**，故 scope 单独存；
+    - 资金结构三件事：龙虎净额 / 龙虎成交占比 / 买一集中度；
+    - 席位构成、位置、打分与告警在抓取时算好落库，页面只读不算。
+
+    字段来源：code~deal_ratio 来自东财榜单接口；buy1_ratio 及之后为本地计算。
+    """
+
+    __tablename__ = "lhb_records"
+    __table_args__ = (UniqueConstraint("trade_date", "trade_id", name="uq_lhb_record"),)
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    trade_date = Column(Text, nullable=False, index=True)      # 交易日 YYYY-MM-DD
+    trade_id = Column(Text, nullable=False)                    # 东财记录 id
+    code = Column(Text, nullable=False, index=True)
+    name = Column(Text, nullable=True)
+    market = Column(Text, nullable=True)                       # SH / SZ / BJ
+    change_type = Column(Text, nullable=True)                  # 东财异动类型码
+    explanation = Column(Text, nullable=True)                  # 上榜原因原文
+    scope = Column(Text, nullable=True)                        # day / 3day
+
+    close = Column(Float, nullable=True)
+    change_rate = Column(Float, nullable=True)                 # 当日涨跌幅 %
+    turnover_rate = Column(Float, nullable=True)               # 换手率 %
+    free_mcap = Column(Float, nullable=True)                   # 流通市值
+    accum_amount = Column(Float, nullable=True)                # 当日总成交额
+    buy_amt = Column(Float, nullable=True)                     # 买五合计买入
+    sell_amt = Column(Float, nullable=True)                    # 卖五合计卖出
+    net_amt = Column(Float, nullable=True)                     # 龙虎净额
+    deal_ratio = Column(Float, nullable=True)                  # 龙虎成交占比 %
+
+    buy1_ratio = Column(Float, nullable=True)                  # 买一集中度 %
+    inst_net = Column(Float, nullable=True)                    # 机构净买入
+    north_net = Column(Float, nullable=True)                   # 北向净买入
+    hot_net = Column(Float, nullable=True)                     # 游资净买入
+    seat_types = Column(Text, nullable=True)                   # JSON：买卖榜类型分布
+    combo_tags = Column(Text, nullable=True)                   # JSON：[组合标签, 说明]
+    score = Column(Integer, nullable=True)                     # 0-100
+    grade = Column(Text, nullable=True)                        # 档位文案
+    alerts = Column(Text, nullable=True)                       # JSON：告警数组
+    reasons = Column(Text, nullable=True)                      # JSON：加减分明细
+    position = Column(Text, nullable=True)                     # 低位 / 中位 / 高位
+    pos_pct = Column(Float, nullable=True)                     # 近 20 日涨幅 %
+    streak = Column(Integer, nullable=True)                    # 截至当日连板数
+    fetched_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class LhbSeat(Base):
+    """龙虎榜席位明细：一行 = 一条榜单记录 × 买/卖 × 名次（前五）。
+
+    dept_name 是营业部全名（机构专用/股通专用为交易所统一名），
+    seat_type / seat_tags 由 app/utils/lhb.py 的席位字典打标后落库。
+    """
+
+    __tablename__ = "lhb_seats"
+    __table_args__ = (
+        UniqueConstraint("trade_date", "trade_id", "flag", "seq", name="uq_lhb_seat"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    trade_date = Column(Text, nullable=False, index=True)
+    trade_id = Column(Text, nullable=False, index=True)
+    code = Column(Text, nullable=False, index=True)
+    name = Column(Text, nullable=True)
+    flag = Column(Text, nullable=False)                        # buy / sell
+    seq = Column(Integer, nullable=False)                      # 1-5
+    dept_code = Column(Text, nullable=True)
+    dept_name = Column(Text, nullable=True)
+    buy = Column(Float, nullable=True)
+    sell = Column(Float, nullable=True)
+    net = Column(Float, nullable=True)
+    seat_type = Column(Text, nullable=True)                    # inst/north/hot_money/...
+    seat_tags = Column(Text, nullable=True)                    # JSON
+    fetched_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
 class CrawlLog(Base):
     """抓取任务日志：每轮调度 / 手动触发写入一条，便于复盘与排查。"""
 

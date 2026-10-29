@@ -13,6 +13,7 @@ from app.scheduler import (
     crawl_market_data,
     refresh_macro_indicators,
     refresh_stock_temp,
+    refresh_lhb,
 )
 from app.api.login import require_auth
 
@@ -136,7 +137,7 @@ _daily_refresh_state = {
 # 收盘轮（close_session）实际抓取的域。**不含 news**：新闻只在上午 09:15
 # 由 eventdrive-morning-news 云函数抓一轮（2026-10-24 用户要求），
 # 收盘轮不再重复抓，省掉一次完整的东财新闻翻页。
-CLOSE_DOMAINS = ("market", "macro", "stock_temp")
+CLOSE_DOMAINS = ("market", "macro", "lhb", "stock_temp")
 # 可单独补跑的域集合（含 news —— 上午那轮失败时可手动补）
 ALL_DOMAINS = ("news",) + CLOSE_DOMAINS
 
@@ -149,6 +150,7 @@ _DOMAIN_TASKS = {
     "news": lambda: full_crawl(session="morning"),
     "market": lambda: crawl_market_data(session="close"),
     "macro": lambda: refresh_macro_indicators(session="close"),
+    "lhb": lambda: refresh_lhb(session="close"),
     "stock_temp": lambda: refresh_stock_temp(session="close"),
 }
 
@@ -280,7 +282,7 @@ async def trigger_daily_refresh(
     同步执行必然 504。落库由后台线程完成，稍后查 `/crawl/daily-status` 看进度。
 
     可选 `domains` 参数（逗号分隔）只跑指定数据域，用于补跑被中断的部分：
-    `news,market,macro,stock_temp`
+    `news,market,macro,lhb,stock_temp`
 
     注意：**不含财务指标**，财务在页面手动抓取（`POST /api/finance/fetch`）。
     """

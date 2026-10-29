@@ -1,0 +1,604 @@
+/* 龙虎榜页面（/lhb）：
+ *   - 榜单渲染 + 展开席位明细 + 买五卖五对照图（ECharts）
+ *   - 席位字典 / 席位实测画像 / 后台抓取轮询
+ *
+ * 数据全部来自 /api/lhb*（后端只读库），阈值与文案口径见 app/utils/lhb.py 与
+ * docs/龙虎榜.txt、docs/龙虎榜案例.txt。改分档颜色/文案时三处同步：
+ * 本文件的 GRADE_TONE、app/utils/lhb.py 的 _grade_of、lhb.css 的 .lb-grade.*
+ */
+
+const LHB = {
+    state: {
+        date: null,
+        dates: [],
+        records: [],
+        stats: {},
+        filter: "all",
+        updatedAt: "—",
+        stale: false,
+        notice: "",
+        openTradeId: null,
+        chart: null,
+        seatProfiles: {},
+        types: {},
+    },
+};
+
+const GRADE_TONE = {
+    "重点观察池": "good",
+    "跟踪观察": "info",
+    "中性": "neutral",
+    "风险池": "warn",
+    "强风险": "danger",
+};
+
+/* ---------------- 格式化 ---------------- */
+
+function lbMoney(v, digits) {
+    if (v === null || v === undefined || isNaN(Number(v))) return "—";
+    const n = Number(v);
+    const d = digits === undefined ? 2 : digits;
+    if (Math.abs(n) >= 1e8) return (n / 1e8).toFixed(d) + "亿";
+    if (Math.abs(n) >= 1e4) return (n / 1e4).toFixed(0) + "万";
+    return n.toFixed(0);
+}
+
+function lbPct(v, digits) {
+    if (v === null || v === undefined || isNaN(Number(v))) return "—";
+    const d = digits === undefined ? 1 : digits;
+    return Number(v).toFixed(d) + "%";
+}
+
+function lbSignedMoney(v) {
+    if (v === null || v === undefined || isNaN(Number(v))) return "—";
+    const s = lbMoney(v, 2);
+    return Number(v) > 0 ? "+" + s : s;
+}
+
+function lbUpDown(v) {
+    if (v === null || v === undefined || isNaN(Number(v))) return '<span class="lb-flat">—</span>';
+    const n = Number(v);
+    const cls = n > 0 ? "lb-up" : (n < 0 ? "lb-down" : "lb-flat");
+    const sign = n > 0 ? "+" : "";
+    return '<span class="' + cls + '">' + sign + n.toFixed(2) + "%</span>";
+}
+
+function lbTone(key, fallback) {
+    const map = { good: "#22c55e", info: "#3b82f6", neutral: "#94a3b8", warn: "#f59e0b", danger: "#ef4444" };
+    return map[key] || fallback || "#64748b";
+}
+
+function lbTag(text, tone) {
+    return '<span class="lb-tag ' + (tone || "") + '">' + escapeHtml(text) + "</span>";
+}
+
+/* ---------------- 概览 ---------------- */
+
+function renderStats() {
+    const s = LHB.state.stats || {};
+    const cards = [
+        { label: "上榜记录 / 个股", value: (s.rows || 0) + " / " + (s.stocks || 0),
+          hint: "一条记录 = 股票 × 一个上榜原因", tone: "#667eea" },
+        { label: "龙虎净额合计", value: lbSignedMoney(s.net_amt),
+          hint: "买五合计 − 卖五合计", tone: s.net_amt >= 0 ? "#ef4444" : "#22c55e" },
+        { label: "机构净买入", value: lbSignedMoney(s.inst_net),
+          hint: "机构专用席位买卖轧差", tone: s.inst_net >= 0 ? "#ef4444" : "#22c55e" },
+        { label: "北向净买入", value: lbSignedMoney(s.north_net),
+          hint: "沪股通 + 深股通", tone: s.north_net >= 0 ? "#ef4444" : "#22c55e" },
+        { label: "观察池（≥60 分）", value: (s.observe || 0) + " 条",
+          hint: "低位/合力/买盘分散", tone: "#8b5cf6" },
+        { label: "机构出逃·游资接盘", value: (s.inst_out || 0) + " 条",
+          hint: "卖榜机构净卖、买榜游资", tone: (s.inst_out ? "#ef4444" : "#94a3b8") },
+        { label: "拉萨扎堆", value: (s.lhasa || 0) + " 条",
+          hint: "散户大本营包揽买榜", tone: (s.lhasa ? "#ef4444" : "#94a3b8") },
+        { label: "高位上榜", value: (s.high_position || 0) + " 条",
+          hint: "默认按兑现视角解读", tone: (s.high_position ? "#f59e0b" : "#94a3b8") },
+        { label: "告警条数", value: (s.alerts || 0),
+          hint: "对倒/孤庄/三日榜等", tone: (s.alerts ? "#b45309" : "#94a3b8") },
+    ];
+    return '<div class="lb-cards">' + cards.map(function (c) {
+        return '<div class="lb-card" style="border-top-color:' + c.tone + '">'
+            + '<div class="lb-card-label">' + escapeHtml(c.label) + "</div>"
+            + '<div class="lb-card-value" style="color:' + c.tone + '">' + c.value + "</div>"
+            + '<div class="lb-card-hint">' + escapeHtml(c.hint) + "</div></div>";
+    }).join("") + "</div>";
+}
+
+/* ---------------- 筛选 ---------------- */
+
+const FILTERS = [
+    { key: "all", label: "全部" },
+    { key: "observe", label: "观察池 ≥60" },
+    { key: "alert", label: "有告警" },
+    { key: "lows", label: "低位首板" },
+    { key: "high", label: "高位风险" },
+    { key: "inst_out", label: "机构出逃" },
+    { key: "lhasa", label: "拉萨扎堆" },
+    { key: "3day", label: "三日榜" },
+];
+
+function applyFilter(records) {
+    const f = LHB.state.filter;
+    return (records || []).filter(function (r) {
+        switch (f) {
+            case "observe": return (r.score || 0) >= 60;
+            case "alert": return (r.alerts || []).length > 0;
+            case "lows": return r.position === "低位";
+            case "high": return r.position === "高位";
+            case "inst_out": return r.combo_tag === "机构出逃·游资接盘";
+            case "lhasa": return r.combo_tag === "拉萨扎堆";
+            case "3day": return r.scope === "3day";
+            default: return true;
+        }
+    });
+}
+
+function renderFilters() {
+    const shown = applyFilter(LHB.state.records).length;
+    return '<div class="lb-filters">'
+        + FILTERS.map(function (f) {
+            return '<button class="lb-chip' + (LHB.state.filter === f.key ? " active" : "")
+                + '" data-filter="' + f.key + '">' + escapeHtml(f.label) + "</button>";
+        }).join("")
+        + '<span class="lb-filter-note">当前显示 ' + shown + " / "
+        + (LHB.state.records || []).length + " 条</span></div>";
+}
+
+/* ---------------- 榜单表格 ---------------- */
+
+function renderTable() {
+    const rows = applyFilter(LHB.state.records);
+    if (!rows.length) {
+        return '<div class="lb-table-wrap"><div class="lb-empty">这个筛选下没有记录</div></div>';
+    }
+    const head = '<div class="lb-table-wrap"><table class="lb-table"><thead><tr>'
+        + "<th>股票</th><th>涨跌幅</th><th>上榜原因</th>"
+        + '<th class="num">龙虎净额</th><th class="num">成交占比</th>'
+        + '<th class="num">买一集中度</th><th>席位构成</th><th>位置</th>'
+        + '<th class="num">分数</th><th>告警</th></tr></thead><tbody>';
+
+    const body = rows.map(function (r) {
+        const tone = GRADE_TONE[r.grade] || "neutral";
+        const scopeBadge = r.scope === "3day"
+            ? '<span class="lb-badge three">三日榜</span>'
+            : '<span class="lb-badge day">单日榜</span>';
+        const posBadge = r.position
+            ? '<span class="lb-badge ' + (r.position === "高位" ? "pos-high" : (r.position === "低位" ? "pos-low" : "pos"))
+              + '">' + escapeHtml(r.position) + "</span>"
+            : '<span class="lb-badge pos">—</span>';
+        const posTip = r.pos_pct === null || r.pos_pct === undefined
+            ? "缺日线数据" : ("近20日 " + r.pos_pct + "% · 连板 " + (r.streak || 0));
+        const alerts = (r.alerts || []);
+        const alertHtml = alerts.length
+            ? alerts.slice(0, 3).map(function (a) {
+                return lbTag(a.tag, a.level === "danger" ? "danger" : (a.level === "warn" ? "warn" : "info"));
+            }).join("") + (alerts.length > 3 ? '<span class="lb-alert-dots">+' + (alerts.length - 3) + "</span>" : "")
+            : '<span class="lb-flat" style="font-size:0.74rem">—</span>';
+        const tagTone = (r.combo_tag || "").indexOf("出逃") >= 0 || r.combo_tag === "拉萨扎堆"
+            ? "danger" : (r.combo_tag === "机构+游资合力" ? "good" : "");
+        const instLine = (r.inst_net === null || r.inst_net === undefined || !r.inst_net) ? ""
+            : '<div class="lb-card-hint">机构 ' + lbSignedMoney(r.inst_net) + "</div>";
+
+        return '<tr class="lb-row' + (LHB.state.openTradeId === r.trade_id ? " open" : "")
+            + '" data-tid="' + escapeHtml(r.trade_id) + '">'
+            + "<td><span class=\"lb-name\">" + escapeHtml(r.name) + "</span>"
+            + '<span class="lb-code">' + escapeHtml(r.code) + "</span></td>"
+            + "<td>" + lbUpDown(r.change_rate) + "</td>"
+            + '<td><div class="lb-cause">' + scopeBadge + " " + escapeHtml(r.explanation || "") + "</div></td>"
+            + '<td class="num"><span style="font-weight:' + (r.net_amt >= 0 ? 600 : 500) + ';color:'
+            + (r.net_amt >= 0 ? "#ef4444" : "#22c55e") + '">' + lbSignedMoney(r.net_amt) + "</span>"
+            + instLine + "</td>"
+            + '<td class="num">' + lbPct(r.deal_ratio) + "</td>"
+            + '<td class="num">' + lbPct(r.buy1_ratio, 0) + "</td>"
+            + "<td>" + lbTag(r.combo_tag || "—", tagTone) + "</td>"
+            + '<td title="' + escapeHtml(posTip) + '">' + posBadge + "</td>"
+            + '<td class="num"><span class="lb-score" style="color:' + lbTone(tone) + '">'
+            + (r.score === null ? "—" : r.score)
+            + '</span><div><span class="lb-grade ' + tone + '">' + escapeHtml(r.grade || "") + "</span></div></td>"
+            + "<td>" + alertHtml + "</td>"
+            + "</tr>";
+    }).join("");
+
+    return head + body + "</tbody></table></div>";
+}
+
+/* ---------------- 席位明细 ---------------- */
+
+function seatRows(seats, flag) {
+    if (!seats.length) {
+        return '<div class="lb-flat" style="font-size:0.76rem;padding:0.3rem 0">暂无席位明细（抓取时未取到）</div>';
+    }
+    return seats.map(function (s) {
+        const meta = (LHB.state.types[s.seat_type] || {});
+        const tone = meta.tone || s.seat_type_tone || "#94a3b8";
+        const alias = s.alias ? '<span class="lb-seat-alias">' + escapeHtml(s.alias) + "</span>" : "";
+        const amount = flag === "buy"
+            ? '<div class="lb-seat-amt buy">' + lbMoney(s.buy) + "</div>"
+            : '<div class="lb-seat-amt sell">' + lbMoney(s.sell) + "</div>";
+        const other = flag === "buy"
+            ? '<div class="lb-seat-amt" style="color:#94a3b8">' + (s.sell ? lbMoney(s.sell) : "—") + "</div>"
+            : '<div class="lb-seat-amt" style="color:#94a3b8">' + (s.buy ? lbMoney(s.buy) : "—") + "</div>";
+        return '<div class="lb-seat-row" data-dept="' + escapeHtml(s.dept_name) + '">'
+            + '<div class="lb-seat-rank">' + s.seq + "</div>"
+            + '<div class="lb-seat-name" title="' + escapeHtml(s.dept_name) + '">'
+            + escapeHtml(s.dept_name) + alias
+            + '<span class="lb-seat-type" style="background:' + tone + '1f;color:' + tone + '">'
+            + escapeHtml(s.seat_type_label) + "</span></div>"
+            + amount + other + "</div>";
+    }).join("");
+}
+
+function detailHtml(d) {
+    const r = d.record;
+    const reasons = (r.reasons || []).map(function (x) {
+        const cls = x.delta > 0 ? "plus" : (x.delta < 0 ? "minus" : "zero");
+        const sign = x.delta > 0 ? "+" : "";
+        const delta = x.delta === 0 ? "·" : sign + x.delta;
+        return '<li><span class="d ' + cls + '">' + delta + "</span><span>"
+            + escapeHtml(x.text) + "</span></li>";
+    }).join("");
+    const alerts = (r.alerts || []).map(function (a) {
+        return '<li class="' + escapeHtml(a.level) + '"><b>' + escapeHtml(a.tag) + "</b>"
+            + escapeHtml(a.text) + "</li>";
+    }).join("");
+    const hist = (d.history || []).map(function (h) {
+        return "<tr><td>" + escapeHtml(h.trade_date || "") + "</td>"
+            + "<td>" + (h.scope === "3day" ? "三日" : "单日") + "</td>"
+            + "<td>" + lbUpDown(h.change_rate) + "</td>"
+            + "<td>" + lbSignedMoney(h.net_amt) + "</td>"
+            + "<td>" + lbPct(h.deal_ratio) + "</td>"
+            + "<td>" + (h.score === null || h.score === undefined ? "—" : h.score) + "</td>"
+            + "<td>" + escapeHtml(h.combo_tag || "—") + "</td></tr>";
+    }).join("");
+
+    return '<div class="lb-detail">'
+        + '<div class="lb-detail-head">'
+        + '<span class="lb-detail-title">' + escapeHtml(r.name) + " " + escapeHtml(r.code) + "</span>"
+        + '<span class="lb-detail-sub">' + escapeHtml(r.explanation || "") + "</span>"
+        + '<span class="lb-detail-sub">收盘 ' + (r.close === null ? "—" : Number(r.close).toFixed(2))
+        + " · 换手 " + lbPct(r.turnover_rate) + " · 成交额 " + lbMoney(r.accum_amount, 1)
+        + " · 龙虎占比 " + lbPct(r.deal_ratio) + "</span>"
+        + '<span class="lb-detail-sub">' + (r.combo_note
+            ? "组合解读（" + escapeHtml(r.combo_tag || "") + "）：" + escapeHtml(r.combo_note) : "")
+        + "</span>"
+        + "</div>"
+        + '<div class="lb-detail-grid">'
+        /* 左：席位 */
+        + '<div class="lb-panel"><div class="lb-panel-title">买卖前五席位'
+        + '<span class="lb-panel-sub">点营业部可查本系统实测画像</span></div>'
+        + '<div class="lb-seat-block"><div class="lb-seat-head">买榜（买入金额 / 卖出金额）</div>'
+        + seatRows(d.buy, "buy") + "</div>"
+        + '<div class="lb-seat-block"><div class="lb-seat-head">卖榜（卖出金额 / 买入金额）</div>'
+        + seatRows(d.sell, "sell") + "</div>"
+        + '<div id="lbSeatProfile" class="lb-seat-profile" style="display:none"></div>'
+        + "</div>"
+        /* 右：图 + 打分 + 告警 */
+        + '<div class="lb-panel"><div class="lb-panel-title">买五卖五对照'
+        + '<span class="lb-panel-sub">单位：元（悬停看营业部）</span></div>'
+        + '<div id="lbChart" class="lb-chart"></div>'
+        + '<div class="lb-panel-title" style="margin-top:0.8rem">打分拆解 '
+        + (r.score === null ? "" : "（" + r.score + " 分）") + "</div>"
+        + '<ul class="lb-reasons">' + (reasons || '<li><span class="d zero">·</span><span>无</span></li>') + "</ul>"
+        + (alerts ? '<div class="lb-panel-title" style="margin-top:0.6rem">告警</div>'
+            + '<ul class="lb-alert-list">' + alerts + "</ul>" : "")
+        + "</div></div>"
+        /* 下：该股历史上榜 */
+        + '<div class="lb-panel" style="margin-top:0.8rem"><div class="lb-panel-title">该股历史龙虎'
+        + '<span class="lb-panel-sub">时序跟踪：连续多日上榜才是高价值信号</span></div>'
+        + (hist
+            ? '<table class="lb-history"><thead><tr><th>日期</th><th>类型</th><th>涨跌幅</th>'
+              + "<th>龙虎净额</th><th>占比</th><th>分数</th><th>席位构成</th></tr></thead><tbody>"
+              + hist + "</tbody></table>"
+            : '<div class="lb-flat" style="font-size:0.78rem">库里暂无该股的其它上榜记录（自启用起累积）</div>')
+        + "</div></div>";
+}
+
+/* ---------------- 图表 ---------------- */
+
+function drawChart(d) {
+    const el = document.getElementById("lbChart");
+    if (!el) return;
+    if (typeof echarts === "undefined") {
+        el.innerHTML = '<div class="chart-load-failed">图表库未加载，金额见左侧席位列表</div>';
+        return;
+    }
+    if (LHB.state.chart) {
+        try { LHB.state.chart.dispose(); } catch (e) { /* ignore */ }
+        LHB.state.chart = null;
+    }
+    const items = [];
+    (d.buy || []).forEach(function (s) {
+        items.push({ label: "买" + s.seq, value: s.buy, dept: s.dept_name, kind: "buy" });
+    });
+    (d.sell || []).forEach(function (s) {
+        items.push({ label: "卖" + s.seq, value: s.sell, dept: s.dept_name, kind: "sell" });
+    });
+    // 从下往上画：卖五在最下，买一在最上
+    items.reverse();
+
+    const chart = echarts.init(el);
+    chart.setOption({
+        backgroundColor: "transparent",
+        grid: { left: 44, right: 78, top: 8, bottom: 8 },
+        tooltip: {
+            trigger: "item",
+            backgroundColor: "rgba(255,255,255,0.98)",
+            borderColor: "#e2e8f0",
+            textStyle: { color: "#334155", fontSize: 12 },
+            formatter: function (p) {
+                const it = items[p.dataIndex];
+                return it.label + "　" + it.dept + "<br/>金额：" + lbMoney(it.value, 2)
+                    + "（" + (it.kind === "buy" ? "买入" : "卖出") + "）";
+            },
+        },
+        xAxis: {
+            type: "value",
+            axisLabel: { color: "#94a3b8", fontSize: 10, formatter: function (v) { return lbMoney(v, 0); } },
+            splitLine: { lineStyle: { color: "#f1f5f9" } },
+            axisLine: { show: false }, axisTick: { show: false },
+        },
+        yAxis: {
+            type: "category",
+            data: items.map(function (i) { return i.label; }),
+            axisLabel: { color: "#64748b", fontSize: 11 },
+            axisLine: { show: false }, axisTick: { show: false },
+        },
+        series: [{
+            type: "bar",
+            barWidth: "62%",
+            data: items.map(function (i) {
+                return {
+                    value: i.value || 0,
+                    itemStyle: {
+                        color: i.kind === "buy" ? "#ef4444" : "#22c55e",
+                        borderRadius: [0, 3, 3, 0],
+                    },
+                };
+            }),
+            label: {
+                show: true, position: "right", color: "#64748b", fontSize: 10,
+                formatter: function (p) { return lbMoney(p.value, 2); },
+            },
+        }],
+    });
+    LHB.state.chart = chart;
+    window.addEventListener("resize", function () {
+        if (LHB.state.chart) LHB.state.chart.resize();
+    }, { once: true });
+}
+
+/* ---------------- 展开 / 收起 ---------------- */
+
+async function toggleRow(tid) {
+    const prev = document.querySelector("tr.lb-detail-row");
+    if (prev) prev.remove();
+    document.querySelectorAll("tr.lb-row.open").forEach(function (el) { el.classList.remove("open"); });
+    if (LHB.state.openTradeId === tid) {
+        LHB.state.openTradeId = null;
+        if (history.replaceState) history.replaceState(null, "", location.pathname + location.search);
+        return;
+    }
+    LHB.state.openTradeId = tid;
+    // 展开状态写进 URL hash：刷新/分享能直接定位到这条记录
+    if (history.replaceState) history.replaceState(null, "", "#tid=" + encodeURIComponent(tid));
+    const row = document.querySelector('tr.lb-row[data-tid="' + CSS.escape(tid) + '"]');
+    if (row) row.classList.add("open");
+
+    const tr = document.createElement("tr");
+    tr.className = "lb-detail-row";
+    tr.innerHTML = '<td colspan="10"><div class="loading">正在加载席位明细…</div></td>';
+    if (row) row.parentNode.insertBefore(tr, row.nextSibling);
+
+    try {
+        const url = "/api/lhb/detail?date=" + encodeURIComponent(LHB.state.date)
+            + "&trade_id=" + encodeURIComponent(tid);
+        const resp = await fetchWithAuth(url, { headers: { Accept: "application/json" } });
+        const data = await resp.json();
+        if (data.status !== "ok") throw new Error(data.message || "加载失败");
+        tr.innerHTML = "<td colspan=\"10\">" + detailHtml(data) + "</td>";
+        drawChart(data);
+        // 席位点击 → 实测画像
+        tr.querySelectorAll(".lb-seat-row").forEach(function (el) {
+            el.addEventListener("click", function () {
+                showSeatProfile(el.getAttribute("data-dept"));
+            });
+        });
+    } catch (err) {
+        tr.innerHTML = '<td colspan="10"><div class="lb-empty">席位明细加载失败：'
+            + escapeHtml(err.message || String(err)) + "</div></td>";
+    }
+}
+
+async function showSeatProfile(dept) {
+    const box = document.getElementById("lbSeatProfile");
+    if (!box) return;
+    box.style.display = "block";
+    box.innerHTML = "正在查询该营业部的实测统计…";
+    try {
+        const resp = await fetchWithAuth("/api/lhb/seat?dept_name=" + encodeURIComponent(dept), 
+            { headers: { Accept: "application/json" } });
+        const d = await resp.json();
+        if (d.status !== "ok") throw new Error(d.message || "查询失败");
+        if (LHB.state.seatProfiles[dept]) { /* 缓存命中，直接覆盖 */ }
+        LHB.state.seatProfiles[dept] = d;
+        const st = d.stats || {};
+        const styles = (d.styles || []).map(function (s) { return lbTag(s); }).join("");
+        const nextRatio = st.next_day_sell_ratio === null || st.next_day_sell_ratio === undefined
+            ? "样本不足" : st.next_day_sell_ratio + "%";
+        box.innerHTML = '<div><b>' + escapeHtml(d.dept_name) + "</b>"
+            + (d.alias ? '　<span class="lb-seat-alias">' + escapeHtml(d.alias) + "</span>" : "")
+            + "　" + escapeHtml(d.type_label) + "</div>"
+            + '<div style="margin-top:0.25rem">'
+            + '<span class="lb-kv"><i>近' + d.window_days + '日上榜</i>' + (st.days || 0) + " 天</span>"
+            + '<span class="lb-kv"><i>买入上榜</i>' + (st.buy_appear || 0) + " 次</span>"
+            + '<span class="lb-kv"><i>隔日兑现率</i>' + nextRatio + "</span></div>"
+            + (styles ? '<div style="margin-top:0.25rem">初始标签：' + styles + "</div>" : "")
+            + '<div class="lb-flat" style="margin-top:0.3rem;font-size:0.72rem">' + escapeHtml(d.note || "") + "</div>";
+    } catch (err) {
+        box.innerHTML = "查询失败：" + escapeHtml(err.message || String(err));
+    }
+}
+
+/* ---------------- 加载 / 交互 ---------------- */
+
+function render() {
+    const root = document.getElementById("lbRoot");
+    const notice = document.getElementById("lbNotice");
+    const s = LHB.state;
+    if (!s.records || !s.records.length) {
+        root.innerHTML = '<div class="lb-table-wrap"><div class="lb-empty">'
+            + escapeHtml(s.notice || "这个交易日没有数据")
+            + '<div><button id="lbRefresh2" class="btn btn-primary">抓取最新交易日</button></div>'
+            + "</div></div>";
+        const b = document.getElementById("lbRefresh2");
+        if (b) b.addEventListener("click", doRefresh);
+        return;
+    }
+    if (s.notice) {
+        notice.innerHTML = '<div class="lb-notice">' + escapeHtml(s.notice) + "</div>";
+    } else {
+        notice.innerHTML = "";
+    }
+    root.innerHTML = renderStats() + renderFilters() + renderTable();
+    root.querySelectorAll(".lb-chip").forEach(function (el) {
+        el.addEventListener("click", function () {
+            LHB.state.filter = el.getAttribute("data-filter");
+            LHB.state.openTradeId = null;
+            render();
+        });
+    });
+    root.querySelectorAll("tr.lb-row").forEach(function (el) {
+        el.addEventListener("click", function () { toggleRow(el.getAttribute("data-tid")); });
+    });
+    // 首次渲染后按 #tid=… 自动展开（刷新/分享保留展开状态）
+    const m = /#tid=([^&]+)/.exec(location.hash || "");
+    if (m && LHB.state.autoOpen !== m[1]) {
+        LHB.state.autoOpen = m[1];
+        const tid = decodeURIComponent(m[1]);
+        if (LHB.state.records.some(function (r) { return r.trade_id === tid; })) toggleRow(tid);
+    }
+}
+
+async function loadList(date) {
+    const root = document.getElementById("lbRoot");
+    root.innerHTML = '<div class="loading">正在加载龙虎榜…</div>';
+    const url = "/api/lhb" + (date ? "?date=" + encodeURIComponent(date) : "");
+    try {
+        const resp = await fetchWithAuth(url, { headers: { Accept: "application/json" } });
+        const data = await resp.json();
+        if (data.status !== "ok") throw new Error(data.message || "加载失败");
+        LHB.state.date = data.date;
+        LHB.state.dates = data.dates || [];
+        LHB.state.records = data.records || [];
+        LHB.state.stats = data.stats || {};
+        LHB.state.updatedAt = data.updated_at || "—";
+        LHB.state.stale = !!data.stale;
+        LHB.state.notice = data.note || "";
+        LHB.state.openTradeId = null;
+        renderDateSelect();
+        renderUpdated();
+        render();
+    } catch (err) {
+        root.innerHTML = '<div class="lb-empty">加载失败：' + escapeHtml(err.message || String(err))
+            + '<div><button id="lbRetry" class="btn btn-primary">重试</button></div></div>';
+        const b = document.getElementById("lbRetry");
+        if (b) b.addEventListener("click", function () { loadList(LHB.state.date); });
+    }
+}
+
+function renderDateSelect() {
+    const sel = document.getElementById("lbDate");
+    const s = LHB.state;
+    if (!s.dates.length) {
+        sel.innerHTML = '<option value="">暂无数据</option>';
+        sel.disabled = true;
+        return;
+    }
+    sel.disabled = false;
+    sel.innerHTML = s.dates.map(function (d) {
+        return '<option value="' + d + '"' + (d === s.date ? " selected" : "") + ">" + d + "</option>";
+    }).join("");
+}
+
+function renderUpdated() {
+    const el = document.getElementById("lbUpdated");
+    el.textContent = "数据更新于 " + LHB.state.updatedAt;
+    el.className = "lb-updated" + (LHB.state.stale ? " stale" : "");
+    if (LHB.state.stale) el.textContent += "（超过 26 小时未落库）";
+}
+
+async function doRefresh() {
+    const btn = document.getElementById("lbRefresh");
+    btn.disabled = true;
+    btn.textContent = "抓取中…";
+    try {
+        const resp = await fetchWithAuth("/api/lhb/refresh?days=1", { method: "POST" });
+        const data = await resp.json();
+        if (data.status === "running") {
+            btn.textContent = "已有任务在跑";
+        }
+        await pollRefresh(btn);
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "抓取最新";
+        alert("抓取失败：" + (err.message || String(err)));
+    }
+}
+
+async function pollRefresh(btn) {
+    for (let i = 0; i < 40; i++) {
+        await sleep(3000);
+        try {
+            const resp = await fetchWithAuth("/api/lhb/refresh-status", { headers: { Accept: "application/json" } });
+            const st = await resp.json();
+            if (st.running) {
+                btn.textContent = "抓取中…" + ((i + 1) * 3) + "s";
+                continue;
+            }
+            btn.disabled = false;
+            btn.textContent = "抓取最新";
+            if (st.error) {
+                alert("抓取失败：" + st.error);
+            }
+            await loadList(null);
+            return;
+        } catch (e) {
+            /* 轮询失败就继续等下一次 */
+        }
+    }
+    btn.disabled = false;
+    btn.textContent = "抓取最新";
+}
+
+async function loadSeatDict() {
+    try {
+        const resp = await fetchWithAuth("/api/lhb/seat-dict", { headers: { Accept: "application/json" } });
+        const data = await resp.json();
+        if (data.status !== "ok") return;
+        (data.types || []).forEach(function (t) { LHB.state.types[t.key] = t; });
+        const typeHtml = '<div class="lb-dict-grid">' + (data.types || []).map(function (t) {
+            return '<div class="lb-dict-item" style="border-left:3px solid ' + t.tone + '">'
+                + '<div class="lb-dict-name">' + escapeHtml(t.label) + "</div>"
+                + '<div class="lb-dict-styles">' + escapeHtml(t.note) + "</div></div>";
+        }).join("") + "</div>";
+        document.getElementById("lbDictTypes").innerHTML = typeHtml;
+        document.getElementById("lbDictDepots").innerHTML = (data.depots || []).map(function (d) {
+            return '<div class="lb-dict-item"><div class="lb-dict-name">' + escapeHtml(d.name)
+                + '<span>' + escapeHtml((d.aliases || []).join("·")) + "</span></div>"
+                + '<div class="lb-dict-styles">' + escapeHtml((d.styles || []).join(" · "))
+                + "</div></div>";
+        }).join("");
+    } catch (e) {
+        document.getElementById("lbDictDepots").innerHTML =
+            '<div class="lb-flat">席位字典加载失败（不影响榜单）</div>';
+    }
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+    document.getElementById("lbDate").addEventListener("change", function (e) {
+        if (e.target.value) loadList(e.target.value);
+    });
+    document.getElementById("lbRefresh").addEventListener("click", doRefresh);
+    loadSeatDict();
+    loadList(null);
+});
