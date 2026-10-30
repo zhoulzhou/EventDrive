@@ -18,6 +18,7 @@ const LHB = {
         stale: false,
         notice: "",
         openTradeId: null,
+        detailSeq: 0,
         chart: null,
         seatProfiles: {},
         types: {},
@@ -218,12 +219,15 @@ function seatRows(seats, flag) {
         const other = flag === "buy"
             ? '<div class="lb-seat-amt" style="color:#94a3b8">' + (s.sell ? lbMoney(s.sell) : "—") + "</div>"
             : '<div class="lb-seat-amt" style="color:#94a3b8">' + (s.buy ? lbMoney(s.buy) : "—") + "</div>";
+        // 「机构专用」席位的名字和类型标签是同一个词，重复显示两遍只是噪声
+        const typeBadge = (s.seat_type_label && s.seat_type_label !== s.dept_name)
+            ? '<span class="lb-seat-type" style="background:' + tone + '1f;color:' + tone + '">'
+              + escapeHtml(s.seat_type_label) + "</span>"
+            : "";
         return '<div class="lb-seat-row" data-dept="' + escapeHtml(s.dept_name) + '">'
             + '<div class="lb-seat-rank">' + s.seq + "</div>"
             + '<div class="lb-seat-name" title="' + escapeHtml(s.dept_name) + '">'
-            + escapeHtml(s.dept_name) + alias
-            + '<span class="lb-seat-type" style="background:' + tone + '1f;color:' + tone + '">'
-            + escapeHtml(s.seat_type_label) + "</span></div>"
+            + escapeHtml(s.dept_name) + alias + typeBadge + "</div>"
             + amount + other + "</div>";
     }).join("");
 }
@@ -286,9 +290,9 @@ function detailHtml(d) {
         + '<div class="lb-panel" style="margin-top:0.8rem"><div class="lb-panel-title">该股历史龙虎'
         + '<span class="lb-panel-sub">时序跟踪：连续多日上榜才是高价值信号</span></div>'
         + (hist
-            ? '<table class="lb-history"><thead><tr><th>日期</th><th>类型</th><th>涨跌幅</th>'
+            ? '<div class="lb-history-wrap"><table class="lb-history"><thead><tr><th>日期</th><th>类型</th><th>涨跌幅</th>'
               + "<th>龙虎净额</th><th>占比</th><th>分数</th><th>席位构成</th></tr></thead><tbody>"
-              + hist + "</tbody></table>"
+              + hist + "</tbody></table></div>"
             : '<div class="lb-flat" style="font-size:0.78rem">库里暂无该股的其它上榜记录（自启用起累积）</div>')
         + "</div></div>";
 }
@@ -362,32 +366,57 @@ function drawChart(d) {
         }],
     });
     LHB.state.chart = chart;
-    window.addEventListener("resize", function () {
-        if (LHB.state.chart) LHB.state.chart.resize();
-    }, { once: true });
 }
 
-/* ---------------- 展开 / 收起 ---------------- */
+/* ---------------- 详情抽屉（右侧整体展示） ----------------
+ * 行内展开已废弃：表格 10 列，行内展开会把后面几十行顶到很远，也没法左右对比两条记录。
+ * 现在点击行 = 右侧滑出整屏抽屉，列表位置不动。
+ */
 
-async function toggleRow(tid) {
-    const prev = document.querySelector("tr.lb-detail-row");
-    if (prev) prev.remove();
-    document.querySelectorAll("tr.lb-row.open").forEach(function (el) { el.classList.remove("open"); });
-    if (LHB.state.openTradeId === tid) {
-        LHB.state.openTradeId = null;
-        if (history.replaceState) history.replaceState(null, "", location.pathname + location.search);
-        return;
+function openDrawer() {
+    const wrap = document.getElementById("lbDrawer");
+    if (!wrap) return;
+    wrap.classList.add("open");
+    wrap.setAttribute("aria-hidden", "false");
+    // 抽屉盖住整屏，锁住底页滚动，避免滚轮滚到底下的表格
+    document.body.style.overflow = "hidden";
+}
+
+function closeDrawer(keepHash) {
+    const wrap = document.getElementById("lbDrawer");
+    if (!wrap) return;
+    wrap.classList.remove("open");
+    wrap.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+    if (LHB.state.chart) {
+        try { LHB.state.chart.dispose(); } catch (e) { /* ignore */ }
+        LHB.state.chart = null;
     }
+    document.querySelectorAll("tr.lb-row.open").forEach(function (el) { el.classList.remove("open"); });
+    LHB.state.openTradeId = null;
+    LHB.state.detailSeq += 1;  // 让还在飞的请求作废
+    if (!keepHash && history.replaceState) {
+        history.replaceState(null, "", location.pathname + location.search);
+    }
+}
+
+async function openDetail(tid) {
+    const body = document.getElementById("lbDrawerBody");
+    if (!body) return;
+    if (LHB.state.openTradeId === tid) { closeDrawer(); return; }  // 再点同一行 = 收起
+
     LHB.state.openTradeId = tid;
-    // 展开状态写进 URL hash：刷新/分享能直接定位到这条记录
-    if (history.replaceState) history.replaceState(null, "", "#tid=" + encodeURIComponent(tid));
+    document.querySelectorAll("tr.lb-row.open").forEach(function (el) { el.classList.remove("open"); });
     const row = document.querySelector('tr.lb-row[data-tid="' + CSS.escape(tid) + '"]');
     if (row) row.classList.add("open");
+    // 展开状态写进 URL hash：刷新/分享能直接定位到这条记录
+    if (history.replaceState) history.replaceState(null, "", "#tid=" + encodeURIComponent(tid));
 
-    const tr = document.createElement("tr");
-    tr.className = "lb-detail-row";
-    tr.innerHTML = '<td colspan="10"><div class="loading">正在加载席位明细…</div></td>';
-    if (row) row.parentNode.insertBefore(tr, row.nextSibling);
+    const seq = ++LHB.state.detailSeq;
+    body.innerHTML = '<div class="loading">正在加载席位明细…</div>';
+    document.getElementById("lbDrawerTitle").textContent = "席位明细";
+    body.scrollTop = 0;
+    openDrawer();  // 先开抽屉再拉数据：动画期间就有反馈，不用干等接口
 
     try {
         const url = "/api/lhb/detail?date=" + encodeURIComponent(LHB.state.date)
@@ -395,17 +424,25 @@ async function toggleRow(tid) {
         const resp = await fetchWithAuth(url, { headers: { Accept: "application/json" } });
         const data = await resp.json();
         if (data.status !== "ok") throw new Error(data.message || "加载失败");
-        tr.innerHTML = "<td colspan=\"10\">" + detailHtml(data) + "</td>";
+        if (seq !== LHB.state.detailSeq) return;  // 期间点了别的行 / 关了抽屉
+        body.innerHTML = detailHtml(data);
+        const rec = data.record || {};
+        document.getElementById("lbDrawerTitle").textContent =
+            (rec.name || "") + " " + (rec.code || "") + " · 席位明细";
         drawChart(data);
         // 席位点击 → 实测画像
-        tr.querySelectorAll(".lb-seat-row").forEach(function (el) {
+        body.querySelectorAll(".lb-seat-row").forEach(function (el) {
             el.addEventListener("click", function () {
                 showSeatProfile(el.getAttribute("data-dept"));
             });
         });
     } catch (err) {
-        tr.innerHTML = '<td colspan="10"><div class="lb-empty">席位明细加载失败：'
-            + escapeHtml(err.message || String(err)) + "</div></td>";
+        if (seq !== LHB.state.detailSeq) return;
+        body.innerHTML = '<div class="lb-empty">席位明细加载失败：'
+            + escapeHtml(err.message || String(err))
+            + '<div><button id="lbRetryDetail" class="btn btn-primary">重试</button></div></div>';
+        const b = document.getElementById("lbRetryDetail");
+        if (b) b.addEventListener("click", function () { openDetail(tid); });
     }
 }
 
@@ -463,24 +500,25 @@ function render() {
     root.querySelectorAll(".lb-chip").forEach(function (el) {
         el.addEventListener("click", function () {
             LHB.state.filter = el.getAttribute("data-filter");
-            LHB.state.openTradeId = null;
+            closeDrawer(true);  // 筛选后列表变了，抽屉里的记录可能已不在列表中
             render();
         });
     });
     root.querySelectorAll("tr.lb-row").forEach(function (el) {
-        el.addEventListener("click", function () { toggleRow(el.getAttribute("data-tid")); });
+        el.addEventListener("click", function () { openDetail(el.getAttribute("data-tid")); });
     });
-    // 首次渲染后按 #tid=… 自动展开（刷新/分享保留展开状态）
+    // 首次渲染后按 #tid=… 自动打开（刷新/分享保留展开状态）
     const m = /#tid=([^&]+)/.exec(location.hash || "");
     if (m && LHB.state.autoOpen !== m[1]) {
         LHB.state.autoOpen = m[1];
         const tid = decodeURIComponent(m[1]);
-        if (LHB.state.records.some(function (r) { return r.trade_id === tid; })) toggleRow(tid);
+        if (LHB.state.records.some(function (r) { return r.trade_id === tid; })) openDetail(tid);
     }
 }
 
 async function loadList(date) {
     const root = document.getElementById("lbRoot");
+    closeDrawer(true);  // 换日期 / 重新抓取后旧明细已失效
     root.innerHTML = '<div class="loading">正在加载龙虎榜…</div>';
     const url = "/api/lhb" + (date ? "?date=" + encodeURIComponent(date) : "");
     try {
@@ -587,6 +625,18 @@ async function loadSeatDict() {
 
 document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("lbRefresh").addEventListener("click", doRefresh);
+    // 抽屉关闭：叉号 / 点遮罩 / Esc
+    const closeBtn = document.getElementById("lbDrawerClose");
+    if (closeBtn) closeBtn.addEventListener("click", function () { closeDrawer(); });
+    const mask = document.querySelector("#lbDrawer .lb-drawer-mask");
+    if (mask) mask.addEventListener("click", function () { closeDrawer(); });
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && LHB.state.openTradeId) closeDrawer();
+    });
+    // 全局只挂一次 resize：抽屉里的图跟着面板宽度走（每开一次就挂一次会累积监听器）
+    window.addEventListener("resize", function () {
+        if (LHB.state.chart) LHB.state.chart.resize();
+    });
     loadSeatDict();
     loadList(null);
 });

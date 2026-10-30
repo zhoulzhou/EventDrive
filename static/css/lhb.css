@@ -106,13 +106,48 @@ table.lb-table td { padding: 0.6rem 0.7rem; color: #334155; vertical-align: midd
 .lb-grade.danger { background: rgba(239,68,68,0.14); color: #b91c1c; }
 .lb-alert-dots { font-size: 0.72rem; color: #b91c1c; }
 
-/* ---------------- 展开详情 ---------------- */
-tr.lb-detail-row > td { padding: 0; background: #fbfcff; border-bottom: 1px solid #e5e9f2; }
-.lb-detail { padding: 1rem 1.1rem 1.2rem; }
+/* ---------------- 详情抽屉（右侧滑出） ----------------
+ * 不用行内展开：表格是 10 列宽表，行内展开会把下面的行顶很远、且各条展开高度不一没法对比。
+ * 抽屉宽度固定（不参与 transition），只有 transform 在动 —— 这样 ECharts 在开启动画
+ * 期间 init 也能拿到正确尺寸，不会画成半宽。 */
+.lb-drawer { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+.lb-drawer.open { pointer-events: auto; }
+.lb-drawer-mask {
+    position: absolute; inset: 0; background: rgba(15, 23, 42, 0.34);
+    opacity: 0; transition: opacity 0.22s ease;
+}
+.lb-drawer.open .lb-drawer-mask { opacity: 1; }
+.lb-drawer-panel {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(1120px, 94vw); display: flex; flex-direction: column;
+    background: #fbfcff; border-left: 1px solid #e5e9f2;
+    box-shadow: -12px 0 32px rgba(15, 23, 42, 0.14);
+    transform: translateX(100%); transition: transform 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.lb-drawer.open .lb-drawer-panel { transform: translateX(0); }
+/* 尊重系统「减少动态效果」：直接出现，不做滑入 */
+@media (prefers-reduced-motion: reduce) {
+    .lb-drawer-panel, .lb-drawer-mask { transition: none; }
+}
+/* 手机上侧栏铺满整屏（见文件末尾的窄屏块） */
+.lb-drawer-bar {
+    display: flex; align-items: center; gap: 0.6rem; flex: none;
+    padding: 0.65rem 0.9rem; background: #fff; border-bottom: 1px solid #eef1f6;
+}
+.lb-drawer-title { font-size: 0.88rem; font-weight: 700; color: #334155; }
+.lb-drawer-close {
+    margin-left: auto; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #e2e8f0; background: #fff; color: #64748b; font-size: 0.9rem; line-height: 1;
+}
+.lb-drawer-close:hover { border-color: #c7d2fe; color: #4338ca; background: #f8faff; }
+.lb-drawer-body { flex: 1; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+
+/* 抽屉里的详情：去掉外层多留的边距，整体宽度已经足够，不再挤成两列窄条 */
+.lb-detail { padding: 1rem 1.1rem 1.6rem; }
 .lb-detail-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.7rem; }
 .lb-detail-title { font-size: 1rem; font-weight: 700; color: #1f2937; }
 .lb-detail-sub { font-size: 0.76rem; color: #94a3b8; }
-.lb-detail-grid { display: grid; grid-template-columns: minmax(360px, 1.35fr) minmax(300px, 1fr); gap: 1rem; }
+.lb-detail-grid { display: grid; grid-template-columns: minmax(360px, 1.25fr) minmax(320px, 1fr); gap: 1rem; }
 @media (max-width: 900px) { .lb-detail-grid { grid-template-columns: 1fr; } }
 
 .lb-panel { background: #fff; border: 1px solid #eef1f6; border-radius: 10px; padding: 0.8rem 0.9rem; }
@@ -122,13 +157,16 @@ tr.lb-detail-row > td { padding: 0; background: #fbfcff; border-bottom: 1px soli
 .lb-seat-block + .lb-seat-block { margin-top: 0.7rem; }
 .lb-seat-head { font-size: 0.76rem; color: #64748b; margin-bottom: 0.3rem; }
 .lb-seat-row {
-    display: grid; grid-template-columns: 22px 1fr 92px 92px;
+    /* 中间列必须 minmax(0,1fr)：1fr 的最小尺寸会取内容的 min-content（营业部全名是 nowrap），
+       一旦名字长就把右边两列金额顶出卡片，只在窄屏暴露。 */
+    display: grid; grid-template-columns: 22px minmax(0, 1fr) 92px 92px;
     align-items: center; gap: 0.4rem; padding: 0.28rem 0.25rem;
     border-radius: 6px; font-size: 0.78rem; cursor: pointer;
 }
 .lb-seat-row:hover { background: #f6f8ff; }
 .lb-seat-rank { color: #94a3b8; font-size: 0.72rem; text-align: center; }
-.lb-seat-name { color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* min-width:0 必须写：营业部全名是 nowrap，不放开的话会把后两列金额挤出面板 */
+.lb-seat-name { min-width: 0; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-seat-name .lb-seat-alias { color: #b45309; font-weight: 600; margin-left: 0.3rem; font-size: 0.72rem; }
 .lb-seat-amt { text-align: right; font-family: ui-monospace, Menlo, monospace; font-size: 0.76rem; }
 .lb-seat-amt.buy { color: #ef4444; }
@@ -157,9 +195,21 @@ tr.lb-detail-row > td { padding: 0; background: #fbfcff; border-bottom: 1px soli
 .lb-alert-list li.info { background: rgba(59,130,246,0.08); border-left: 3px solid #3b82f6; color: #1e40af; }
 .lb-alert-list li b { margin-right: 0.3rem; }
 
+.lb-history-wrap { overflow-x: auto; }
 .lb-history { width: 100%; border-collapse: collapse; font-size: 0.76rem; margin-top: 0.2rem; }
 .lb-history th { text-align: left; color: #94a3b8; font-weight: 500; padding: 0.25rem 0.35rem; border-bottom: 1px solid #eef1f6; }
 .lb-history td { padding: 0.28rem 0.35rem; border-bottom: 1px solid #f6f8fb; color: #475569; }
+
+/* 手机：金额列收窄、内边距减小，否则营业部名一长两列金额就被挤出去。
+ * ⚠ 这个块必须放在上面所有基础规则**之后** —— 同一选择器同优先级，靠书写顺序决胜负，
+ * 放在基础规则前面会被整段覆盖（这里踩过一次，症状是窄屏金额被裁）。 */
+@media (max-width: 720px) {
+    .lb-detail { padding: 0.8rem 0.7rem 1.4rem; }
+    .lb-seat-row { grid-template-columns: 18px minmax(0, 1fr) 74px 74px; gap: 0.3rem; font-size: 0.74rem; }
+    .lb-seat-amt { font-size: 0.72rem; }
+    .lb-history { font-size: 0.72rem; }
+    .lb-drawer-panel { width: 100vw; }
+}
 
 /* ---------------- 规则说明 / 席位字典 ---------------- */
 .lb-doc { margin-top: 1.6rem; }

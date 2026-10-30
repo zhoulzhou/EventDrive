@@ -42,6 +42,19 @@
     <div class="loading">正在加载龙虎榜…</div>
 </div>
 
+{# 席位明细走右侧抽屉：榜单是一张宽表，行内展开会把表格顶到很远的地方，
+   而且展开高度参差不齐不好对比；侧栏保留列表上下文、宽度也够画买五卖五图。 #}
+<div id="lbDrawer" class="lb-drawer" aria-hidden="true">
+    <div class="lb-drawer-mask" data-close="1"></div>
+    <div class="lb-drawer-panel" role="dialog" aria-modal="true" aria-label="龙虎榜席位明细">
+        <div class="lb-drawer-bar">
+            <span id="lbDrawerTitle" class="lb-drawer-title">席位明细</span>
+            <button id="lbDrawerClose" class="lb-drawer-close" type="button" title="关闭（Esc）">✕</button>
+        </div>
+        <div id="lbDrawerBody" class="lb-drawer-body"></div>
+    </div>
+</div>
+
 <div class="lb-doc">
     <details open>
         <summary>怎么读这一页<span>由浅入深：先看榜单位置，再看席位构成，最后看资金结构</span></summary>
