@@ -333,7 +333,8 @@ function greedFactorHtml(f) {
     const isBase = mode.indexOf("基准分位") >= 0;
     const degraded = mode.indexOf("折算") >= 0;
     const samples = f.samples === null || f.samples === undefined ? null : Number(f.samples);
-    const need = f.base_min_samples || 20;
+    const need = f.base_min_samples || 2;
+    const lowAt = f.low_precision_at || 20;
     return "<div class=\"st-pf\" style=\"border-top-color:" + color + "\">"
         + "<div class=\"st-pf-head\"><div>"
         + "<div class=\"st-pf-name\">" + escapeHtml(f.name)
@@ -351,7 +352,10 @@ function greedFactorHtml(f) {
             ? "<span class=\"st-pct st-pct-off\">分位 —</span>"
             : "<span class=\"st-pct\">分位 " + Number(f.percentile).toFixed(1) + "%</span>")
         + (isBase ? "<span class=\"st-pf-base\" title=\"分位来自 V3.6c 基准值，"
-            + "历史表样本攒够后自动改用实测分位\">基准分位</span>" : "")
+            + "历史表还没有可比读数，攒够后自动改用实测分位\">基准分位</span>" : "")
+        + (!isBase && samples !== null && samples < lowAt
+            ? "<span class=\"st-pf-warn\" title=\"样本不足 " + lowAt + " 期，分位只能取到"
+              + " 0/12.5/50 这类粗档，方向参考、不应当精确读数\">样本 " + samples + " 期 · 精度低</span>" : "")
         + (degraded ? "<span class=\"st-pf-warn\">无基准 · 按绝对阈值折算</span>" : "")
         + (samples !== null ? "<span class=\"st-pf-samples\" title=\"已累计的历史读数期数，"
             + "攒够 " + need + " 期后分位改用实测值\">已累计 " + samples + " 期</span>" : "")
@@ -469,11 +473,11 @@ function greedGaugeHtml(p) {
         + "<span class=\"st-group-sub\">估值是慢变量，混进主指数会钝化日频灵敏度；"
         + "只在极端区确认，正好弥补 88% 情绪占比下估值信号的稀释</span></div>"
         + "<div class=\"st-pc-grid\">" + confirms + "</div>"
-        + "<div class=\"st-gauge-note\">分位口径为<b>「V3.6c 基准值 + 项目历史表逐日累计」</b>："
-        + "先用规格基准分位（对应 10/19 读数）起步，卡片上标为「基准分位」；"
-        + "此后每���抓取一天，历史表就多一期样本，累计满 20 期后该分项自动切换为实测分位，"
-        + "并显示「已累计 N 期」。"
-        + "这样分位既不会因为样本只有两三期而剧烈跳动，也不会因为窗口口径不同而与基准矛盾。"
+        + "<div class=\"st-gauge-note\">分位口径为<b>「项目历史表逐日累计 + V3.6c 基准值兜底」</b>："
+        + "历史表里该分项有 <b>2 期以上</b>可比读数就直接用实测分位；一期都没有时用规格基准值"
+        + "（对应 10/19 读数）兜底，卡片上标为「基准分位」。"
+        + "样本不足 20 期时卡片标<b>「精度低」</b>——此时分位只能落在 0/12.5/50 这类粗档，"
+        + "看方向别抠小数。"
         + "<br>贪婪指数与上方综合温度计<b>方向一致</b>：都是越高越热。"
         + "</div>"
         + "</section>";
@@ -610,10 +614,11 @@ function notesHtml() {
         + "+ 估值 12%（沪深300 PE-TTM），合计 100%，<b>无资金主成分</b>。</li>"
         + "<li><b>分位直接用历史分位</b>（越高越贪婪），不做「100 − 分位」的反向换算，"
         + "所以与综合温度计方向天然对齐。分子为<b>严格小于</b>当前值的样本数。</li>"
-        + "<li><b>分位口径：基准值 + 逐日累计</b>（不用固定窗口）。先用 V3.6c 规格的基准分位"
-        + "（宽度 92.3 / 换手 23.1 / 成交额 30.8 / 融资占比 15.4 / PE 15.4，对应 10/19 读数）起步，"
-        + "卡片标为「基准分位」；此后每天抓取一次，历史表逐日积累，"
-        + "<b>满 20 期后该分项自动切换为实测分位</b>，并显示「已累计 N 期 / 再攒 N 期」。</li>"
+        + "<li><b>分位口径：逐日累计 + 基准值兜底</b>（不用固定窗口）。历史表里该分项有 2 期以上"
+        + "可比读数就用<b>实测分位</b>（严格小于当前值的样本数 ÷ 样本数）；一期都没有时用 V3.6c"
+        + "规格的基准分位（宽度 92.3 / 换手 23.1 / 成交额 30.8 / 融资占比 15.4 / PE 15.4，"
+        + "对应 10/19 读数）兜底，卡片标为「基准分位」。"
+        + "<b>样本不足 20 期时标「精度低」</b>：档位只有 0/12.5/50 这几档，看方向、别抠小数。</li>"
         + "<li>为什么不用固定窗口：规格标称「近 13 期」时换手率 / 成交额 / PE 的分位恒为 0%"
         + "（当前值恰是近 13 期最低值）；换成近 5 年 + 指数近似序列又会算出 95% 这类"
         + "与基准矛盾的值（把「杠杆正在退潮」读成「杠杆水位历史最高」）。"

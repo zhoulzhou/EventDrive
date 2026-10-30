@@ -36,7 +36,7 @@
 1. **项目历史表累计**：stock_temp_history 里该key 的逐日读数满
    GREED_BASE_MIN_SAMPLES 期后，用实测分位替换基准值 —— 这就是「有新增数据累计计算」。
 2. **基准分位**：样本不足时直接用 GREED_BASE_PERCENTILES 的值，并标注
-   「基准分位（已累计 N 期，再攒 M 期改用实测）」。
+   「基准分位（已累计 N 期）」。
 3. **阈值折算**：连基准值都没有的 key（理论上不会发生）用热度分取反。
 
 ⚠️ **不再用长历史源算分位**（app/utils/long_history.py）。
@@ -67,7 +67,20 @@ GREED_BASE_PERCENTILES: Dict[str, float] = {
 }
 
 # 项目历史表累计到这么多期后，改用实测分位（不再用基准值）
-GREED_BASE_MIN_SAMPLES = 20
+#
+# ⚠️ 2026-10-30 由 **20 改为 2**（用户拍板）。起因：五个主成分攒了 7~12 天仍不足
+# 20 期，全部回落基准分位，合成结果每天恒为 37.4（0.22×(92.3+23.1+30.8+15.4)
+# +0.12×15.4），而同期读数早就不一样了（宽度 69.4%→14.2%、PE 12.99→15.21），
+# 指针成了误导性读数。用户选择「先让它动起来」，接受低样本下分位只能取
+# 0%/12.5%/50% 这类粗档。
+# 已知代价（2026-10-20 实测过，别当新问题）：样本 2~3 期时「严格小于当前值」
+# 的个数只能是 0 或 1，分位必然贴 0%/100%，指数会从基准值 37.4 直接跳到 25 附近。
+# 缓解手段只在**展示层**：样本 < GREED_LOW_PRECISION_AT 时 mode 标注「精度低」，
+# 不改数值、不做加权（加权收缩方案被用户否掉，改之前先问）。
+GREED_BASE_MIN_SAMPLES = 2
+
+# 低于这个样本数时，卡片上标注「精度低」——**纯展示标签，不参与任何计算**。
+GREED_LOW_PRECISION_AT = 20
 
 # 基准分位的口径说明（展示用，让用户知道这个数字从哪来）
 GREED_BASE_NOTE = "V3.6c 基准分位（对应 10/19 读数）"
@@ -322,15 +335,20 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         if pct is not None:
             # V3.6c：直接取历史分位（越高越贪婪），不做反向换算
             score = round(pct, 1)
-            mode = "实测分位（历史表累计）"
+            if samples_n is not None and samples_n < GREED_LOW_PRECISION_AT:
+                # 门槛已降到 2 期（2026-10-30），低样本下分位只有 0/12.5/50 这类粗档，
+                # 必须在卡片上说清楚，别让读者以为这是精确读数。
+                mode = "实测分位（仅 %d 期，精度低）" % int(samples_n)
+            else:
+                mode = "实测分位（历史表累计）"
         elif base_pct is not None:
             # 基准分位兜底：历史表样本还不够，用用户提供的 V3.6c 基准值。
             # 不是硬编码 —— 样本攒够后上面那个分支会自动接管。
             score = float(base_pct)
             got = int(samples_n) if samples_n else 0
-            mode = "基准分位（待累计）"
-            window = "%s；已累计 %d 期，再攒 %d 期改用实测分位" % (
-                GREED_BASE_NOTE, got, max(0, GREED_BASE_MIN_SAMPLES - got))
+            mode = "基准分位（无历史样本）"
+            window = "%s；历史表可比读数仅 %d 期（满 %d 期即转实测分位）" % (
+                GREED_BASE_NOTE, got, GREED_BASE_MIN_SAMPLES)
         elif heat is not None:
             # 兜底：连基准值都没有的 key（理论上不会发生），用热度分
             # —— 热度分越高越热，与贪婪分天然同向
@@ -354,6 +372,7 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
                 "meaning": spec["meaning"], "guide": spec["guide"],
                 "base_pct": base_pct,
                 "base_min_samples": GREED_BASE_MIN_SAMPLES,
+                "low_precision_at": GREED_LOW_PRECISION_AT,
                 "tone": "slate",
             })
             continue
@@ -373,6 +392,7 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
             "meaning": spec["meaning"], "guide": spec["guide"],
             "base_pct": base_pct,
             "base_min_samples": GREED_BASE_MIN_SAMPLES,
+            "low_precision_at": GREED_LOW_PRECISION_AT,
             "tone": "blue" if spec["layer"] == "valuation" else "amber",
         })
 
@@ -440,9 +460,9 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         "formula": ("市场贪婪指数 = 0.22 ×（市场宽度 + 全A换手率 + 两市成交额 + 融资余额占流通市值）"
                     " + 0.12 × 沪深300 PE-TTM"),
         "weight_note": "情绪 88%（四项各 22%）+ 估值 12%（PE-TTM）= 100%，无资金主成分",
-        "window_note": ("分位先用 V3.6c 基准值（对应 10/19 读数），"
-                        "项目历史表逐日累计满 %d 期后自动改用实测分位"
-                        % GREED_BASE_MIN_SAMPLES),
+        "window_note": ("分位取自项目历史表逐日累计（满 %d 期即用实测；样本少于 %d 期时档位很粗，"
+                        "卡片会标「精度低」）；还没有可比读数时用 V3.6c 基准值（对应 10/19 读数）兜底"
+                        % (GREED_BASE_MIN_SAMPLES, GREED_LOW_PRECISION_AT)),
         "base_note": GREED_BASE_NOTE,
         "smooth_days": SMOOTH_DAYS,
     }

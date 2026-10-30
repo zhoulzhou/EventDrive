@@ -93,12 +93,16 @@ def _fill_greed_percentiles(db: Session, records: list) -> int:
     - 范围：贪婪指数需要的 7 个 key（宽度 / 换手率 / 成交额 / 融资余额占比 /
       沪深300 PE-TTM / ERP / 破净率），且不要求原指标的 judge 是 percentile
 
-    ⚠️ **两种样本门槛，别一刀切**（2026-10-20 实测踩过）：
-      · 主成分（有基准分位兜底）：必须攒够 `GREED_BASE_MIN_SAMPLES`(20) 期才用实测。
+    ⚠️ **两种样本门槛**（2026-10-20 引入，2026-10-30 统一降到 2 期）：
+      · 主成分（有基准分位兜底）：原先要求攒够 `GREED_BASE_MIN_SAMPLES`(20) 期才用实测。
         实测 2~3 期时融资占比与 PE 的分位都算出 0%，把贪婪指数从 37.4 压到 25.7 ——
         样本极少时「严格小于当前值」的个数只能是 0 或 1，分位必然贴 0%/100%，是伪信号。
+        但 20 期门槛的副作用更糟：攒了 7~12 天（10/20~10/29）仍不足，五个主成分全部
+        回落基准分位，**每天合成恒为 37.4**，而同期读数已大幅变化。2026-10-30 用户
+        决定先让它动起来，门槛改为 2 期，低样本的精度问题改由展示层标注「精度低」。
       · 确认层 ERP / 破净率（无基准值兜底）：样本够 `GREED_MIN_SAMPLES`(2) 就得给，
         否则泡沫警示闸门永远无法触发。
+      现在两者都是 2 期，`need_samples` 仍按角色分开写，便于日后单独调整。
 
     ⚠️ **分位只来自项目历史表**（用户 2026-10-20 定案）：
     样本满 greed_index.GREED_BASE_MIN_SAMPLES 期后用实测分位覆盖基准值，
@@ -148,11 +152,11 @@ def _fill_greed_percentiles(db: Session, records: list) -> int:
             series.sort(key=lambda p: p["as_of"])
 
         n = gi.percentile_sample_size(series)
-        # 样本门槛按角色区分（关键，别一刀切）：
-        # · **主成分**有基准分位兜底 → 必须攒够 GREED_BASE_MIN_SAMPLES 期才用实测，
-        #   否则用 2~3 期算出的分位必然贴 0%/100%（实测把指数从 37.4 压到 25.7）。
-        # · **确认层**（ERP / 破净率）没有基准值可用 → 样本够GREED_MIN_SAMPLES
-        #   就得给，否则泡沫警示闸门永远无法触发。
+        # 样本门槛按角色区分（日后可能再分化，别合并成一个常量）：
+        # · **主成分**有基准分位兜底 → 2026-10-30 起门槛降到 2 期（原 20 期，
+        #   理由是 20 期门槛让指数连续多日恒为 37.4，属于误导性展示）。
+        # · **确认层**（ERP / 破净率）没有基准值可用 → 样本够 GREED_MIN_SAMPLES 就得给，
+        #   否则泡沫警示闸门永远无法触发。
         need_samples = (gi.GREED_BASE_MIN_SAMPLES
                         if key in gi.GREED_BASE_PERCENTILES
                         else gi.GREED_MIN_SAMPLES)
@@ -172,7 +176,7 @@ def _fill_greed_percentiles(db: Session, records: list) -> int:
         if pct is not None:
             detail["贪婪分位来源"] = "项目历史表累计 %d 期" % n
         # 样本期数**无论有没有分位都记**：这是「什么时候会切到实测分位」的唯一
-        # 可见依据，也是基准分位阶段的「再攒 N 期」提示的数据来源。
+        # 可见依据，也是卡片上「已累计 N 期 / 精度低」标签的数据来源。
         detail["贪婪分位样本数"] = n
         rec["detail"] = st.dump_detail(detail)
         fixed.append(rec)
