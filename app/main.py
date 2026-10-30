@@ -122,8 +122,9 @@ static_dir.mkdir(exist_ok=True)
 # 本地开发时文件本来就不存在，unlink 抛 FileNotFoundError 被忽略，无副作用。
 _OBSOLETE_STATIC = (
     "js/chart.umd.min.js",  # Chart.js：2026-10-21 全站改用 ECharts 后废弃
-    # 本地截图用的自动登录跳转页（账号密码写死在页面里），**绝不能留在线上**
+    # 本地截图/调试用的临时页（账号密码写死在页面里），**绝不能留在线上**
     "_preview.html",
+    "_probe.html",
 )
 
 
