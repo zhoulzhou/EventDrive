@@ -376,10 +376,22 @@ function drawChart(d) {
 function openDrawer() {
     const wrap = document.getElementById("lbDrawer");
     if (!wrap) return;
+    // 先摘掉上一次内容切换留下的 lb-swap，否则它优先级更高会顶掉滑入时内容的淡入动画
+    const body = document.getElementById("lbDrawerBody");
+    if (body) body.classList.remove("lb-swap");
     wrap.classList.add("open");
     wrap.setAttribute("aria-hidden", "false");
     // 抽屉盖住整屏，锁住底页滚动，避免滚轮滚到底下的表格
     document.body.style.overflow = "hidden";
+}
+
+// 内容替换后给一次极短淡入。先摘类 + 强制回流再挂上：连点两条记录时也会重新播，
+// 否则第二次只是把 innerHTML 换掉，看上去像「闪了一下」。
+function swapFade(el) {
+    if (!el) return;
+    el.classList.remove("lb-swap");
+    void el.offsetWidth;
+    el.classList.add("lb-swap");
 }
 
 function closeDrawer(keepHash) {
@@ -426,6 +438,7 @@ async function openDetail(tid) {
         if (data.status !== "ok") throw new Error(data.message || "加载失败");
         if (seq !== LHB.state.detailSeq) return;  // 期间点了别的行 / 关了抽屉
         body.innerHTML = detailHtml(data);
+        swapFade(body);
         const rec = data.record || {};
         document.getElementById("lbDrawerTitle").textContent =
             (rec.name || "") + " " + (rec.code || "") + " · 席位明细";
@@ -441,6 +454,7 @@ async function openDetail(tid) {
         body.innerHTML = '<div class="lb-empty">席位明细加载失败：'
             + escapeHtml(err.message || String(err))
             + '<div><button id="lbRetryDetail" class="btn btn-primary">重试</button></div></div>';
+        swapFade(body);
         const b = document.getElementById("lbRetryDetail");
         if (b) b.addEventListener("click", function () { openDetail(tid); });
     }

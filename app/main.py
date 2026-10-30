@@ -122,23 +122,26 @@ static_dir.mkdir(exist_ok=True)
 # 本地开发时文件本来就不存在，unlink 抛 FileNotFoundError 被忽略，无副作用。
 _OBSOLETE_STATIC = (
     "js/chart.umd.min.js",  # Chart.js：2026-10-21 全站改用 ECharts 后废弃
-    # 本地截图/调试用的临时页（账号密码写死在页面里），**绝不能留在线上**
-    "_preview.html",
-    "_probe.html",
 )
+
+# static 根目录下以 _ 开头的 html 一律是本地截图/调试用的临时页（内置演示账号密码），
+# 绝不能留在线上。做成通配清理，以后新增临时页不用再回来登记一次。
+_TEMP_STATIC_GLOB = "_*.html"
 
 
 def _purge_obsolete_static() -> list[str]:
     """删除沙箱里残留的废弃静态文件，返回实际删掉的相对路径。"""
     removed = []
-    for rel in _OBSOLETE_STATIC:
+    targets = [static_dir / rel for rel in _OBSOLETE_STATIC]
+    targets += sorted(static_dir.glob(_TEMP_STATIC_GLOB))
+    for path in targets:
         try:
-            (static_dir / rel).unlink()
-            removed.append(rel)
+            path.unlink()
+            removed.append(path.name if path.parent == static_dir else str(path.relative_to(static_dir)))
         except FileNotFoundError:
             continue
         except OSError as exc:  # 只读挂载等：记警告但不阻断启动
-            logger.warning("清理废弃静态文件失败 %s: %s", rel, exc)
+            logger.warning("清理废弃静态文件失败 %s: %s", path.name, exc)
     return removed
 
 

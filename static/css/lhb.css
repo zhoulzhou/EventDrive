@@ -109,25 +109,51 @@ table.lb-table td { padding: 0.6rem 0.7rem; color: #334155; vertical-align: midd
 /* ---------------- 详情抽屉（右侧滑出） ----------------
  * 不用行内展开：表格是 10 列宽表，行内展开会把下面的行顶很远、且各条展开高度不一没法对比。
  * 抽屉宽度固定（不参与 transition），只有 transform 在动 —— 这样 ECharts 在开启动画
- * 期间 init 也能拿到正确尺寸，不会画成半宽。 */
+ * 期间 init 也能拿到正确尺寸，不会画成半宽。
+ * 宽度 = 原 1120px 收 20% → 896px；窄屏按 75vw（同为收 20%）。
+ * 动效分层：面板 transform（合成器）+ 内容延迟 60ms 位移，开 0.34s expo-out / 关 0.22s 加速离场。 */
 .lb-drawer { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
 .lb-drawer.open { pointer-events: auto; }
+/* 遮罩：打开时先亮、关闭时后暗（延迟 60ms），面板先走一步，视觉上不会「黑一下再收」。
+   只用 opacity（纯合成器动画）；不加 backdrop-filter —— 整屏模糊会拖慢滑入的帧率。 */
 .lb-drawer-mask {
     position: absolute; inset: 0; background: rgba(15, 23, 42, 0.34);
-    opacity: 0; transition: opacity 0.22s ease;
+    opacity: 0; transition: opacity 0.2s ease 0.06s;
 }
-.lb-drawer.open .lb-drawer-mask { opacity: 1; }
+.lb-drawer.open .lb-drawer-mask { opacity: 1; transition: opacity 0.26s ease; }
 .lb-drawer-panel {
     position: absolute; top: 0; right: 0; bottom: 0;
-    width: min(1120px, 94vw); display: flex; flex-direction: column;
+    width: min(896px, 75vw); display: flex; flex-direction: column;
     background: #fbfcff; border-left: 1px solid #e5e9f2;
     box-shadow: -12px 0 32px rgba(15, 23, 42, 0.14);
-    transform: translateX(100%); transition: transform 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+    /* 用 translate3d 提层：滑入只走合成器，不触发重排重绘 */
+    transform: translate3d(100%, 0, 0);
+    will-change: transform;
+    /* 关闭：加速离开，干脆利落 */
+    transition: transform 0.22s cubic-bezier(0.55, 0, 0.85, 0.36);
 }
-.lb-drawer.open .lb-drawer-panel { transform: translateX(0); }
+.lb-drawer.open .lb-drawer-panel {
+    transform: translate3d(0, 0, 0);
+    /* 打开：起步快、尾段慢慢贴合（expo-out），比匀速滑入更有落定感 */
+    transition: transform 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* 内容比面板慢 60ms 补进来，形成轻微层次，不至于整块硬贴上来。
+   只动 transform、不动 opacity：万一动画没跑（后台标签页/降级渲染），内容也是「看得见、只是没位移」，
+   不会出现整块空白。用动画而非 transition，关闭时类名一撤就回落到正常显示，不会闪空。 */
+@keyframes lb-body-in {
+    from { transform: translate3d(16px, 0, 0); }
+    to { transform: translate3d(0, 0, 0); }
+}
+.lb-drawer.open .lb-drawer-body { animation: lb-body-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.06s both; }
+/* 数据到手后替换 innerHTML：给一次极短的淡入，避免内容「跳」出来。
+   选择器要压过上面那条（同属性 animation，优先级高者生效），否则换内容时播放不到 */
+@keyframes lb-swap-in { from { opacity: 0; } to { opacity: 1; } }
+.lb-drawer.open .lb-drawer-body.lb-swap { animation: lb-swap-in 0.26s ease both; }
 /* 尊重系统「减少动态效果」：直接出现，不做滑入 */
 @media (prefers-reduced-motion: reduce) {
     .lb-drawer-panel, .lb-drawer-mask { transition: none; }
+    .lb-drawer.open .lb-drawer-body,
+    .lb-drawer.open .lb-drawer-body.lb-swap { animation: none; }
 }
 /* 手机上侧栏铺满整屏（见文件末尾的窄屏块） */
 .lb-drawer-bar {
@@ -147,8 +173,9 @@ table.lb-table td { padding: 0.6rem 0.7rem; color: #334155; vertical-align: midd
 .lb-detail-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.7rem; }
 .lb-detail-title { font-size: 1rem; font-weight: 700; color: #1f2937; }
 .lb-detail-sub { font-size: 0.76rem; color: #94a3b8; }
-.lb-detail-grid { display: grid; grid-template-columns: minmax(360px, 1.25fr) minmax(320px, 1fr); gap: 1rem; }
-@media (max-width: 900px) { .lb-detail-grid { grid-template-columns: 1fr; } }
+.lb-detail-grid { display: grid; grid-template-columns: minmax(300px, 1.25fr) minmax(260px, 1fr); gap: 1rem; }
+/* 面板收窄到 75vw 后，两列在 980px 以下就挤了，提前改成单列 */
+@media (max-width: 980px) { .lb-detail-grid { grid-template-columns: 1fr; } }
 
 .lb-panel { background: #fff; border: 1px solid #eef1f6; border-radius: 10px; padding: 0.8rem 0.9rem; }
 .lb-panel-title { font-size: 0.82rem; font-weight: 700; color: #334155; margin-bottom: 0.55rem; display: flex; align-items: center; gap: 0.4rem; }
