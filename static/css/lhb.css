@@ -11,9 +11,10 @@
 .lb-header-text { flex: 1; min-width: 320px; }
 .lb-header h1 { font-size: 1.9rem; color: #1f2937; margin-bottom: 0.6rem; }
 .lb-toolbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-.lb-toolbar select {
-    padding: 0.55rem 0.8rem; border: 1px solid #dde3ec; border-radius: 8px;
-    font-size: 0.9rem; background: #fff; color: #334155; min-width: 132px;
+/* 交易日只做展示（本页固定看最新一日，不提供切换到历史日） */
+.lb-date-text {
+    padding: 0.5rem 0.8rem; border: 1px solid #dde3ec; border-radius: 8px;
+    font-size: 0.9rem; font-weight: 600; background: #fff; color: #334155;
 }
 .lb-updated { color: #94a3b8; font-size: 0.82rem; }
 .lb-updated.stale { color: #b45309; }

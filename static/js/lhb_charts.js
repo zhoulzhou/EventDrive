@@ -495,7 +495,7 @@ async function loadList(date) {
         LHB.state.stale = !!data.stale;
         LHB.state.notice = data.note || "";
         LHB.state.openTradeId = null;
-        renderDateSelect();
+        renderDateText();
         renderUpdated();
         render();
     } catch (err) {
@@ -506,18 +506,9 @@ async function loadList(date) {
     }
 }
 
-function renderDateSelect() {
-    const sel = document.getElementById("lbDate");
-    const s = LHB.state;
-    if (!s.dates.length) {
-        sel.innerHTML = '<option value="">暂无数据</option>';
-        sel.disabled = true;
-        return;
-    }
-    sel.disabled = false;
-    sel.innerHTML = s.dates.map(function (d) {
-        return '<option value="' + d + '"' + (d === s.date ? " selected" : "") + ">" + d + "</option>";
-    }).join("");
+function renderDateText() {
+    const el = document.getElementById("lbDate");
+    el.textContent = LHB.state.date ? "交易日 " + LHB.state.date : "暂无数据";
 }
 
 function renderUpdated() {
@@ -595,9 +586,6 @@ async function loadSeatDict() {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-    document.getElementById("lbDate").addEventListener("change", function (e) {
-        if (e.target.value) loadList(e.target.value);
-    });
     document.getElementById("lbRefresh").addEventListener("click", doRefresh);
     loadSeatDict();
     loadList(null);
