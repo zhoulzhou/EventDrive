@@ -59,6 +59,12 @@ table.lb-table .lb-card-hint { white-space: nowrap; }
     font-variant-numeric: tabular-nums;
 }
 .lb-chip.active .lb-chip-num { color: #4338ca; }
+/* 0 条的场景也占位（数字照常显示 0），但压成虚线弱化：能看见「今天没有这类结构」，
+   又不会跟有数据的场景抢注意力 */
+.lb-chip.empty { color: #9aa6b4; background: #fbfcfd; border-style: dashed; }
+.lb-chip.empty .lb-chip-num { color: #bcc5d0; }
+.lb-chip.empty:hover { color: #4338ca; border-color: #c7d2fe; }
+.lb-chip.empty.active { background: #eef2ff; border-style: solid; border-color: #a5b4fc; color: #4338ca; }
 .lb-filter-note { font-size: 0.78rem; color: #94a3b8; margin-left: auto; }
 
 /* ---------------- 场景分组（案例对照清单） ---------------- */
@@ -304,4 +310,5 @@ table.lb-table td { padding: 0.6rem 0.7rem; color: #334155; vertical-align: midd
 .lb-dict-styles { font-size: 0.74rem; color: #64748b; margin-top: 0.15rem; line-height: 1.55; }
 
 .lb-empty { padding: 2.5rem 1rem; text-align: center; color: #94a3b8; font-size: 0.9rem; }
+.lb-empty-sub { margin-top: 0.4rem; font-size: 0.78rem; color: #b6c0cd; line-height: 1.6; }
 .lb-empty .btn { margin-top: 0.8rem; }

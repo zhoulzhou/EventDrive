@@ -14,7 +14,7 @@ const LHB = {
         records: [],
         stats: {},
         scenes: [],
-        filter: "all",
+        filter: null,  // 初始为 null，加载完按 defaultSceneKey() 选「优质观察信号」
         updatedAt: "—",
         stale: false,
         notice: "",
@@ -134,21 +134,36 @@ function applyFilter(records) {
     return all.filter(function (r) { return (r.scene || "other") === f; });
 }
 
+function sceneCounts() {
+    return (LHB.state.stats || {}).scene_counts || {};
+}
+
+/* 进场默认落点：清单第一个场景（优质观察信号）。
+ * 当天它没有记录时顺延到第一个有数据的场景 —— 否则一进页面就是空表，
+ * 用户会以为 21:34 那轮没抓到数据。 */
+function defaultSceneKey() {
+    const list = LHB.state.scenes || [];
+    const counts = sceneCounts();
+    for (let i = 0; i < list.length; i++) {
+        if ((counts[list[i].key] || 0) > 0) return list[i].key;
+    }
+    return list.length ? list[0].key : "all";
+}
+
 function renderFilters() {
-    const counts = (LHB.state.stats || {}).scene_counts || {};
+    const counts = sceneCounts();
     const total = (LHB.state.records || []).length;
-    // 只列今天有记录的场景（0 条的按钮点了也是空表，纯噪声）
-    const chips = [{ key: "all", label: "全部", icon: "", count: total }];
-    (LHB.state.scenes || []).forEach(function (s) {
-        const n = counts[s.key] || 0;
-        if (n > 0 || LHB.state.filter === s.key) {
-            chips.push({ key: s.key, label: s.label, icon: s.icon, count: n });
-        }
+    // 场景按钮固定全列（清单顺序，第一个就是「优质观察信号」），0 条也标 0：
+    // 「今天没有这类结构」本身是信息。真正不占位的是下面的表格分节（0 条不画空表块）。
+    const chips = (LHB.state.scenes || []).map(function (s) {
+        return { key: s.key, label: s.label, icon: s.icon, count: counts[s.key] || 0 };
     });
+    if (!chips.length) chips.push({ key: "all", label: "全部", icon: "", count: total });
     const shown = applyFilter(LHB.state.records).length;
     return '<div class="lb-filters">'
         + chips.map(function (c) {
             return '<button class="lb-chip' + (LHB.state.filter === c.key ? " active" : "")
+                + (c.count ? "" : " empty")
                 + '" data-filter="' + escapeHtml(c.key) + '" title="' + escapeHtml(c.label) + '">'
                 + (c.icon ? '<span class="lb-chip-icon">' + escapeHtml(c.icon) + "</span>" : "")
                 + escapeHtml(c.label)
@@ -227,7 +242,13 @@ function sceneBlock(meta, rows) {
 function renderTable() {
     const rows = applyFilter(LHB.state.records);
     if (!rows.length) {
-        return '<div class="lb-table-wrap"><div class="lb-empty">这个场景今日没有记录</div></div>';
+        const f = LHB.state.filter;
+        const m = f && f !== "all" ? sceneMeta(f) : null;
+        return '<div class="lb-table-wrap"><div class="lb-empty">'
+            + (m ? "「" + escapeHtml(m.label) + "」今日没有记录" : "这个交易日没有可展示的记录")
+            + (m && m.structure ? '<div class="lb-empty-sub">结构：' + escapeHtml(m.structure) + "</div>" : "")
+            + (m && m.strategy ? '<div class="lb-empty-sub">处理策略：' + escapeHtml(m.strategy) + "</div>" : "")
+            + "</div></div>";
     }
     const groups = {};
     rows.forEach(function (r) {
@@ -568,7 +589,17 @@ function render() {
     if (m && LHB.state.autoOpen !== m[1]) {
         LHB.state.autoOpen = m[1];
         const tid = decodeURIComponent(m[1]);
-        if (LHB.state.records.some(function (r) { return r.trade_id === tid; })) openDetail(tid);
+        const rec = LHB.state.records.filter(function (r) { return r.trade_id === tid; })[0];
+        if (rec) {
+            // 深链进来的记录可能不在默认场景下，先切到它所属场景再开抽屉，
+            // 否则抽屉里是这条、背后列表里找不到对应的行。
+            const key = rec.scene || "other";
+            if (LHB.state.filter !== key && LHB.state.filter !== "all") {
+                LHB.state.filter = key;
+                render();
+            }
+            openDetail(tid);
+        }
     }
 }
 
@@ -590,6 +621,12 @@ async function loadList(date) {
         LHB.state.stale = !!data.stale;
         LHB.state.notice = data.note || "";
         LHB.state.openTradeId = null;
+        // 首次加载 / 刷新后：当前停留的场景在新数据里没有记录了，就回到默认场景，
+        // 免得刷新完停在一张空表上还以为抓取失败。
+        const counts = (LHB.state.stats || {}).scene_counts || {};
+        if (!LHB.state.filter || (LHB.state.filter !== "all" && !(counts[LHB.state.filter] > 0))) {
+            LHB.state.filter = defaultSceneKey();
+        }
         renderDateText();
         renderUpdated();
         render();
