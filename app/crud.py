@@ -1624,6 +1624,29 @@ def get_lhb_record(db: Session, trade_date: str, trade_id: str):
     )
 
 
+def get_lhb_records_for_dates(db: Session, trade_dates: List[str]) -> List[Any]:
+    """一次取回多个交易日的榜单记录（只为算「连续多日机构净买入」）。
+
+    按日循环查会变成 N 次网络往返（云库单次 0.25~0.9s），这里只发**一次**
+    ``trade_date=in.(…)``；只取三列，避免把整行（含 alerts/reasons 大 JSON）拉回来。
+    """
+    dates = [d for d in trade_dates if d]
+    if not dates:
+        return []
+    if _USE_CLOUD:
+        return _cdb.select_all(
+            T_LHB_RECORD, columns="trade_date,code,inst_net",
+            filters={"trade_date": "in.(" + ",".join(dates) + ")"},
+            order="trade_date.desc", max_rows=8000,
+            context="get_lhb_records_for_dates")
+    return (
+        db.query(models.LhbRecord.trade_date, models.LhbRecord.code,
+                 models.LhbRecord.inst_net)
+        .filter(models.LhbRecord.trade_date.in_(dates))
+        .all()
+    )
+
+
 def get_lhb_seats(db: Session, trade_date: str, trade_id: str) -> List[Any]:
     """某条榜单记录的买卖前五席位（买榜在前，按名次）。"""
     if _USE_CLOUD:

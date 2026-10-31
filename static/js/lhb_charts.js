@@ -13,6 +13,7 @@ const LHB = {
         dates: [],
         records: [],
         stats: {},
+        scenes: [],
         filter: "all",
         updatedAt: "—",
         stale: false,
@@ -105,102 +106,141 @@ function renderStats() {
     }).join("") + "</div>";
 }
 
-/* ---------------- 筛选 ---------------- */
+/* ---------------- 场景分类（docs/龙虎榜案例.txt 的「案例对照清单」） ----------------
+ * 七个场景的顺序、标签、结构描述、处理策略全部由后端 engine.SCENES 下发
+ * （app/utils/lhb.py），前端只负责分组与配色，避免中英文案抄两遍走样。
+ */
 
-const FILTERS = [
-    { key: "all", label: "全部" },
-    { key: "observe", label: "观察池 ≥60" },
-    { key: "alert", label: "有告警" },
-    { key: "lows", label: "低位首板" },
-    { key: "high", label: "高位风险" },
-    { key: "inst_out", label: "机构出逃" },
-    { key: "lhasa", label: "拉萨扎堆" },
-    { key: "3day", label: "三日榜" },
-];
+function sceneMeta(key) {
+    const list = LHB.state.scenes || [];
+    for (let i = 0; i < list.length; i++) {
+        if (list[i].key === key) return list[i];
+    }
+    return { key: key || "other", label: "其他结构", icon: "·", tone: "muted",
+             tag: "", structure: "", strategy: "" };
+}
+
+function scenePill(key) {
+    if (!key) return "";
+    const m = sceneMeta(key);
+    return '<span class="lb-scene-pill tone-' + escapeHtml(m.tone || "muted") + '">'
+        + escapeHtml(m.icon || "") + " " + escapeHtml(m.label) + "</span>";
+}
 
 function applyFilter(records) {
     const f = LHB.state.filter;
-    return (records || []).filter(function (r) {
-        switch (f) {
-            case "observe": return (r.score || 0) >= 60;
-            case "alert": return (r.alerts || []).length > 0;
-            case "lows": return r.position === "低位";
-            case "high": return r.position === "高位";
-            case "inst_out": return r.combo_tag === "机构出逃·游资接盘";
-            case "lhasa": return r.combo_tag === "拉萨扎堆";
-            case "3day": return r.scope === "3day";
-            default: return true;
-        }
-    });
+    const all = records || [];
+    if (!f || f === "all") return all;
+    return all.filter(function (r) { return (r.scene || "other") === f; });
 }
 
 function renderFilters() {
+    const counts = (LHB.state.stats || {}).scene_counts || {};
+    const total = (LHB.state.records || []).length;
+    // 只列今天有记录的场景（0 条的按钮点了也是空表，纯噪声）
+    const chips = [{ key: "all", label: "全部", icon: "", count: total }];
+    (LHB.state.scenes || []).forEach(function (s) {
+        const n = counts[s.key] || 0;
+        if (n > 0 || LHB.state.filter === s.key) {
+            chips.push({ key: s.key, label: s.label, icon: s.icon, count: n });
+        }
+    });
     const shown = applyFilter(LHB.state.records).length;
     return '<div class="lb-filters">'
-        + FILTERS.map(function (f) {
-            return '<button class="lb-chip' + (LHB.state.filter === f.key ? " active" : "")
-                + '" data-filter="' + f.key + '">' + escapeHtml(f.label) + "</button>";
+        + chips.map(function (c) {
+            return '<button class="lb-chip' + (LHB.state.filter === c.key ? " active" : "")
+                + '" data-filter="' + escapeHtml(c.key) + '" title="' + escapeHtml(c.label) + '">'
+                + (c.icon ? '<span class="lb-chip-icon">' + escapeHtml(c.icon) + "</span>" : "")
+                + escapeHtml(c.label)
+                + '<span class="lb-chip-num">' + c.count + "</span></button>";
         }).join("")
-        + '<span class="lb-filter-note">当前显示 ' + shown + " / "
-        + (LHB.state.records || []).length + " 条</span></div>";
+        + '<span class="lb-filter-note">当前显示 ' + shown + " / " + total + " 条</span></div>";
 }
 
-/* ---------------- 榜单表格 ---------------- */
+/* ---------------- 榜单表格（按场景分组） ---------------- */
+
+const TABLE_HEAD = '<table class="lb-table"><thead><tr>'
+    + "<th>股票</th><th>涨跌幅</th><th>上榜原因</th>"
+    + '<th class="num">龙虎净额</th><th class="num">成交占比</th>'
+    + '<th class="num">买一集中度</th><th>席位构成</th><th>位置</th>'
+    + '<th class="num">分数</th><th>告警</th></tr></thead><tbody>';
+
+function rowHtml(r) {
+    const tone = GRADE_TONE[r.grade] || "neutral";
+    const scopeBadge = r.scope === "3day"
+        ? '<span class="lb-badge three">三日榜</span>'
+        : '<span class="lb-badge day">单日榜</span>';
+    const posBadge = r.position
+        ? '<span class="lb-badge ' + (r.position === "高位" ? "pos-high" : (r.position === "低位" ? "pos-low" : "pos"))
+          + '">' + escapeHtml(r.position) + "</span>"
+        : '<span class="lb-badge pos">—</span>';
+    const posTip = r.pos_pct === null || r.pos_pct === undefined
+        ? "缺日线数据" : ("近20日 " + r.pos_pct + "% · 连板 " + (r.streak || 0));
+    const alerts = (r.alerts || []);
+    const alertHtml = alerts.length
+        ? alerts.slice(0, 3).map(function (a) {
+            return lbTag(a.tag, a.level === "danger" ? "danger" : (a.level === "warn" ? "warn" : "info"));
+        }).join("") + (alerts.length > 3 ? '<span class="lb-alert-dots">+' + (alerts.length - 3) + "</span>" : "")
+        : '<span class="lb-flat" style="font-size:0.74rem">—</span>';
+    const tagTone = (r.combo_tag || "").indexOf("出逃") >= 0 || r.combo_tag === "拉萨扎堆"
+        ? "danger" : (r.combo_tag === "机构+游资合力" ? "good" : "");
+    const instLine = (r.inst_net === null || r.inst_net === undefined || !r.inst_net) ? ""
+        : '<div class="lb-card-hint">机构 ' + lbSignedMoney(r.inst_net) + "</div>";
+
+    return '<tr class="lb-row' + (LHB.state.openTradeId === r.trade_id ? " open" : "")
+        + '" data-tid="' + escapeHtml(r.trade_id) + '">'
+        + "<td><span class=\"lb-name\">" + escapeHtml(r.name) + "</span>"
+        + '<span class="lb-code">' + escapeHtml(r.code) + "</span></td>"
+        + "<td>" + lbUpDown(r.change_rate) + "</td>"
+        + '<td><div class="lb-cause">' + scopeBadge + " " + escapeHtml(r.explanation || "") + "</div></td>"
+        + '<td class="num"><span style="font-weight:' + (r.net_amt >= 0 ? 600 : 500) + ';color:'
+        + (r.net_amt >= 0 ? "#ef4444" : "#22c55e") + '">' + lbSignedMoney(r.net_amt) + "</span>"
+        + instLine + "</td>"
+        + '<td class="num">' + lbPct(r.deal_ratio) + "</td>"
+        + '<td class="num">' + lbPct(r.buy1_ratio, 0) + "</td>"
+        + "<td>" + lbTag(r.combo_tag || "—", tagTone) + "</td>"
+        + '<td title="' + escapeHtml(posTip) + '">' + posBadge + "</td>"
+        + '<td class="num"><span class="lb-score" style="color:' + lbTone(tone) + '">'
+        + (r.score === null ? "—" : r.score)
+        + '</span><div><span class="lb-grade ' + tone + '">' + escapeHtml(r.grade || "") + "</span></div></td>"
+        + "<td>" + alertHtml + "</td>"
+        + "</tr>";
+}
+
+function sceneBlock(meta, rows) {
+    const tone = meta.tone || "muted";
+    return '<section class="lb-scene tone-' + escapeHtml(tone) + '" data-scene="' + escapeHtml(meta.key) + '">'
+        + '<div class="lb-scene-head">'
+        + '<div class="lb-scene-title">'
+        + '<span class="lb-scene-icon">' + escapeHtml(meta.icon || "·") + "</span>"
+        + escapeHtml(meta.label)
+        + '<span class="lb-scene-count">' + rows.length + " 条</span>"
+        + (meta.tag ? '<span class="lb-scene-tag">' + escapeHtml(meta.tag) + "</span>" : "")
+        + "</div>"
+        + (meta.structure ? '<div class="lb-scene-row">结构：' + escapeHtml(meta.structure) + "</div>" : "")
+        + (meta.strategy ? '<div class="lb-scene-row strategy">处理策略：' + escapeHtml(meta.strategy) + "</div>" : "")
+        + "</div>"
+        + '<div class="lb-table-wrap">' + TABLE_HEAD + rows.map(rowHtml).join("") + "</tbody></table></div>"
+        + "</section>";
+}
 
 function renderTable() {
     const rows = applyFilter(LHB.state.records);
     if (!rows.length) {
-        return '<div class="lb-table-wrap"><div class="lb-empty">这个筛选下没有记录</div></div>';
+        return '<div class="lb-table-wrap"><div class="lb-empty">这个场景今日没有记录</div></div>';
     }
-    const head = '<div class="lb-table-wrap"><table class="lb-table"><thead><tr>'
-        + "<th>股票</th><th>涨跌幅</th><th>上榜原因</th>"
-        + '<th class="num">龙虎净额</th><th class="num">成交占比</th>'
-        + '<th class="num">买一集中度</th><th>席位构成</th><th>位置</th>'
-        + '<th class="num">分数</th><th>告警</th></tr></thead><tbody>';
-
-    const body = rows.map(function (r) {
-        const tone = GRADE_TONE[r.grade] || "neutral";
-        const scopeBadge = r.scope === "3day"
-            ? '<span class="lb-badge three">三日榜</span>'
-            : '<span class="lb-badge day">单日榜</span>';
-        const posBadge = r.position
-            ? '<span class="lb-badge ' + (r.position === "高位" ? "pos-high" : (r.position === "低位" ? "pos-low" : "pos"))
-              + '">' + escapeHtml(r.position) + "</span>"
-            : '<span class="lb-badge pos">—</span>';
-        const posTip = r.pos_pct === null || r.pos_pct === undefined
-            ? "缺日线数据" : ("近20日 " + r.pos_pct + "% · 连板 " + (r.streak || 0));
-        const alerts = (r.alerts || []);
-        const alertHtml = alerts.length
-            ? alerts.slice(0, 3).map(function (a) {
-                return lbTag(a.tag, a.level === "danger" ? "danger" : (a.level === "warn" ? "warn" : "info"));
-            }).join("") + (alerts.length > 3 ? '<span class="lb-alert-dots">+' + (alerts.length - 3) + "</span>" : "")
-            : '<span class="lb-flat" style="font-size:0.74rem">—</span>';
-        const tagTone = (r.combo_tag || "").indexOf("出逃") >= 0 || r.combo_tag === "拉萨扎堆"
-            ? "danger" : (r.combo_tag === "机构+游资合力" ? "good" : "");
-        const instLine = (r.inst_net === null || r.inst_net === undefined || !r.inst_net) ? ""
-            : '<div class="lb-card-hint">机构 ' + lbSignedMoney(r.inst_net) + "</div>";
-
-        return '<tr class="lb-row' + (LHB.state.openTradeId === r.trade_id ? " open" : "")
-            + '" data-tid="' + escapeHtml(r.trade_id) + '">'
-            + "<td><span class=\"lb-name\">" + escapeHtml(r.name) + "</span>"
-            + '<span class="lb-code">' + escapeHtml(r.code) + "</span></td>"
-            + "<td>" + lbUpDown(r.change_rate) + "</td>"
-            + '<td><div class="lb-cause">' + scopeBadge + " " + escapeHtml(r.explanation || "") + "</div></td>"
-            + '<td class="num"><span style="font-weight:' + (r.net_amt >= 0 ? 600 : 500) + ';color:'
-            + (r.net_amt >= 0 ? "#ef4444" : "#22c55e") + '">' + lbSignedMoney(r.net_amt) + "</span>"
-            + instLine + "</td>"
-            + '<td class="num">' + lbPct(r.deal_ratio) + "</td>"
-            + '<td class="num">' + lbPct(r.buy1_ratio, 0) + "</td>"
-            + "<td>" + lbTag(r.combo_tag || "—", tagTone) + "</td>"
-            + '<td title="' + escapeHtml(posTip) + '">' + posBadge + "</td>"
-            + '<td class="num"><span class="lb-score" style="color:' + lbTone(tone) + '">'
-            + (r.score === null ? "—" : r.score)
-            + '</span><div><span class="lb-grade ' + tone + '">' + escapeHtml(r.grade || "") + "</span></div></td>"
-            + "<td>" + alertHtml + "</td>"
-            + "</tr>";
-    }).join("");
-
-    return head + body + "</tbody></table></div>";
+    const groups = {};
+    rows.forEach(function (r) {
+        const k = r.scene || "other";
+        (groups[k] = groups[k] || []).push(r);
+    });
+    // 场景顺序以后端下发的清单为准（= 文档顺序）；出现未知 key 时补在末尾
+    const order = (LHB.state.scenes || []).map(function (s) { return s.key; })
+        .filter(function (k) { return groups[k] && groups[k].length; });
+    Object.keys(groups).forEach(function (k) {
+        if (order.indexOf(k) < 0) order.push(k);
+    });
+    return order.map(function (k) { return sceneBlock(sceneMeta(k), groups[k]); }).join("");
 }
 
 /* ---------------- 席位明细 ---------------- */
@@ -258,10 +298,12 @@ function detailHtml(d) {
     return '<div class="lb-detail">'
         + '<div class="lb-detail-head">'
         + '<span class="lb-detail-title">' + escapeHtml(r.name) + " " + escapeHtml(r.code) + "</span>"
+        + scenePill(r.scene)
         + '<span class="lb-detail-sub">' + escapeHtml(r.explanation || "") + "</span>"
         + '<span class="lb-detail-sub">收盘 ' + (r.close === null ? "—" : Number(r.close).toFixed(2))
         + " · 换手 " + lbPct(r.turnover_rate) + " · 成交额 " + lbMoney(r.accum_amount, 1)
-        + " · 龙虎占比 " + lbPct(r.deal_ratio) + "</span>"
+        + " · 龙虎占比 " + lbPct(r.deal_ratio)
+        + (r.inst_streak >= 2 ? " · 机构连买 " + r.inst_streak + " 日" : "") + "</span>"
         + '<span class="lb-detail-sub">' + (r.combo_note
             ? "组合解读（" + escapeHtml(r.combo_tag || "") + "）：" + escapeHtml(r.combo_note) : "")
         + "</span>"
@@ -542,6 +584,7 @@ async function loadList(date) {
         LHB.state.date = data.date;
         LHB.state.dates = data.dates || [];
         LHB.state.records = data.records || [];
+        LHB.state.scenes = data.scenes || [];
         LHB.state.stats = data.stats || {};
         LHB.state.updatedAt = data.updated_at || "—";
         LHB.state.stale = !!data.stale;

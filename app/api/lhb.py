@@ -153,7 +153,51 @@ def _stats_of(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "three_day": sum(1 for r in records if r.get("scope") == "3day"),
         "inst_out": sum(1 for r in records if r.get("combo_tag") == "机构出逃·游资接盘"),
         "observe": sum(1 for r in records if (r.get("score") or 0) >= 60),
+        "scene_counts": engine.scene_counts(records),
     }
+
+
+# 算「连续多日机构净买入」要往前看几个交易日：判定门槛是 3 日，多留两日余量
+SCENE_STREAK_DAYS = 5
+
+
+def _attach_scenes(db: Session, records: List[Dict[str, Any]],
+                   dates: List[str], target: str) -> None:
+    """给每条记录打上「案例对照清单」场景标签（scene / inst_streak）。
+
+    「连续多日机构 + 北向加仓 = 趋势机构票」看单日记录判断不出来，得回看几个交易日。
+    这里只发**一次**查询拿回整窗的记录（按日循环查会变成 5 次网络往返），
+    某日没上榜或当日机构净卖出就断链。
+    """
+    try:
+        start = dates.index(target)
+    except ValueError:
+        start = 0
+    window = [d for d in dates[start:start + SCENE_STREAK_DAYS]] or [target]
+
+    day_inst: Dict[str, Dict[str, float]] = {}
+    if len(window) > 1:
+        for row in crud.get_lhb_records_for_dates(db, window):
+            code = _field(row, "code")
+            day = _field(row, "trade_date")
+            try:
+                val = float(_field(row, "inst_net") or 0)
+            except (TypeError, ValueError):
+                val = 0.0
+            per_day = day_inst.setdefault(code, {})
+            if val > per_day.get(day, float("-inf")):
+                per_day[day] = val
+
+    for rec in records:
+        per_day = day_inst.get(rec.get("code")) or {}
+        streak = 0
+        for day in window:
+            if (per_day.get(day) or 0) > 0:
+                streak += 1
+            else:
+                break
+        rec["inst_streak"] = streak
+        rec["scene"] = engine.scene_of(rec, streak)
 
 
 # ---------------------------------------------------------------- 读取
@@ -177,6 +221,7 @@ def get_lhb(date: Optional[str] = None,
         rows = crud.get_lhb_records(db, target, min_score=min_score,
                                     grade=grade, only_alert=only_alert)
         records = [_record_payload(r) for r in rows]
+        _attach_scenes(db, records, dates, target)
         written = crud.get_lhb_last_updated(db)
         age = (_utcnow() - written).total_seconds() / 3600 if written else None
         return {
@@ -184,6 +229,7 @@ def get_lhb(date: Optional[str] = None,
             "date": target,
             "dates": dates,
             "records": records,
+            "scenes": engine.SCENES,
             "stats": _stats_of(records),
             "filters": {"min_score": min_score, "grade": grade,
                         "only_alert": only_alert},
@@ -216,11 +262,24 @@ def get_lhb_detail(date: str, trade_id: str,
                 "explanation": _field(h, "explanation"),
                 "change_rate": _field(h, "change_rate"),
                 "net_amt": _field(h, "net_amt"),
+                "inst_net": _field(h, "inst_net"),
                 "deal_ratio": _field(h, "deal_ratio"),
                 "score": _field(h, "score"),
                 "grade": _field(h, "grade"),
                 "combo_tag": (_json(_field(h, "combo_tags"), [None]) or [None])[0],
             })
+        # 场景要算「机构连续净买入天数」，这里直接用上面已经查回来的历史，
+        # 不再为抽屉单独打一次库（云库单次往返 0.25~0.9s）
+        streak = 0
+        for h in sorted(history, key=lambda x: x["trade_date"] or "", reverse=True):
+            if (h["trade_date"] or "") > (record["trade_date"] or ""):
+                continue
+            if (h.get("inst_net") or 0) > 0:
+                streak += 1
+            else:
+                break
+        record["inst_streak"] = streak
+        record["scene"] = engine.scene_of(record, streak)
         # 买榜 / 卖榜拆开给前端，画「买五卖五对照图」时不必再分拣
         buy = [s for s in seats if s["flag"] == "buy"]
         sell = [s for s in seats if s["flag"] == "sell"]

@@ -53,7 +53,49 @@ table.lb-table .lb-card-hint { white-space: nowrap; }
 }
 .lb-chip:hover { border-color: #c7d2fe; color: #4338ca; }
 .lb-chip.active { background: #eef2ff; border-color: #a5b4fc; color: #4338ca; font-weight: 600; }
+.lb-chip-icon { margin-right: 0.28rem; }
+.lb-chip-num {
+    margin-left: 0.4rem; font-size: 0.72rem; color: #94a3b8;
+    font-variant-numeric: tabular-nums;
+}
+.lb-chip.active .lb-chip-num { color: #4338ca; }
 .lb-filter-note { font-size: 0.78rem; color: #94a3b8; margin-left: auto; }
+
+/* ---------------- 场景分组（案例对照清单） ---------------- */
+.lb-scene { margin-bottom: 1.4rem; }
+.lb-scene:last-child { margin-bottom: 0.2rem; }
+.lb-scene-head {
+    border-left: 3px solid #cbd5e1; padding: 0.5rem 0 0.5rem 0.75rem; margin-bottom: 0.55rem;
+}
+.lb-scene.tone-good .lb-scene-head { border-left-color: #22c55e; }
+.lb-scene.tone-info .lb-scene-head { border-left-color: #3b82f6; }
+.lb-scene.tone-warn .lb-scene-head { border-left-color: #f59e0b; }
+.lb-scene.tone-danger .lb-scene-head { border-left-color: #ef4444; }
+.lb-scene.tone-muted .lb-scene-head { border-left-color: #cbd5e1; }
+.lb-scene-title {
+    display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
+    font-size: 0.95rem; font-weight: 700; color: #1f2937;
+}
+.lb-scene-icon { font-size: 0.95rem; }
+.lb-scene-count {
+    font-size: 0.72rem; font-weight: 500; color: #64748b;
+    background: #f1f5f9; border-radius: 999px; padding: 0.05rem 0.45rem;
+}
+.lb-scene-tag {
+    font-size: 0.72rem; font-weight: 500; color: #475569;
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+    padding: 0.05rem 0.4rem;
+}
+.lb-scene-row { font-size: 0.76rem; color: #94a3b8; margin-top: 0.22rem; line-height: 1.5; }
+.lb-scene-row.strategy { color: #64748b; }
+.lb-scene-pill {
+    font-size: 0.74rem; border-radius: 999px; padding: 0.1rem 0.5rem;
+    background: #f1f5f9; color: #475569; white-space: nowrap;
+}
+.lb-scene-pill.tone-good { background: rgba(34,197,94,0.14); color: #15803d; }
+.lb-scene-pill.tone-info { background: rgba(59,130,246,0.14); color: #1d4ed8; }
+.lb-scene-pill.tone-warn { background: rgba(245,158,11,0.16); color: #b45309; }
+.lb-scene-pill.tone-danger { background: rgba(239,68,68,0.14); color: #b91c1c; }
 
 /* ---------------- 榜单表格 ---------------- */
 .lb-table-wrap { background: #fff; border: 1px solid #eef1f6; border-radius: 12px; overflow: auto; }

@@ -865,6 +865,114 @@ def one_row_per_stock(records: List[dict]) -> List[dict]:
     return list(best.values())
 
 
+# ---------------------------------------------------------------- 场景分类
+#
+# 口径：``docs/龙虎榜案例.txt`` 末尾那张「案例对照清单」的七类（系统标签 → 场景 + 处理策略），
+# 顺序、文案、处理策略都按文档原样搬过来，只额外补了一个兜底桶 other。
+# 判定是**单桶互斥**的：一只股票当天只能落在一个场景里，优先级按「危害大的先落位」——
+# 拉萨扎堆/机构出逃最严重，其次高位诱多、一日游，再往下才是趋势与机会类。
+SCENES: List[Dict[str, Any]] = [
+    {"key": "watch", "label": "优质观察信号", "icon": "✅", "tone": "good",
+     "tag": "机构+游资合力",
+     "structure": "低位主线、机构与接力游资同向买入，买盘分散、买一不独大",
+     "strategy": "加入观察池，等盘面确认，不直接买入"},
+    {"key": "relay", "label": "中性换手", "icon": "⚖️", "tone": "info",
+     "tag": "游资轮换接力",
+     "structure": "中位连板，老游资卖出、新游资接力，机构不集中砸盘",
+     "strategy": "情绪向上才小仓位参与，退潮期放弃"},
+    {"key": "trap", "label": "高危诱多", "icon": "⚠️", "tone": "warn",
+     "tag": "高位游资诱多",
+     "structure": "高位 + 兑现型游资大单买入，或三日榜净额好看",
+     "strategy": "回避，持仓分批止盈"},
+    {"key": "oneday", "label": "一日游套利", "icon": "⚠️", "tone": "warn",
+     "tag": "一日游席位主导",
+     "structure": "佛山系/成都南北环等一日游席位包揽买榜，独立题材无板块效应",
+     "strategy": "直接放弃接力"},
+    {"key": "knife", "label": "飞刀结构", "icon": "❌", "tone": "danger",
+     "tag": "机构出逃·游资接盘",
+     "structure": "卖榜机构大额净卖出，买榜是短线游资接筹码",
+     "strategy": "减仓 / 回避"},
+    {"key": "retail", "label": "散户接盘", "icon": "❌", "tone": "danger",
+     "tag": "拉萨扎堆",
+     "structure": "多个拉萨席位包揽买榜，筹码分散、抛压持续",
+     "strategy": "拉黑回避"},
+    {"key": "trend", "label": "波段趋势", "icon": "📈", "tone": "good",
+     "tag": "趋势机构票",
+     "structure": "连续多个交易日机构（含北向）净买入，龙虎占比不高",
+     "strategy": "波段跟踪，不短线打板"},
+    {"key": "other", "label": "其他结构", "icon": "·", "tone": "muted",
+     "tag": "不在清单内",
+     "structure": "不满足上面七类的形态（如高位纯机构、缺位置数据等）",
+     "strategy": "仅作参考，不构成明确信号"},
+]
+
+SCENE_BY_KEY = {s["key"]: s for s in SCENES}
+
+
+def scene_of(record: Dict[str, Any], inst_streak: int = 0) -> str:
+    """把一条记录归入「案例对照清单」里的某个场景，返回场景 key。
+
+    ``inst_streak`` 是该股（含当日）连续上榜且机构净买入的天数，用来识别
+    「连续多日机构 + 北向加仓」的趋势机构票 —— 单日记录本身看不出这件事。
+    """
+    combo = (record.get("combo_tag") or "").strip()
+    tags = {a.get("tag") for a in (record.get("alerts") or []) if isinstance(a, dict)}
+    pos = record.get("position")
+    scope = record.get("scope")
+
+    # ❌ 最严重：散户接盘 / 飞刀结构，先落位，避免被后面的「合力」类覆盖
+    if combo == "拉萨扎堆" or "拉萨扎堆" in tags:
+        return "retail"
+    if combo == "机构出逃·游资接盘" or "机构出逃·游资接盘" in tags:
+        return "knife"
+
+    # ⚠️ 高位默认按「兑现视角」读：吃到兑现型游资、三日榜、纯游资结构的都算诱多
+    if pos == "高位" and (
+        "高位游资诱多" in tags
+        or scope == "3day"
+        or combo in ("纯游资", "游资+北向", "游资出逃·机构接盘")
+    ):
+        return "trap"
+
+    # ⚠️ 一日游席位主导（买榜扎堆一日游）
+    if "一日游席位主导" in tags:
+        return "oneday"
+
+    # 📈 连续 3 日以上机构净买入且不是高位 → 趋势机构票（文档：适合波段，重点看连续多日）
+    if inst_streak >= 3 and pos != "高位":
+        return "trend"
+
+    # ⚠️ 剩下的高位（高位 + 机构/北向但没游资）文档也是「默认预警、兑现视角」
+    if pos == "高位":
+        return "trap"
+
+    # ✅ 低位 + 机构与游资（或北向）同向买入 → 优质观察信号
+    if pos == "低位" and combo in ("机构+游资合力", "机构+北向"):
+        return "watch"
+
+    # ⚖️ 换手接力结构：中位连板一律归这一档（买卖双方都有资金，不是一边倒）；
+    # 低位里「老游资卖出、机构/新资金接盘」以及纯游资纯北向，属于同一族形态
+    if pos == "中位":
+        return "relay"
+    if pos == "低位" and combo in (
+        "游资出逃·机构接盘", "游资+北向", "纯游资", "纯北向", "其他"
+    ):
+        return "relay"
+
+    # 位置未知（缺日线）或低位纯机构单日：位置＞席位，说不清就不硬套
+    return "other"
+
+
+def scene_counts(records: List[Dict[str, Any]]) -> Dict[str, int]:
+    """按场景统计条数（前端筛选按钮上的数字）。"""
+    out = {s["key"]: 0 for s in SCENES}
+    for r in records:
+        key = r.get("scene") or "other"
+        if key in out:
+            out[key] += 1
+    return out
+
+
 def _day_stats(raw: List[dict], records: List[dict]) -> Dict[str, Any]:
     """当日概览（按记录聚合，同时给出个股去重口径）。"""
     codes = {r["code"] for r in records}
