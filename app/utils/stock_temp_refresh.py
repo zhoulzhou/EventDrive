@@ -30,6 +30,9 @@ SPARSE_HISTORY_ROWS = 300
 
 # 直接调用 backfill_history() 且不传窗口时的默认值（只补最近几天，请求量小）。
 # 页面按钮走 POST /api/stock-temp/backfill，会显式传窗口（默认 60 个交易日 / 24 个月）。
+# 交易所日频三项（成交额 / 换手率 / 流通市值）：快照不允许倒退的键（见 refresh_snapshot）
+_EXCHANGE_KEYS = ("turnover_amt", "turnover_rate", "total_float_mcap")
+
 INCREMENTAL_WINDOWS = {"exchange_days": 5, "industry_months": 2}
 
 # 手动「补齐历史」的默认窗口
@@ -301,6 +304,19 @@ def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str],
             if item.get("error"):
                 errors[key] = item["error"]
                 continue
+            # 交易所日频三项：新取到的日期若**比库里旧**，说明拿到的是「退回若干天」的结果
+            # （深交所间歇性连不上时会退到前一天，极端情况退到一周前）。
+            # 这种旧值不能覆盖快照，否则页面会突然倒退 —— 保留库里更近的那次读数。
+            # 历史表由 backfill 补洞，不受这里影响。
+            if key in _EXCHANGE_KEYS:
+                prev_as_of = (prev.get(key) or {}).get("as_of")
+                new_as_of = item.get("as_of")
+                if prev_as_of and new_as_of and str(new_as_of) < str(prev_as_of):
+                    errors[key] = (
+                        f"取到 {new_as_of} 早于库内 {prev_as_of}（疑似交易所源缺当日数据），"
+                        "保留原读数"
+                    )
+                    continue
             rec = {
                 "key": key,
                 "value": item.get("value"),

@@ -441,3 +441,70 @@ def backfill_stock_temp(
     except Exception as e:
         logger.error("股票指标回溯失败: %s", e, exc_info=True)
         return {"status": "error", "message": str(e)}
+
+
+@router.get("/stock-temp/market-probe")
+def market_probe(
+    days: int = 8,
+    auth: bool = Depends(require_auth),
+):
+    """诊断用：逐日探测两市「每日概况 / 市场总貌」能否取到，定位成交额停更原因。
+
+    `_market_day()` 需要**上交所与深交所两侧同时成功**才算一天，任一侧失败/未发布
+    就静默跳过 —— 于是页面会一直停在最后一次两边都成功的日期，看不出到底哪边断了。
+    本接口把逐日、逐交易所的结果摊开返回（只读，不写库）。
+
+    返回每一项：
+      - day：交易日
+      - sse / szse：{'ok': bool, 'error': str, 'turnover': 亿元, 'float_mcap': 亿元}
+      - merged：合并后是否可用（两侧都拿到才算 True）
+    """
+    from datetime import date as _date, timedelta as _td
+
+    days = max(1, min(int(days or 8), 30))
+    # 交易日候选：退化为工作日（探针不需要精确日历，多给几天容错）
+    cand: list[str] = []
+    cur = _date.today()
+    while len(cand) < days:
+        if cur.weekday() < 5:
+            cand.append(cur.strftime("%Y-%m-%d"))
+        cur -= _td(days=1)
+
+    results = []
+    for day in cand:
+        row: Dict[str, Any] = {"day": day}
+        for side, fn in (("sse", st._sse_day), ("szse", st._szse_day)):
+            try:
+                rec = fn(day) or {}
+                if not rec:
+                    row[side] = {"ok": False, "error": "空结果（未发布或无该日数据）"}
+                elif rec.get("turnover") is None:
+                    row[side] = {"ok": False, "error": f"成交金额解析为空: {rec}"[:200]}
+                else:
+                    row[side] = {
+                        "ok": True,
+                        "turnover": rec.get("turnover"),
+                        "float_mcap": rec.get("float_mcap"),
+                        "turnover_rate": rec.get("turnover_rate"),
+                    }
+            except Exception as e:  # noqa: BLE001 - 探针要把异常原样带出来
+                row[side] = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:180]}"}
+        row["merged"] = bool(row.get("sse", {}).get("ok") and row.get("szse", {}).get("ok"))
+        results.append(row)
+
+    # 真正走一遍刷新链路用的那条路，看它最终挑中哪一天（这是页面读数的来源）
+    flow: Dict[str, Any] = {}
+    try:
+        flow["candidates"] = st.trading_days_ago(12)
+    except Exception as e:  # noqa: BLE001
+        flow["candidates_error"] = f"{type(e).__name__}: {str(e)[:160]}"
+    try:
+        t_series, r_series, m_series, latest = st.fetch_market_series(0)
+        flow["latest_as_of"] = (latest or {}).get("as_of")
+        flow["latest_turnover"] = (latest or {}).get("turnover")
+        flow["turnover_tail"] = t_series[-3:]
+        flow["rate_tail"] = r_series[-3:]
+        flow["mcap_tail"] = m_series[-3:]
+    except Exception as e:  # noqa: BLE001
+        flow["fetch_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    return {"status": "ok", "checked": len(results), "results": results, "flow": flow}

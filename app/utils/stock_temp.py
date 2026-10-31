@@ -303,7 +303,7 @@ INDICATORS: List[Dict[str, Any]] = [
         "key": "turnover_rate",
         "group": GROUP_SENTIMENT,
         "name": "全A换手率",
-        "subtitle": "两市成交额 ÷ 两市流通市值",
+        "subtitle": "两市成交量 ÷ 两市流通股本",
         "unit": "%",
         "digits": 2,
         "temp_layer": GROUP_SENTIMENT,
@@ -312,14 +312,17 @@ INDICATORS: List[Dict[str, Any]] = [
         "freq": "日频",
         "judge": "value",
         "meaning": (
-            "全市场换手率 = 两市股票成交金额 ÷ 两市股票流通市值。"
-            "它把「成交额随市值自然变大」的因素剔除掉，是比成交额更干净的情绪度量。"
+            "全市场换手率 = 两市股票成交量 ÷ 两市股票流通股本（股数法，与东方财富、同花顺等"
+            "行情软件同口径）。它把「成交额随市值自然变大」的因素剔除掉，是比成交额更干净的情绪度量。"
+            "详情里另附一个参考值「成交额 ÷ 流通市值」（交易所流通换手率口径），同一交易日会比"
+            "本读数高约 25%~27% —— 那是金额法，按价格加权，高价股换手更活跃所以整体偏高。"
         ),
         "guide": (
             "方法论上用十年分位（不看绝对值，绝对水平会随市场结构漂移）。"
             "本页同时给出「读数区间档」与「十年分位」：分位始终按**现有样本**计算（不设最小期数），"
-            "样本越多越准，详情里会标注实际期数。经验区间：<1% 冰点 / 1~1.5% 偏冷 / "
-            "1.5~2.5% 中性 / 2.5~4% 偏热 / >4% 亢奋。"
+            "样本越多越准，详情里会标注实际期数。经验区间（股数法）：<1% 冰点 / 1~1.5% 偏冷 / "
+            "1.5~2.5% 中性 / 2.5~4% 偏热 / >4% 亢奋。对照行情软件时用本读数，"
+            "不要用详情里的「参考·成交额÷流通市值」。"
         ),
         "warning": "日频历史由本页逐日积累（回填窗口有限），分位窗口会在详情里标注实际样本量。",
         "bands": [
@@ -1477,10 +1480,34 @@ def trading_days_ago(n: int) -> List[str]:
     return days[-n:]
 
 
+# 交易所（尤其深交所 www.szse.cn）在沙箱出口是**间歇性**可用的：
+# 2026-10-31 实测同一时刻连打 6 天，深交所约一半请求直接 ConnectionError，
+# 而上交所几乎每次都通。原先没有重试，一次失败就退回前一天 —— 于是
+# 「最新可用交易日」在 10-23 / 10-28 / 10-30 之间来回跳，页面上的成交额与
+# 换手率经常停在几天前（10-31 那次就停在 10-23，和行情页面对不上）。
+# 单侧重试 4 次后成功率 ≈ 1-0.5^4 = 94%；仍失败才退回前一天。
+_EXCHANGE_RETRY = 4
+_EXCHANGE_RETRY_DELAY = 0.8  # 秒
+
+
+def _with_retry(fn, day: str, label: str) -> Dict[str, Optional[float]]:
+    """调用交易所单日接口，遇到网络类异常重试若干次；返回最后一次结果（可空）。"""
+    last_err: Optional[Exception] = None
+    for i in range(_EXCHANGE_RETRY):
+        try:
+            return fn(day) or {}
+        except Exception as e:  # noqa: BLE001 - 网络抖动/超时都重试
+            last_err = e
+            if i < _EXCHANGE_RETRY - 1:
+                time.sleep(_EXCHANGE_RETRY_DELAY * (i + 1))
+    logger.warning("%s %s 重试 %d 次仍失败: %s", label, day, _EXCHANGE_RETRY, last_err)
+    return {}
+
+
 def _market_day(day: str) -> Optional[Dict[str, float]]:
     """取某一交易日的两市成交额与流通市值。任一侧缺失返回 None。"""
-    sse = _sse_day(day)
-    szse = _szse_day(day)
+    sse = _with_retry(_sse_day, day, "上交所")
+    szse = _with_retry(_szse_day, day, "深交所")
     if not sse or not szse:
         return None
     if sse.get("turnover") is None or szse.get("turnover") is None:
@@ -1542,6 +1569,85 @@ def fetch_market_series(days: int = 0) -> Tuple[List[Dict[str, Any]], List[Dict[
     rate_series = sorted(rate_series, key=lambda x: x["as_of"])
     mcap_series = sorted(mcap_series, key=lambda x: x["as_of"])
     return turnover_series, rate_series, mcap_series, latest
+
+
+def _float_shares_yi() -> float:
+    """全A流通股本（亿股）= Σ(流通市值 ÷ 最新价)，取自腾讯全A个股快照。
+
+    快照本来就要为「破净率 / 市场宽度 / 沪深300 PB」抓一次（`_tx_snapshot` 轮内缓存），
+    这里复用同一次请求，不额外增加上游压力。
+    """
+    df = _tx_frame()
+    cols = set(df.columns)
+    if not {"ltsz", "zxj"} <= cols:
+        raise RuntimeError(f"腾讯快照缺少流通市值/最新价列: {sorted(cols)}")
+    has_type = "stock_type" in cols
+    shares = 0.0
+    n = 0
+    for st_, mcap, px in zip(
+        df["stock_type"].astype(str) if has_type else [""] * len(df),
+        df["ltsz"],
+        df["zxj"],
+    ):
+        if has_type and not str(st_).startswith("GP"):
+            continue
+        m, p = _num(mcap), _num(px)
+        if not m or not p or p <= 0:
+            continue
+        shares += m / p
+        n += 1
+    if n < 3000 or shares <= 0:
+        raise RuntimeError(f"流通股本样本异常（{n} 只 / {shares:.0f} 亿股）")
+    return shares
+
+
+def fetch_turnover_rate_shares(days: int = 0) -> Dict[str, Any]:
+    """全A换手率 —— **股数法**：两市成交量(股) ÷ 两市流通股本(股)。
+
+    ⚠️ 口径变更（2026-10-31）：原先是**金额法**
+    （成交额 ÷ 流通市值，交易所「流通换手率」的合成），同一天读数比行情软件高约 27%：
+    10-30 金额法 1.92%、股数法 1.51%（东方财富/同花顺等显示的 1.52% 就是股数法）。
+    原因是成交额按**价格**加权，而高价股换手更活跃，把资金法算出的换手率整体抬高了。
+    换手率的通行定义是「成交量 ÷ 流通股本」，且本指标的档位区间
+    （<1 冰点 / 1~1.5 偏冷 / 1.5~2.5 中性 / 2.5~4 偏热 / >4 亢奋）本来就是按这个口径定的，
+    所以改成股数法，读数才能和外面看到的对上。
+
+    数据来源：
+      - 成交量：新浪指数日线（sh000001 上证综指 = 沪市全部股票，sz399106 深证综指 = 深市全部股票）
+      - 流通股本：腾讯全A个股快照 Σ(流通市值 ÷ 最新价)
+    两步都不需要逐日打交易所（深交所接口在沙箱里约一半请求会 ConnectionError）。
+    """
+    shares = _float_shares_yi()
+    sh = _cached_snapshot("idx_vol_sh", lambda: _index_daily_volume("sh000001"))
+    sz = _cached_snapshot("idx_vol_sz", lambda: _index_daily_volume("sz399106"))
+    if not sh or not sz:
+        raise RuntimeError("指数日线成交量获取失败，无法计算换手率")
+    sh_map = {p["as_of"]: p["volume"] for p in sh}
+    sz_map = {p["as_of"]: p["volume"] for p in sz}
+    days_sorted = sorted(d for d in (set(sh_map) & set(sz_map)) if d <= date.today().isoformat())
+    if not days_sorted:
+        raise RuntimeError("指数日线无可用交易日")
+
+    want = max(1, days or 1)
+    series: List[Dict[str, Any]] = []
+    for d in days_sorted[-want:]:
+        vol_yi = (sh_map[d] + sz_map[d]) / 1e8  # 股 → 亿股
+        if vol_yi <= 0:
+            continue
+        series.append({"as_of": d, "value": round(vol_yi / shares * 100, 3)})
+    if not series:
+        raise RuntimeError("换手率序列为空")
+
+    last = series[-1]
+    return {
+        "value": last["value"],
+        "as_of": last["as_of"],
+        "shares_yi": round(shares, 1),
+        "volume_yi": round((sh_map[last["as_of"]] + sz_map[last["as_of"]]) / 1e8, 1),
+        "volume_sh_yi": round(sh_map[last["as_of"]] / 1e8, 1),
+        "volume_sz_yi": round(sz_map[last["as_of"]] / 1e8, 1),
+        "series": series,
+    }
 
 
 # ------------------------------------------------------------ 两融
@@ -2002,6 +2108,7 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
 
     # 情绪层：交易所口径一次取数，供成交额 / 换手率 / 融资余额占比共用
     latest_market = None
+    r_series: List[Dict[str, Any]] = []
     try:
         t_series, r_series, m_series, latest_market = fetch_market_series(exchange_days)
         if t_series:
@@ -2023,22 +2130,6 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
                 },
                 "series": t_series if exchange_days else None,
             }
-        if r_series:
-            r_last = r_series[-1]
-            r_pct, r_win = percentile_rank(r_last["value"], r_series, "D")
-            out["turnover_rate"] = {
-                "value": r_last["value"],
-                "as_of": r_last["as_of"],
-                "source": "akshare",
-                "detail": {
-                    "全A换手率%": r_last["value"],
-                    "分位": r_pct,
-                    "分位窗口": r_win or "无历史样本",
-                    "样本交易日": len(r_series),
-                    "数据源": "两市成交额 ÷ 两市流通市值（交易所官方数据合成）",
-                },
-                "series": r_series if exchange_days else None,
-            }
         if m_series:
             out["total_float_mcap"] = {
                 "value": m_series[-1]["value"],
@@ -2052,8 +2143,34 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
             }
     except Exception as e:
         logger.warning("股票指标 交易所日频数据抓取失败: %s", e)
-        for k in ("turnover_amt", "turnover_rate"):
-            out.setdefault(k, {"error": str(e)[:200]})
+        out.setdefault("turnover_amt", {"error": str(e)[:200]})
+
+    # 换手率：股数法（成交量 ÷ 流通股本），与行情软件同口径，
+    # 不再用「成交额 ÷ 流通市值」—— 详见 fetch_turnover_rate_shares 的说明。
+    try:
+        tr = fetch_turnover_rate_shares(exchange_days)
+        amount_rate = r_series[-1]["value"] if r_series else None  # 参考：交易所流通市值口径
+        out["turnover_rate"] = {
+            "value": tr["value"],
+            "as_of": tr["as_of"],
+            "source": "akshare",
+            "detail": {
+                "全A换手率%": tr["value"],
+                "两市成交量(亿股)": tr["volume_yi"],
+                "沪市成交量(亿股)": tr["volume_sh_yi"],
+                "深市成交量(亿股)": tr["volume_sz_yi"],
+                "流通股本(亿股)": tr["shares_yi"],
+                "参考·成交额÷流通市值%": amount_rate,
+                "分位": None,
+                "分位窗口": f"近 {len(tr['series'])} 期" if exchange_days else "无历史样本",
+                "口径": "成交量 ÷ 流通股本（股数法，与行情软件一致）",
+                "数据源": "新浪指数日线成交量（沪深全市场）+ 腾讯全A快照流通股本",
+            },
+            "series": tr["series"] if exchange_days else None,
+        }
+    except Exception as e:
+        logger.warning("股票指标 全A换手率抓取失败: %s", e)
+        out.setdefault("turnover_rate", {"error": str(e)[:200]})
 
     fm = None
     if latest_market and latest_market.get("float_mcap"):
