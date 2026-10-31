@@ -527,6 +527,49 @@ def get_latest_market_prices(db: Session) -> Dict[str, List[models.MarketPrice]]
     return result
 
 
+def get_market_dates_since(db: Session, cutoff: str) -> Dict[str, set]:
+    """返回 cutoff 之后每个 symbol 已落库的日期集合，用于找出「中间空缺的那几天」。
+
+    只补尾部缺口是不够的：某天失败、之后又恢复时，缺口会留在中间（例如 10-27），
+    只按「比最新日期新」判断永远补不上。
+    """
+    if _USE_CLOUD:
+        rows = _cdb.select_all(
+            T_MARKET_PRICE, columns="symbol,date",
+            filters={"date": f"gte.{cutoff}"}, max_rows=20000,
+            context="get_market_dates_since",
+        )
+        out: Dict[str, set] = {}
+        for r in rows:
+            sym, d = r.get("symbol"), r.get("date")
+            if sym and d:
+                out.setdefault(sym, set()).add(str(d)[:10])
+        return out
+
+    out = {}
+    for sym, d in (
+        db.query(models.MarketPrice.symbol, models.MarketPrice.date)
+        .filter(models.MarketPrice.date >= cutoff)
+        .all()
+    ):
+        out.setdefault(sym, set()).add(str(d)[:10])
+    return out
+
+
+def delete_market_strategy_state(db: Session, symbol: str) -> int:
+    """删除某 symbol 的峰值回撤状态（重算历史时用）。"""
+    if _USE_CLOUD:
+        return _cdb.delete(T_STRATEGY, filters={"symbol": f"eq.{symbol}"},
+                           context="delete_market_strategy_state")
+    n = (
+        db.query(models.MarketStrategyState)
+        .filter(models.MarketStrategyState.symbol == symbol)
+        .delete()
+    )
+    db.commit()
+    return n or 0
+
+
 def get_market_history(db: Session, symbol: str) -> List[models.MarketPrice]:
     """返回某个 symbol 的全部历史记录（按日期升序）。"""
     if _USE_CLOUD:

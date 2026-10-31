@@ -107,12 +107,26 @@ async def probe_market_sources(auth: bool = Depends(require_auth)):
 @router.post("/market/refresh")
 async def refresh_market(
     force: bool = Query(True, description="true=强制走全部来源补漏，false=已最新则跳过"),
+    rebuild_peak: bool = Query(False, description="true=按完整历史重算峰值回撤状态"),
     auth: bool = Depends(require_auth),
 ):
     """手动补跑市场行情（含补历史缺口），同步返回结果，便于排障后立即验证。"""
     try:
         from app.crawlers.market_data import refresh_market_data
         data = await refresh_market_data(force=force)
+        rebuilt = None
+        if rebuild_peak:
+            from app.database import SessionLocal
+            from app.market_strategy import rebuild_state
+            from app.crawlers.market_data import SERIES as _SERIES
+            db = SessionLocal()
+            try:
+                rebuilt = {
+                    s["symbol"]: rebuild_state(db, s["symbol"])
+                    for s in _SERIES
+                }
+            finally:
+                db.close()
         return {
             "status": "ok",
             "skipped": data.get("skipped", False),
@@ -120,6 +134,7 @@ async def refresh_market(
             "expected": data.get("expected"),
             "source": data.get("source"),
             "summary": data.get("summary"),
+            "rebuilt_peak": rebuilt,
             "items": [
                 {"symbol": it["symbol"], "name": it["name"], "value": it.get("value"),
                  "date": it.get("date"), "points": len(it.get("points") or []),

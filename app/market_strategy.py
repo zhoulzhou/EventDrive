@@ -291,3 +291,40 @@ def compute_level(value: Optional[float], thresholds: List[float]) -> Dict[str, 
     else:
         result["drawdown_level"] = "danger"
     return result
+
+def rebuild_state(db: Session, symbol: str) -> Dict[str, Any]:
+    """按库内完整历史重算峰值状态（补齐历史数据后修正峰值用）。
+
+    为什么需要：峰值状态是「一条一条往前推」的累积值，补历史时只在末尾追加新日期，
+    补不到的那些天就没有参与推进。若那段缺失里恰好有更高的点位（如 2026-10-06 的
+    31224.69），峰值会被低估，页面的回撤幅度也随之偏小 —— 曲线上的最高点和卡片上的
+    峰值对不上。这里整条重放一遍，结果与「当初一天没漏」完全一致。
+
+    实现上先删掉状态，再用 advance() 从第一行开始逐条推进：这样策略里配置的
+    fixed_peak 播种、新高上移、回撤重置都会按原有语义重新走一遍。
+
+    Returns:
+        {"rebuilt": bool, "rows": n, "peak_value": x, "peak_date": d}
+    """
+    strategy = _get_strategy(symbol)
+    if strategy is None or strategy.get("red_pct") is None:
+        return {"rebuilt": False, "rows": 0}
+
+    rows = [r for r in crud.get_market_history(db, symbol) if r.value is not None]
+    if not rows:
+        return {"rebuilt": False, "rows": 0}
+
+    crud.delete_market_strategy_state(db, symbol)
+    for r in sorted(rows, key=lambda x: str(x.date)):
+        advance(db, symbol, r.value, str(r.date)[:10])
+
+    state = crud.get_market_strategy_state(db, symbol)
+    logger.info(
+        f"[{symbol}] 峰值状态已按 {len(rows)} 条历史重算: 峰值={state.peak_value} ({state.peak_date})"
+    )
+    return {
+        "rebuilt": True,
+        "rows": len(rows),
+        "peak_value": float(state.peak_value) if state else None,
+        "peak_date": state.peak_date if state else None,
+    }

@@ -44,7 +44,7 @@ import httpx
 
 from app.database import SessionLocal
 from app import crud, schemas
-from app.market_strategy import advance
+from app.market_strategy import advance, rebuild_state
 from app.utils.anti_crawl import get_limiter, RateLimitExceeded
 
 logger = logging.getLogger(__name__)
@@ -614,21 +614,25 @@ def save_market_prices(items: List[Dict[str, Any]]) -> Dict[str, Any]:
     db = SessionLocal()
     summary: Dict[str, Any] = {"saved": 0, "per_symbol": {}}
     try:
-        latest_dates = crud.get_latest_market_dates(db)
+        cutoff = (datetime.now(US_EASTERN).date() - timedelta(days=60)).isoformat()
+        existing = crud.get_market_dates_since(db, cutoff)
         for item in items:
             points = item.get("points") or []
             if not points:
                 logger.info(f"  - {item['name']}: 所有来源均无数据，跳过落库")
                 summary["per_symbol"][item["symbol"]] = {"added": 0, "latest": None}
                 continue
-            last = latest_dates.get(item["symbol"])
-            fresh = [p for p in points if not last or p["date"] > last]
-            if not fresh:
+
+            have = existing.get(item["symbol"]) or set()
+            # 缺的点分两种：比库里最新日期新的（尾部缺口），以及中间断掉的那几天
+            missing = [p for p in points if p["date"] not in have]
+            last = max(have) if have else None
+            trailing = [p for p in missing if not last or p["date"] > last]
+            if not missing:
                 logger.info(f"  - {item['name']}: 数据无更新（库内最新 {last}），跳过")
                 summary["per_symbol"][item["symbol"]] = {"added": 0, "latest": last}
                 continue
 
-            saved_dates: List[str] = []
             # 一次批量 upsert（云库下单条 0.25~0.9s，补 30 天逐条会撞网关超时）
             crud.upsert_market_prices(db, [
                 schemas.MarketPriceCreate(
@@ -638,23 +642,33 @@ def save_market_prices(items: List[Dict[str, Any]]) -> Dict[str, Any]:
                     value=p["value"],
                     date=p["date"],
                 )
-                for p in fresh
+                for p in missing
             ])
-            saved_dates = [p["date"] for p in fresh]
-            # 落库成功后按日期升序推进峰值回撤策略状态（新高上移 / 回撤达阈值重置）
-            for p in fresh:
+            saved_dates = [p["date"] for p in missing]
+            # 只对「比原来最新更晚」的点推进峰值：它们构成连续的新历史，
+            # 按日期升序推进才不会把回撤重置判反。中间空缺由 rebuild_state 统一重算。
+            for p in sorted(trailing, key=lambda x: x["date"]):
                 advance(db, item["symbol"], p["value"], p["date"])
+
+            if any(p["date"] <= (last or "") for p in missing) and last:
+                # 补了中间空缺 → 峰值可能被低估，按完整历史重算一次
+                rebuilt = rebuild_state(db, item["symbol"])
+                if rebuilt.get("rebuilt"):
+                    logger.info(
+                        f"  - {item['name']}: 峰值按完整历史重算 → "
+                        f"{rebuilt['peak_value']} ({rebuilt['peak_date']})"
+                    )
 
             summary["saved"] += len(saved_dates)
             summary["per_symbol"][item["symbol"]] = {
                 "added": len(saved_dates),
-                "latest": saved_dates[-1],
-                "from": saved_dates[0],
+                "latest": max(saved_dates),
+                "from": min(saved_dates),
                 "sources": item.get("sources") or [],
             }
             logger.info(
                 f"  - {item['name']}: 新增 {len(saved_dates)} 天"
-                f"（{saved_dates[0]} ~ {saved_dates[-1]}），来源 "
+                f"（{min(saved_dates)} ~ {max(saved_dates)}），来源 "
                 f"{'/'.join(item.get('sources') or ['-'])}"
             )
     finally:
@@ -671,15 +685,26 @@ def _source_label(items: List[Dict[str, Any]]) -> str:
     return " · ".join(parts)
 
 
-async def _db_latest_dates() -> Dict[str, str]:
-    """读库内各指标的最新日期（云库/本地都走 crud，避免裸 SQLAlchemy 读空）。"""
-    def _run() -> Dict[str, str]:
+async def _db_dates_since(since: str) -> Dict[str, set]:
+    """读库内 since 之后各指标已落库的日期集合（云库/本地都走 crud，避免裸 SQLAlchemy 读空）。"""
+    def _run() -> Dict[str, set]:
         db = SessionLocal()
         try:
-            return crud.get_latest_market_dates(db)
+            return crud.get_market_dates_since(db, since)
         finally:
             db.close()
     return await asyncio.to_thread(_run)
+
+
+def recent_sessions(expected: str, n: int = 5) -> List[str]:
+    """从 expected（最近已收盘交易日）往前取 n 个交易日，用于判断「最近这段是否齐」。"""
+    out: List[str] = []
+    d = date.fromisoformat(expected)
+    while len(out) < n:
+        if _is_us_market_open(d):
+            out.append(d.isoformat())
+        d -= timedelta(days=1)
+    return out
 
 
 async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
@@ -689,24 +714,26 @@ async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
         force: True 时不做「数据已最新」的短路，强制把所有来源走一遍（补漏用）。
     """
     expected = latest_closed_session()
+    # 「最近 5 个交易日是否齐」比「最新日期够不够新」更严格：
+    # 中间断一天（某天抓取失败、之后又恢复）不会被误判为「已最新」。
+    sessions = recent_sessions(expected, 5)
 
-    # 数据已覆盖最近一个已收盘交易日 → 没必要再打外部源（周末/节假日自动省掉请求）
     if not force:
         try:
-            latest = await _db_latest_dates()
+            have = await _db_dates_since(sessions[0])
         except Exception as e:  # noqa: BLE001 - 读库失败不影响抓取
-            logger.warning(f"读取库内最新日期失败，按需抓取处理: {e}")
-            latest = {}
+            logger.warning(f"读取库内已有日期失败，按需抓取处理: {e}")
+            have = {}
         missing = [
             s["symbol"] for s in SERIES
-            if (latest.get(s["symbol"]) or "") < expected
+            if not set(sessions) <= (have.get(s["symbol"]) or set())
         ]
         if not missing:
-            logger.info(f"市场行情已是最新（{expected}），跳过抓取")
+            logger.info(f"市场行情最近 5 个交易日已齐（{sessions[0]}~{expected}），跳过抓取")
             return {
                 "items": [],
                 "skipped": True,
-                "reason": f"已覆盖最近已收盘交易日 {expected}",
+                "reason": f"最近 5 个交易日（{sessions[0]}~{expected}）已齐",
                 "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "source": f"跳过(已最新 {expected})",
             }
