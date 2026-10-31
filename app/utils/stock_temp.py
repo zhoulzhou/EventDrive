@@ -314,15 +314,12 @@ INDICATORS: List[Dict[str, Any]] = [
         "meaning": (
             "全市场换手率 = 两市股票成交量 ÷ 两市股票流通股本（股数法，与东方财富、同花顺等"
             "行情软件同口径）。它把「成交额随市值自然变大」的因素剔除掉，是比成交额更干净的情绪度量。"
-            "详情里另附一个参考值「成交额 ÷ 流通市值」（交易所流通换手率口径），同一交易日会比"
-            "本读数高约 25%~27% —— 那是金额法，按价格加权，高价股换手更活跃所以整体偏高。"
         ),
         "guide": (
             "方法论上用十年分位（不看绝对值，绝对水平会随市场结构漂移）。"
             "本页同时给出「读数区间档」与「十年分位」：分位始终按**现有样本**计算（不设最小期数），"
             "样本越多越准，详情里会标注实际期数。经验区间（股数法）：<1% 冰点 / 1~1.5% 偏冷 / "
-            "1.5~2.5% 中性 / 2.5~4% 偏热 / >4% 亢奋。对照行情软件时用本读数，"
-            "不要用详情里的「参考·成交额÷流通市值」。"
+            "1.5~2.5% 中性 / 2.5~4% 偏热 / >4% 亢奋。"
         ),
         "warning": "日频历史由本页逐日积累（回填窗口有限），分位窗口会在详情里标注实际样本量。",
         "bands": [
@@ -2110,7 +2107,7 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
     latest_market = None
     r_series: List[Dict[str, Any]] = []
     try:
-        t_series, r_series, m_series, latest_market = fetch_market_series(exchange_days)
+        t_series, _r_series, m_series, latest_market = fetch_market_series(exchange_days)
         if t_series:
             t_last = t_series[-1]
             t_pct, t_win = percentile_rank(t_last["value"], t_series, "D")
@@ -2147,9 +2144,10 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
 
     # 换手率：股数法（成交量 ÷ 流通股本），与行情软件同口径，
     # 不再用「成交额 ÷ 流通市值」—— 详见 fetch_turnover_rate_shares 的说明。
+    # ⚠️ 2026-10-31 用户要求删掉详情里的「参考·成交额÷流通市值%」那一条，
+    #    金额法读数不再出现在页面上（避免两个口径并排造成误读）。
     try:
         tr = fetch_turnover_rate_shares(exchange_days)
-        amount_rate = r_series[-1]["value"] if r_series else None  # 参考：交易所流通市值口径
         out["turnover_rate"] = {
             "value": tr["value"],
             "as_of": tr["as_of"],
@@ -2160,7 +2158,6 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
                 "沪市成交量(亿股)": tr["volume_sh_yi"],
                 "深市成交量(亿股)": tr["volume_sz_yi"],
                 "流通股本(亿股)": tr["shares_yi"],
-                "参考·成交额÷流通市值%": amount_rate,
                 "分位": None,
                 "分位窗口": f"近 {len(tr['series'])} 期" if exchange_days else "无历史样本",
                 "口径": "成交量 ÷ 流通股本（股数法，与行情软件一致）",
