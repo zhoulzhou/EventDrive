@@ -450,6 +450,13 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     for spec in GREED_DISPLAY:
         item = items.get(spec["key"]) or {}
         detail = item.get("detail") or {}
+        pct = _finite(detail.get("分位"))
+        state = item.get("state") or "—"
+        # 刚上线时历史表还没样本 → 分位算不出来，档位判读自然是「—」。
+        # 与其在卡片上挂个破折号，不如说清楚「还在攒样本」（分位口径与沪深300 PE 同一条链路，
+        # 攒到 2 期就会自动出现）。
+        if pct is None and state in ("—", "", "数据缺失"):
+            state = "分位积累中"
         displays.append({
             "key": spec["key"],
             "name": item.get("name") or spec.get("title") or spec["key"],
@@ -459,9 +466,9 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
             "unit": item.get("unit", ""),
             "digits": item.get("digits", 2),
             "as_of": item.get("as_of") or "—",
-            "state": item.get("state") or "—",
+            "state": state,
             "tone": item.get("tone") or "slate",
-            "percentile": _finite(detail.get("分位")),
+            "percentile": pct,
             "percentile_window": detail.get("分位窗口"),
             "samples": detail.get("样本期数"),
             "detail_text": item.get("detail_text") or "",
