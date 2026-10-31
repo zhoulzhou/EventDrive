@@ -326,6 +326,37 @@ def get_all_market_prices(db: Session) -> List[models.MarketPrice]:
     return db.query(models.MarketPrice).all()
 
 
+def upsert_market_prices(db: Session, prices: List[schemas.MarketPriceCreate]) -> int:
+    """批量按 (symbol, date) 更新或插入（一次网络往返）。
+
+    补齐历史缺口时一次可能写十几二十天，逐条 upsert 在云库下是 N×0.25~0.9s，
+    会把请求拖到网关硬超时（60s）；同一批行字段完全一致，可以一条 POST 搞定。
+    """
+    rows = [p.model_dump() for p in prices]
+    if not rows:
+        return 0
+    if _USE_CLOUD:
+        saved = _cdb.upsert(T_MARKET_PRICE, rows, on_conflict="symbol,date",
+                            context="upsert_market_prices")
+        return len(saved) or len(rows)
+
+    for price in prices:
+        db_price = (
+            db.query(models.MarketPrice)
+            .filter(models.MarketPrice.symbol == price.symbol,
+                    models.MarketPrice.date == price.date)
+            .first()
+        )
+        if db_price:
+            db_price.name = price.name
+            db_price.unit = price.unit
+            db_price.value = price.value
+        else:
+            db.add(models.MarketPrice(**price.model_dump()))
+    db.commit()
+    return len(prices)
+
+
 def upsert_market_price(db: Session, price: schemas.MarketPriceCreate) -> models.MarketPrice:
     """按 (symbol, date) 更新或插入一条历史记录。"""
     data = price.model_dump()
@@ -435,6 +466,35 @@ def cleanup_sparse_market_dates(db: Session, symbols: List[str], limit: int = 30
     if deleted:
         logger.info(f"清理稀疏日期数据: 删除 {deleted} 行 (日期: {sparse_dates}, 非空指标数<3)")
     return deleted
+
+
+def get_latest_market_dates(db: Session) -> Dict[str, str]:
+    """返回每个 symbol 库内最新的日期（YYYY-MM-DD），用于「只补更新的点」与数据新鲜度判断。
+
+    云库模式必须走 REST（裸 SQLAlchemy 会读到空 SQLite → 恒返回空，
+    会让每轮都判定「需要抓取」并把同一天重复 upsert）。
+    """
+    if _USE_CLOUD:
+        rows = _cdb.select_all(
+            T_MARKET_PRICE, columns="symbol,date", order="date.desc",
+            max_rows=20000, context="get_latest_market_dates",
+        )
+        out: Dict[str, str] = {}
+        for r in rows:                      # 已按日期倒序，每个 symbol 首次出现即最新
+            sym, d = r.get("symbol"), r.get("date")
+            if sym and d and sym not in out:
+                out[sym] = str(d)[:10]
+        return out
+
+    out = {}
+    for sym, d in (
+        db.query(models.MarketPrice.symbol, models.MarketPrice.date)
+        .order_by(models.MarketPrice.date.desc())
+        .all()
+    ):
+        if sym not in out:
+            out[sym] = str(d)[:10]
+    return out
 
 
 def get_latest_market_prices(db: Session) -> Dict[str, List[models.MarketPrice]]:

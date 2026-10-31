@@ -150,13 +150,20 @@ async def crawl_market_data(session: str = "manual"):
         items = data.get("items", [])
         count = len(items)
         valid = sum(1 for x in items if x.get("value") is not None)
-        log_crawl(f"市场行情更新完成: {count} 项指标 (有效 {valid} 项)")
+        if data.get("skipped"):
+            log_crawl(f"市场行情无需抓取: {data.get('reason')}")
+        else:
+            log_crawl(f"市场行情更新完成: {count} 项指标 (有效 {valid} 项)")
         for item in items:
-            log_crawl(f"  - {item['name']}: {item.get('value')} ({item.get('date')})")
+            saved = ((data.get("summary") or {}).get("per_symbol") or {}).get(item["symbol"]) or {}
+            log_crawl(
+                f"  - {item['name']}: {item.get('value')} ({item.get('date')}) "
+                f"来源={'/'.join(item.get('sources') or ['-'])} 新增{saved.get('added', 0)}天"
+            )
         dur = int((datetime.now() - t0).total_seconds())
         _write_crawl_log(task="market", session=session, source=data.get("source", "market"),
                          item_count=valid, duration=dur,
-                         status="ok" if valid else "empty")
+                         status="ok" if (valid or data.get("skipped")) else "empty")
     except Exception as e:
         log_crawl(f"市场行情更新出错: {str(e)}")
         logger.error(f"!!! 市场行情更新出错: {e}", exc_info=True)

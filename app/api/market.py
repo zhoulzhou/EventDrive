@@ -82,10 +82,53 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
             "status": "ok",
             "items": items,
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "source": "FRED (St. Louis Fed)",
+            "source": "Nasdaq / CBOE / 美国财政部（腾讯·东财·FRED 兜底）",
         }
     except Exception as e:
         logger.error(f"获取市场数据失败: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@router.get("/market/sources")
+async def probe_market_sources(auth: bool = Depends(require_auth)):
+    """体检：把每个指标的每个数据源都真打一次，返回能否取到、最新日期、耗时、错误。
+
+    市场行情「某个指数不动」时先看这里：主源挂了会显示 error，
+    备用源能取到数据就说明降级链能兜住（定时任务会自动走备用源）。
+    """
+    try:
+        from app.crawlers.market_data import probe_sources
+        return {"status": "ok", **(await probe_sources())}
+    except Exception as e:
+        logger.error(f"数据源体检失败: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/market/refresh")
+async def refresh_market(
+    force: bool = Query(True, description="true=强制走全部来源补漏，false=已最新则跳过"),
+    auth: bool = Depends(require_auth),
+):
+    """手动补跑市场行情（含补历史缺口），同步返回结果，便于排障后立即验证。"""
+    try:
+        from app.crawlers.market_data import refresh_market_data
+        data = await refresh_market_data(force=force)
+        return {
+            "status": "ok",
+            "skipped": data.get("skipped", False),
+            "reason": data.get("reason"),
+            "expected": data.get("expected"),
+            "source": data.get("source"),
+            "summary": data.get("summary"),
+            "items": [
+                {"symbol": it["symbol"], "name": it["name"], "value": it.get("value"),
+                 "date": it.get("date"), "points": len(it.get("points") or []),
+                 "sources": it.get("sources")}
+                for it in data.get("items", [])
+            ],
+        }
+    except Exception as e:
+        logger.error(f"手动补跑市场行情失败: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
 
