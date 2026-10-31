@@ -386,42 +386,47 @@ async def full_crawl(session: str = "manual"):
 
 
 async def close_session():
-    """北京时间 16:00 —— 收盘一轮：抓取行情类数据并存入数据库。
+    """北京时间 21:34 —— 收盘一轮：抓取宏观 / 龙虎榜 / 股市热度。
 
-    A 股 15:00 收盘，16:00 抓取即为当日最终收盘值。落库时：
-    - 行情：按 (symbol, date) 覆盖 → 当天记录被收盘值替换
+    A 股 15:00 收盘，本轮落库即为当日最终值。落库时：
     - 宏观 / 股票温度：更新最新值，历史表按日期追加
-    因此「当日最终展示的数据」以本轮收盘结果为准。
+    因此「当日最终展示的数据」以本轮结果为准。
 
     **不含新闻**（2026-10-24 用户要求）：新闻只在上午 09:15 由
     `eventdrive-morning-news` 云函数抓一轮，收盘轮不再重复抓取。
     新闻域仍保留在 `/api/crawl/daily-refresh?domains=news` 的补跑入口里，
     需要时可手动补。
 
+    **不含市场行情**（2026-10-31 用户要求）：纳斯达克100 / VIX / 美债也挪到
+    上午 09:15 那轮（`?domains=news,market`）。21:34 = 美东 09:34，美股当日刚开盘，
+    此刻抓到的仍是**上一交易日**收盘 —— 和早上 9:15（美东前一天 21:15，已收盘）
+    拿到的是同一份数据，晚上再跑一遍纯属重复。行情域仍可用
+    `?domains=market` 或 `POST /api/market/refresh` 手动补。
+
     **不含财务指标**：财务是按股票代码逐只查询的（无法全市场抓取），
     耗时且低频，改为在财务页面手动抓取（POST /api/finance/fetch）。
     """
     log_crawl("#" * 50)
-    log_crawl("### 收盘轮次 16:00：行情类数据（不含新闻） ###")
+    log_crawl("### 收盘轮次 21:34：宏观 / 龙虎榜 / 股市热度（不含新闻、不含市场行情） ###")
     log_crawl("#" * 50)
     t0 = datetime.now()
 
     # 快域并发抓取（akshare 类较慢），但每项内部已有防重入与配额保护
     # 注：不含财务指标 —— 财务按股票逐只查询、耗时且低频，改在页面手动抓取
+    # 注：不含市场行情 —— 2026-10-31 起美股类指标只在上午 09:15 抓
     fast_results = await asyncio.gather(
-        crawl_market_data(session=SESSION_CLOSE),
         refresh_macro_indicators(session=SESSION_CLOSE),
         refresh_lhb(session=SESSION_CLOSE),
         return_exceptions=True,
     )
     for key, name, r in zip(
-        ["market", "macro", "lhb"],
-        ["市场行情", "宏观指标", "龙虎榜"],
+        ["macro", "lhb"],
+        ["宏观指标", "龙虎榜"],
         fast_results,
     ):
         if isinstance(r, Exception):
             log_crawl(f"  ! {name} 抓取异常: {r}")
-            # task 必须写**英文域键**：云函数按 NEED=['market','macro',...] 查 crawl_logs
+            # task 必须写**英文域键**：云函数按 NEED=['macro','lhb',...] 查 crawl_logs
             # 判缺失，写中文名会让它以为该域「从没跑过」，从而重复补跑
             _write_crawl_log(task=key, session=SESSION_CLOSE, source=name,
                              item_count=0, status="failed", error_message=str(r)[:500])

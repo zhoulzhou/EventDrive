@@ -137,9 +137,15 @@ _daily_refresh_state = {
 # 收盘轮（close_session）实际抓取的域。**不含 news**：新闻只在上午 09:15
 # 由 eventdrive-morning-news 云函数抓一轮（2026-10-24 用户要求），
 # 收盘轮不再重复抓，省掉一次完整的东财新闻翻页。
-CLOSE_DOMAINS = ("market", "macro", "lhb", "stock_temp")
-# 可单独补跑的域集合（含 news —— 上午那轮失败时可手动补）
-ALL_DOMAINS = ("news",) + CLOSE_DOMAINS
+#
+# **不含 market**（2026-10-31 用户要求）：市场行情（美股指数 / VIX / 美债）
+# 也挪到上午 09:15 那轮抓（`?domains=news,market`）。原因是晚上的 21:34
+# = 美东 09:34，美股当天刚开盘，拿到的还是**上一交易日**收盘，与早上 9:15
+# （美东前一天 21:15，早已收盘）拿到的是同一份数据 —— 晚上再抓一遍纯粹重复。
+# 行情域仍保留在 _DOMAIN_TASKS 里，`?domains=market` 可随时手动补跑。
+CLOSE_DOMAINS = ("macro", "lhb", "stock_temp")
+# 可单独补跑的域集合（含 news / market —— 这两域由上午那轮负责，失败时手动补）
+ALL_DOMAINS = ("news", "market") + CLOSE_DOMAINS
 
 # 单个数据域的补跑入口：key -> 协程工厂。
 # 为什么需要它：close_session 里各域并发，其中 legulegu 串行 6s 间隔，
@@ -160,9 +166,10 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
 
     返回 False 表示**请求的域里有正在跑的**（与已跑任务冲突），调用方应稍后重试。
 
-    domains 为 None 时跑整轮 close_session（行情类三域，**不含新闻**）；
+    domains 为 None 时跑整轮 close_session（宏观 + 龙虎榜 + 股市热度，
+    **不含新闻、不含市场行情** —— 这两个域在上午 09:15 那轮抓）；
     传入列表则只跑指定数据域。指定域之间是**并发**执行的（gather），
-    因此拿 `market,macro` 这个组合时总耗时取决于最慢的那一个，
+    因此拿 `macro,lhb` 这个组合时总耗时取决于最慢的那一个，
     而不是两者相加 —— 云端等待窗口很紧，这个差别很关键。
 
     例外：显式传入的域恰好等于收盘轮三域时仍走 close_session，
@@ -243,7 +250,7 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
             logger.error("每日定时抓取失败: %s", e, exc_info=True)
             _daily_refresh_state["error"] = str(e)[:500]
             # 整轮级别的失败同样要留痕。task 用 "all"（models.CrawlLog 已登记的
-            # 通用任务键），云函数按 NEED=[market,macro,stock_temp] 判缺失，
+            # 通用任务键），云函数按 NEED=[macro,lhb,stock_temp] 判缺失，
             # 不会被这一行干扰。
             _write_crawl_log(
                 task="all", session=session, source="daily-refresh",
@@ -273,10 +280,12 @@ async def trigger_daily_refresh(
     domains: Optional[str] = None,
     auth: bool = Depends(require_auth),
 ):
-    """外部定时任务入口：跑一轮收盘抓取（行情 + 宏观 + 温度）。
+    """外部定时任务入口：跑一轮收盘抓取（宏观 + 龙虎榜 + 股市热度）。
 
-    **不含新闻**：新闻只在上午 09:15 抓（`?domains=news`）。
-    收盘轮传空即跑行情类三域。
+    **不含新闻，也不含市场行情**：这两个域都在上午 09:15 那轮抓
+    （`?domains=news,market`）。晚上的 21:34 = 美东 09:34，美股刚开盘，
+    行情拿到的还是上一交易日收盘，与早上拿到的是同一份数据，重复抓没有意义。
+    收盘轮传空即跑 macro / lhb / stock_temp 三域。
 
     **立即返回、后台执行**：一轮完整抓取要数分钟，而云沙箱反代硬超时 60 秒，
     同步执行必然 504。落库由后台线程完成，稍后查 `/crawl/daily-status` 看进度。

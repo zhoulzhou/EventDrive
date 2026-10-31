@@ -188,14 +188,21 @@ python run_server.py
 
 | 时刻 | 云函数 | 抓取内容 |
 |------|--------|---------|
-| **09:15** | `eventdrive-morning-news` | 仅新闻（东方财富） |
-| **21:34**（工作日） | `eventdrive-refresh` | 收盘整轮：市场行情 / 宏观指标 / 龙虎榜 / 股票温度计 |
+| **09:15** | `eventdrive-morning-news` | 新闻（东方财富）+ **市场行情**（纳斯达克100 / VIX / 美债） |
+| **21:34**（工作日） | `eventdrive-refresh` | 收盘整轮：宏观指标 / 龙虎榜 / 股票温度计 |
 
 A 股 15:00 收盘。收盘轮原定 16:17，2026-10-27 后移到 **21:34**：16:17 抓沪深300
 PE-TTM（中证估值表）时当日文件还没发布，拿到的 `as_of` 一直是上一交易日，PE / ERP
-的历史表因此慢一天。**新闻只在 09:15 抓一轮**，
-收盘轮不再重复抓（2026-10-24 起），省掉一次东财新闻翻页；新闻域仍保留在
-`?domains=news` 的补跑入口里，需要时可手动补。
+的历史表因此慢一天。
+
+**新闻只在 09:15 抓一轮**，收盘轮不再重复抓（2026-10-24 起），省掉一次东财新闻翻页；
+新闻域仍保留在 `?domains=news` 的补跑入口里，需要时可手动补。
+
+**市场行情也只在 09:15 抓**（2026-10-31 起）。9:15 北京 = 前一天 21:15 美东，美股
+早已收盘，拿到的是刚结束的交易日；而 21:34 北京 = 09:34 美东，美股当日刚开盘，
+抓到的还是**同一份上一交易日收盘** —— 晚上再跑一遍没有任何新数据，纯属重复。
+所以美股类指标从收盘轮移除，`?domains=market` 与 `POST /api/market/refresh`
+仍可随时手动补跑（后者支持 `force=true&rebuild_peak=true`）。
 
 **财务指标不在自动抓取范围内** —— 它按股票代码逐只查询、耗时且低频，
 请在财务页面手动抓取（`POST /api/finance/fetch`）。
@@ -205,8 +212,8 @@ PE-TTM（中证估值表）时当日文件还没发布，拿到的 `as_of` 一�
 定时抓取**不由 Web 进程调度**，而是由 CloudBase 云函数在上述时刻调用接口点火：
 
 ```bash
-POST /api/crawl/daily-refresh               # 整轮（行情类三域，不含新闻）
-POST /api/crawl/daily-refresh?domains=news  # 只补新闻（早间函数用这个）
+POST /api/crawl/daily-refresh               # 整轮（macro/lhb/stock_temp，不含新闻与行情）
+POST /api/crawl/daily-refresh?domains=news,market  # 早间函数用这个
 POST /api/crawl/daily-refresh?domains=macro # 补跑单个域
 GET  /api/crawl/daily-status                # 查进度
 ```
@@ -222,7 +229,7 @@ GET  /api/crawl/daily-status                # 查进度
 ### 收盘轮的内部编排
 
 ```
-市场行情 / 宏观指标 / 龙虎榜   ← 三者并发，约 1 分钟（龙虎榜单日约 10 秒）
+宏观指标 / 龙虎榜   ← 两者并发，约 1 分钟（龙虎榜单日约 10 秒）
   ↓
 股票温度计（股市热度） ← 独占，约 4~5 分钟
 ```
