@@ -716,11 +716,15 @@ async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
     expected = latest_closed_session()
     # 「最近 5 个交易日是否齐」比「最新日期够不够新」更严格：
     # 中间断一天（某天抓取失败、之后又恢复）不会被误判为「已最新」。
+    # ⚠ recent_sessions() 是**从新到旧**排列，sessions[0] 是最新那天；
+    #   取 cutoff 必须用 min()，否则 cutoff = 最新日期，判断恒为「不齐」，
+    #   跳过逻辑等于没写（2026-10-31 修）。
     sessions = recent_sessions(expected, 5)
+    oldest = min(sessions)
 
     if not force:
         try:
-            have = await _db_dates_since(sessions[0])
+            have = await _db_dates_since(oldest)
         except Exception as e:  # noqa: BLE001 - 读库失败不影响抓取
             logger.warning(f"读取库内已有日期失败，按需抓取处理: {e}")
             have = {}
@@ -729,11 +733,11 @@ async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
             if not set(sessions) <= (have.get(s["symbol"]) or set())
         ]
         if not missing:
-            logger.info(f"市场行情最近 5 个交易日已齐（{sessions[0]}~{expected}），跳过抓取")
+            logger.info(f"市场行情最近 5 个交易日已齐（{oldest}~{expected}），跳过抓取")
             return {
                 "items": [],
                 "skipped": True,
-                "reason": f"最近 5 个交易日（{sessions[0]}~{expected}）已齐",
+                "reason": f"最近 5 个交易日（{oldest}~{expected}）已齐",
                 "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "source": f"跳过(已最新 {expected})",
             }
