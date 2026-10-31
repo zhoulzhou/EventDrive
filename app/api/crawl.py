@@ -329,5 +329,10 @@ async def trigger_daily_refresh(
 
 @router.get("/crawl/daily-status")
 def get_daily_refresh_status(auth: bool = Depends(require_auth)):
-    """查询后台每日抓取的进度与结果。"""
-    return dict(_daily_refresh_state)
+    """查询后台每日抓取的进度与结果。
+
+    `close_domains` 顺带把「收盘轮整轮到底抓哪几个域」暴露出来 —— 定时任务的分工
+    （新闻/行情在早上，其余在 21:34）改过几次，线上排查时直接看这个字段，
+    不用去翻源码猜某天那轮里有没有 market。
+    """
+    return {**_daily_refresh_state, "close_domains": list(CLOSE_DOMAINS)}
