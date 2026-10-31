@@ -222,6 +222,96 @@ table.lb-table td { padding: 0.6rem 0.7rem; color: #334155; vertical-align: midd
 .lb-detail-title { font-size: 1rem; font-weight: 700; color: #1f2937; }
 .lb-detail-sub { font-size: 0.76rem; color: #94a3b8; }
 .lb-detail-grid { display: grid; grid-template-columns: minmax(300px, 1.25fr) minmax(260px, 1fr); gap: 1rem; }
+
+/* ---------------- 明细页头部 / 指标卡 / 因子拆解 ----------------
+ * 信息层级按设计稿：标题行 → 标签行 → 0-100 分数渐进条 → 四张指标卡 → 因子拆解。
+ * 两套颜色语义：涨跌幅红涨绿跌（A 股习惯），得分与因子正负「好=绿」——
+ * 与列表页的分数列/档位徽标同源，别把涨跌色搬过来用。 */
+.lb-hero { margin-bottom: 1rem; }
+.lb-hero-top { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.lb-hero-name { font-size: 1.42rem; font-weight: 700; color: #111827; letter-spacing: 0.01em; }
+.lb-hero-code {
+    font-size: 0.74rem; color: #64748b; background: #f1f5f9; border-radius: 6px;
+    padding: 0.1rem 0.42rem; font-variant-numeric: tabular-nums;
+}
+.lb-hero-tags { display: flex; align-items: center; gap: 0.38rem; flex-wrap: wrap; margin-top: 0.45rem; }
+.lb-hero-pct { font-size: 0.92rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lb-hero-pct.up { color: #ef4444; }
+.lb-hero-pct.down { color: #22c55e; }
+.lb-hero-pct.flat { color: #64748b; }
+.lb-hero-tag {
+    font-size: 0.75rem; color: #475569; background: #f3f6fa;
+    border-radius: 6px; padding: 0.1rem 0.45rem; white-space: nowrap;
+}
+.lb-hero-tag.muted { color: #94a3b8; background: transparent; padding-left: 0; }
+.lb-hero-tag.streak { color: #1d4ed8; background: rgba(59, 130, 246, 0.1); }
+/* 分数渐进条：左差右好，指针就是当前分数。条本身不做动画（切记录时重绘即可） */
+.lb-scoreline { margin-top: 0.7rem; }
+.lb-scorebar {
+    position: relative; height: 6px; border-radius: 999px;
+    background: linear-gradient(90deg, #ef4444 0%, #f59e0b 34%, #eab308 52%, #22c55e 100%);
+    opacity: 0.92;
+}
+.lb-scorepin {
+    position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%;
+    transform: translate(-50%, -50%); border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.35);
+}
+.lb-scoremeta {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 0.32rem; font-size: 0.7rem; color: #b0b8c4;
+}
+.lb-scoreval { font-size: 0.78rem; font-weight: 700; }
+.lb-hero-note { margin-top: 0.4rem; font-size: 0.74rem; color: #94a3b8; line-height: 1.6; }
+
+.lb-mcards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.6rem; margin-bottom: 1.15rem; }
+/* 卡片底色要比抽屉底（#fbfcff）明显一档 + 极轻投影，否则四张卡糊成一片 */
+.lb-mcard {
+    background: #f3f7fc; border: 1px solid #e3eaf4; border-radius: 10px;
+    padding: 0.6rem 0.7rem; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.lb-mcard-label { font-size: 0.73rem; color: #7b8698; }
+.lb-mcard-value {
+    margin-top: 0.22rem; font-size: 1.34rem; font-weight: 700; line-height: 1.2;
+    color: #111827; font-variant-numeric: tabular-nums; word-break: break-word;
+}
+.lb-mcard-value small { margin-left: 0.1rem; font-size: 0.8rem; font-weight: 500; color: #64748b; }
+.lb-mcard-value.text { font-size: 0.98rem; line-height: 1.5; }
+.lb-mcard-sub { margin-top: 0.24rem; font-size: 0.71rem; color: #9aa6b4; line-height: 1.5; }
+
+.lb-factors { margin-bottom: 1.15rem; }
+.lb-sec-title {
+    display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.45rem;
+    padding-left: 0.5rem; border-left: 3px solid #ef4444;
+    font-size: 0.9rem; font-weight: 700; color: #1f2937;
+}
+.lb-sec-meta { margin-left: auto; font-size: 0.73rem; font-weight: 500; color: #94a3b8; }
+.lb-factor { padding: 0.45rem 0 0.5rem; border-bottom: 1px dashed #eef1f6; }
+.lb-factor:last-child { border-bottom: 0; padding-bottom: 0.15rem; }
+.lb-factor-head { display: flex; align-items: baseline; gap: 0.4rem; }
+.lb-factor-name { font-size: 0.84rem; font-weight: 600; color: #334155; }
+.lb-factor-value { font-weight: 700; color: #111827; }
+.lb-factor-delta {
+    margin-left: auto; font-size: 0.92rem; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.lb-factor.plus .lb-factor-delta { color: #16a34a; }
+.lb-factor.minus .lb-factor-delta { color: #ef4444; }
+.lb-factor.zero .lb-factor-delta { color: #cbd5e1; }
+.lb-factor-bar { height: 5px; margin: 0.32rem 0 0.3rem; border-radius: 999px; background: #eef1f6; overflow: hidden; }
+.lb-factor-bar i { display: block; height: 100%; border-radius: 999px; background: #22c55e; }
+.lb-factor.minus .lb-factor-bar i { background: #ef4444; }
+.lb-factor.zero .lb-factor-bar i { background: #cbd5e1; }
+.lb-factor-note { font-size: 0.75rem; color: #94a3b8; line-height: 1.55; }
+
+.lb-panel-note { font-size: 0.76rem; color: #64748b; line-height: 1.65; }
+
+/* 抽屉在 900px 以下只剩 ~675px，四卡各 150px 就挤了（"机构+游资合力"会折行）→ 两列 */
+@media (max-width: 900px) {
+    .lb-mcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .lb-hero-name { font-size: 1.24rem; }
+    .lb-mcard-value { font-size: 1.18rem; }
+}
 /* 面板收窄到 75vw 后，两列在 980px 以下就挤了，提前改成单列 */
 @media (max-width: 980px) { .lb-detail-grid { grid-template-columns: 1fr; } }
 

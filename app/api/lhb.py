@@ -283,6 +283,18 @@ def get_lhb_detail(date: str, trade_id: str,
         # 买榜 / 卖榜拆开给前端，画「买五卖五对照图」时不必再分拣
         buy = [s for s in seats if s["flag"] == "buy"]
         sell = [s for s in seats if s["flag"] == "sell"]
+        # 库里没存 one_day_cnt / relay_cnt / wash_trade（打分中间量，无对应列），
+        # 而详情页要画「打分化因子拆解」——用席位明细按同一口径重算这三项再打一次分。
+        # 好处：拆解的加减分之和与详情页显示的分数自洽，老记录里的旧版 reasons 文案
+        # 也顺带升级成结构化 {label, value, delta, note}，不用回填历史数据。
+        score_input = dict(record)
+        score_input["one_day_cnt"], score_input["relay_cnt"] = engine.style_counts(buy)
+        score_input["wash_trade"] = bool(engine.wash_names(buy, sell))
+        fresh = engine.score_record(score_input)
+        record["reasons"] = fresh["reasons"]
+        record["score"] = fresh["score"]
+        record["grade"] = fresh["grade"]
+        record["alerts"] = fresh["alerts"]
         return {"status": "ok", "record": record, "buy": buy, "sell": sell,
                 "history": history}
     except HTTPException:

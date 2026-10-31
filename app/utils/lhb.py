@@ -515,34 +515,52 @@ def _combo_tag(buy_agg: Dict[str, dict], sell_agg: Dict[str, dict],
     return "其他", "买榜以普通营业部为主"
 
 
+def _yi(v: Any) -> str:
+    """金额→「0.11 亿」这种写法（打分说明里用，和详情卡口径一致）。"""
+    try:
+        return f"{float(v) / 1e8:.2f} 亿"
+    except (TypeError, ValueError):
+        return "—"
+
+
 def score_record(record: Dict[str, Any]) -> Dict[str, Any]:
     """按文档口径打分（0-100）并给出加减分明细、档位、告警。
 
     权重顺序即文档的「位置＞席位＞净额」：位置单项最大 ±24，席位构成 ±15，
     资金结构（占比/集中度/对倒）合计 ±20，风格再 ±10，三日榜最后统一收缩。
+
+    reasons 每项是结构化的 ``{label, value, delta, note}``（text 保留给老数据）：
+    详情页「打分因子拆解」直接拿 label·value 当标题、delta 当右侧得分、
+    ``|delta|/20`` 当进度条、note 当解释 —— 文案只在这里写一遍。
     """
     score = 50.0
     reasons: List[Dict[str, Any]] = []
 
-    def add(delta: float, text: str) -> None:
+    def add(delta: float, label: str, value: str, note: str) -> None:
         nonlocal score
         score += delta
-        reasons.append({"delta": round(delta, 1), "text": text})
+        reasons.append({
+            "delta": round(delta, 1),
+            "label": label,
+            "value": value,
+            "note": note,
+            "text": f"{label} {value}：{note}",
+        })
 
     # 1) 位置
     position = record.get("position")
     streak = record.get("streak") or 0
     pos_pct = record.get("pos_pct")
     if position == "低位":
-        add(10, "低位上榜：游资试盘/机构初建仓，题材若为主线则性价比最高")
+        add(10, "位置", "低位", "低位首板：试盘 / 初建仓，向下空间有限")
     elif position == "中位":
-        add(0, "中位换手：短线博弈核心区，看换手接力还是老资金出货")
+        add(0, "位置", "中位", "中位换手：短线博弈核心区，看接力还是老资金出货")
     elif position == "高位":
-        add(-18, "高位上榜：默认按兑现视角解读，绝大多数是减仓/回避信号")
+        add(-18, "位置", "高位", "高位上榜：默认按兑现视角解读，绝大多数是减仓/回避信号")
     else:
-        add(-2, "缺个股位置数据（K 线未取到），按中性处理")
+        add(-2, "位置", "缺数据", "K 线未取到，位置未知，按中性处理")
     if streak >= 4:
-        add(-6, f"已 {streak} 连板，位置极高，任何榜都优先理解为止盈机会")
+        add(-6, "连板高度", f"{streak} 连板", "位置极高，任何榜都优先理解为止盈机会")
 
     # 2) 席位构成
     combo = record.get("combo_tag")
@@ -552,56 +570,61 @@ def score_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "游资出逃·机构接盘": 4, "机构出逃·游资接盘": -12, "拉萨扎堆": -15,
     }.get(combo or "", 0)
     if combo_delta:
-        add(combo_delta, f"席位构成：{combo}")
+        add(combo_delta, "席位结构", combo or "其他",
+            record.get("combo_note") or "按买卖榜席位类型组合判定")
 
     # 3) 龙虎成交占比
     ratio = record.get("deal_ratio")
     if ratio is not None:
         if ratio > 35:
-            add(-8, f"龙虎成交占比 {ratio:.1f}%，筹码高度集中，容易大起大落")
+            add(-8, "龙虎成交占比", f"{ratio:.1f}%", "筹码高度集中，容易大起大落")
         elif ratio >= 25:
-            add(0, f"龙虎成交占比 {ratio:.1f}%，集中度偏高")
+            add(0, "龙虎成交占比", f"{ratio:.1f}%", "集中度偏高，参考意义打折")
         elif ratio >= 10:
-            add(6, f"龙虎成交占比 {ratio:.1f}%，适中，买盘有分散度")
+            add(6, "龙虎成交占比", f"{ratio:.1f}%", "占比适中，博弈充分但未过度集中")
         else:
-            add(-3, f"龙虎成交占比仅 {ratio:.1f}%，榜外资金主导，参考意义弱")
+            add(-3, "龙虎成交占比", f"{ratio:.1f}%", "榜外资金主导，参考意义弱")
 
     # 4) 买一集中度
     b1 = record.get("buy1_ratio")
     if b1 is not None:
         if b1 >= 70:
-            add(-8, f"买一集中度 {b1:.0f}%，孤庄独买，次日无人接力易砸盘")
+            add(-8, "买一集中度", f"{b1:.0f}%", "孤庄独买，次日无人接力易砸盘")
         elif b1 >= 60:
-            add(-3, f"买一集中度 {b1:.0f}%，偏独大")
+            add(-3, "买一集中度", f"{b1:.0f}%", "买一偏独大，接力氛围一般")
         elif b1 < 40:
-            add(4, f"买一集中度 {b1:.0f}%，买盘分布均匀，接力氛围好")
+            add(4, "买一集中度", f"{b1:.0f}%", "买盘分散，多家资金合力")
 
     # 5) 席位风格（一日游 / 接力）
     one_day_cnt = record.get("one_day_cnt") or 0
     relay_cnt = record.get("relay_cnt") or 0
     if one_day_cnt >= 2:
-        add(-10, f"买榜有 {one_day_cnt} 个一日游/兑现型席位，次日抛压预警")
+        add(-10, "一日游席位", f"{one_day_cnt} 个", "次日抛压预警，高开兑现概率大")
     elif one_day_cnt == 1:
-        add(-4, "买榜有 1 个一日游/兑现型席位")
+        add(-4, "一日游席位", "1 个", "榜上有兑现型席位，隔日看承接")
     if relay_cnt:
-        add(5, f"买榜有 {relay_cnt} 个知名接力型席位")
+        add(5, "知名接力席位", f"{relay_cnt} 个", "接力意愿强，能不能参与看位置")
 
     # 6) 对倒
     if record.get("wash_trade"):
-        add(-8, "同一席位同时出现在买榜与卖榜，疑似对倒做量、诱多出货")
+        add(-8, "对倒做量", "疑似", "同一席位买卖同榜，制造热闹假象吸引跟风")
 
     # 7) 净额方向
     net = record.get("net_amt")
     if net is not None:
         if net < 0:
-            add(-4, "买五合计小于卖五合计（龙虎净卖出），抛压偏大")
+            add(-4, "龙虎净额", _yi(net), "买五合计小于卖五合计，抛压偏大")
         elif ratio is not None and ratio <= 30:
-            add(2, "龙虎净买入且集中度可控")
+            add(2, "龙虎净额", _yi(net), "净买入且集中度可控")
 
     # 8) 三日榜权重打折（文档：权重 = 单日榜的 0.4）
     if record.get("scope") == "3day":
         score = 50 + (score - 50) * 0.4
-        reasons.append({"delta": 0, "text": "三日榜：合并 3 天买卖额，权重按单日榜 0.4 折算"})
+        reasons.append({
+            "delta": 0, "label": "三日榜折算", "value": "0.4×",
+            "note": "合并 3 天买卖额，权重按单日榜 0.4 折算",
+            "text": "三日榜：合并 3 天买卖额，权重按单日榜 0.4 折算",
+        })
 
     score = int(round(max(0, min(100, score))))
     grade, level = _grade_of(score)
@@ -653,6 +676,61 @@ def _alerts_of(record: Dict[str, Any], grade: str) -> List[Dict[str, str]]:
     return out
 
 
+def _styles_of(seat: Dict[str, Any]) -> List[str]:
+    """席位风格标签。抓取侧存的是 seat_tags JSON 串，接口侧已经解成 styles 列表。"""
+    styles = seat.get("styles")
+    if styles is None:
+        raw = seat.get("seat_tags")
+        if raw:
+            try:
+                styles = json.loads(raw).get("styles")
+            except (ValueError, TypeError):
+                styles = None
+    return styles or []
+
+
+def style_counts(buy_seats: List[Dict[str, Any]]) -> Tuple[int, int]:
+    """买榜里「一日游」与「知名接力」席位的个数（打分第 5 项）。
+
+    抓取时算一次落进打分，详情接口也要用同口径重算 reasons，所以抽成函数，
+    避免两处各写一遍判断而走样。
+    """
+    one_day_cnt = 0
+    relay_cnt = 0
+    for s in buy_seats:
+        styles = _styles_of(s)
+        if _is_one_day(styles):
+            one_day_cnt += 1
+        if _is_relay(styles):
+            relay_cnt += 1
+    return one_day_cnt, relay_cnt
+
+
+def wash_names(buy_seats: List[Dict[str, Any]],
+               sell_seats: List[Dict[str, Any]]) -> List[str]:
+    """疑似对倒做量的营业部名字列表（空列表＝没有）。
+
+    同一营业部同时出现在买榜与卖榜（机构专用是多席位共用名，需按 dept_code+seq 区分，
+    这里只对具名营业部判断，避免把「机构专用」误判成对倒）。
+    光「同名出现在两边」噪声太大（大营业部日常既买又卖），再要求两边金额同量级：
+    大额买 + 小额卖 = 正常滚动；两边都在千万级且相差不到 3 倍才按对倒提示。
+    """
+    side: Dict[str, Dict[str, float]] = {}
+    for s in list(buy_seats) + list(sell_seats):
+        # 「机构专用」是多个机构的共用匿名名；「深股通/沪股通专用」全国只有一张牌，
+        # 每天必然两边都有且金额接近，判成对倒纯属噪声 —— 这几类一律不参与对倒判断。
+        if "机构专用" in s["dept_name"] or "股通专用" in s["dept_name"]:
+            continue
+        slot = side.setdefault(s["dept_name"], {"buy": 0.0, "sell": 0.0})
+        slot["buy"] += s["buy"]
+        slot["sell"] += s["sell"]
+    return sorted(
+        name for name, v in side.items()
+        if v["buy"] >= 5e7 and v["sell"] >= 5e7
+        and min(v["buy"], v["sell"]) / max(v["buy"], v["sell"]) >= 0.6
+    )
+
+
 def analyze(record: dict, buy_rows: List[dict], sell_rows: List[dict],
             position: Dict[str, Any]) -> Tuple[Dict[str, Any], List[dict]]:
     """把一条榜单 + 其买卖席位整理成落库行 + 席位行。"""
@@ -689,33 +767,10 @@ def analyze(record: dict, buy_rows: List[dict], sell_rows: List[dict],
     buy_total = sum(s["buy"] for s in buy_seats)
     buy1_ratio = round(buy_seats[0]["buy"] / buy_total * 100, 1) if (buy_seats and buy_total) else None
 
-    # 对倒：同一营业部同时出现在买榜与卖榜（机构专用是多席位共用名，需按 dept_code+seq 区分，
-    # 这里只对具名营业部判断，避免把「机构专用」误判成对倒）。
-    # 光「同名出现在两边」噪声太大（大营业部日常既买又卖），再要求两边金额同量级：
-    # 大额买 + 小额卖 = 正常滚动；两边都在千万级且相差不到 3 倍才按对倒提示。
-    side: Dict[str, Dict[str, float]] = {}
-    for s in buy_seats + sell_seats:
-        # 「机构专用」是多个机构的共用匿名名；「深股通/沪股通专用」全国只有一张牌，
-        # 每天必然两边都有且金额接近，判成对倒纯属噪声 —— 这几类一律不参与对倒判断。
-        if "机构专用" in s["dept_name"] or "股通专用" in s["dept_name"]:
-            continue
-        slot = side.setdefault(s["dept_name"], {"buy": 0.0, "sell": 0.0})
-        slot["buy"] += s["buy"]
-        slot["sell"] += s["sell"]
-    wash = sorted(
-        name for name, v in side.items()
-        if v["buy"] >= 5e7 and v["sell"] >= 5e7
-        and min(v["buy"], v["sell"]) / max(v["buy"], v["sell"]) >= 0.6
-    )
+    # 对倒：同一营业部同时出现在买榜与卖榜，且两边金额同量级（判定见 wash_names）
+    wash = wash_names(buy_seats, sell_seats)
 
-    one_day_cnt = 0
-    relay_cnt = 0
-    for s in buy_seats:
-        meta = json.loads(s["seat_tags"])
-        if _is_one_day(meta["styles"]):
-            one_day_cnt += 1
-        if _is_relay(meta["styles"]):
-            relay_cnt += 1
+    one_day_cnt, relay_cnt = style_counts(buy_seats)
 
     combo_tag, combo_note = _combo_tag(buy_agg, sell_agg, buy_seats)
 
@@ -762,7 +817,7 @@ def analyze(record: dict, buy_rows: List[dict], sell_rows: List[dict],
         "wash_trade": bool(wash),
     }
 
-    result = score_record({**row, "combo_tag": combo_tag})
+    result = score_record({**row, "combo_tag": combo_tag, "combo_note": combo_note})
     row.update({
         "score": result["score"],
         "grade": result["grade"],

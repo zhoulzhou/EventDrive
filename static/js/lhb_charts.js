@@ -293,15 +293,177 @@ function seatRows(seats, flag) {
     }).join("");
 }
 
+/* ---------------- 明细页零件（指标卡 / 分数条 / 因子拆解） ----------------
+ * 布局按设计稿：标题 + 涨跌幅标签 → 0-100 分数渐进条 → 四个关键指标卡
+ * → 打分因子拆解（每项一条进度条 + 一句解释）→ 席位明细 / 买五卖五图 / 历史上榜。
+ * 颜色语义两套并存：涨跌幅沿用 A 股习惯（红涨绿跌），得分高低用「好=绿」，
+ * 与列表页分数列、档位徽标保持一致。
+ */
+
+// 金额拆成「数值 + 单位」，卡片里数值大字、单位小字。
+// 千万以上一律用「亿」（0.51 亿），和设计稿的「买五 0.74 · 卖五 0.85」同一口径；
+// 只有不到千万的才退回「万」，否则会出现「0.05 亿」这种读不出来的数。
+function lbAmountParts(v) {
+    if (v === null || v === undefined || isNaN(Number(v))) return { n: "—", u: "" };
+    const n = Number(v);
+    const a = Math.abs(n);
+    if (a >= 1e7) return { n: (n / 1e8).toFixed(2), u: "亿" };
+    if (a >= 1e4) return { n: (n / 1e4).toFixed(0), u: "万" };
+    return { n: String(Math.round(n)), u: "" };
+}
+
+function lbMarketShort(code, market) {
+    const c = String(code || "");
+    if (/^68/.test(c)) return "科创板";
+    if (/^30/.test(c)) return "创业板";
+    if (/^60/.test(c)) return "沪主板";
+    if (/^00/.test(c)) return "深主板";
+    if (/^(4|8|92)/.test(c)) return "北交所";
+    return market || "—";
+}
+
+function lbComboTone(tag) {
+    if (!tag) return "#94a3b8";
+    if (tag.indexOf("出逃") >= 0 || tag === "拉萨扎堆") return "#ef4444";
+    if (tag === "机构+游资合力") return "#16a34a";
+    if (tag.indexOf("机构") >= 0) return "#2563eb";
+    return "#475569";
+}
+
+function heroBlock(r) {
+    const pct = (r.change_rate === null || r.change_rate === undefined) ? null : Number(r.change_rate);
+    const pctTone = pct === null ? "flat" : (pct > 0 ? "up" : (pct < 0 ? "down" : "flat"));
+    const pctText = pct === null ? "—" : (pct > 0 ? "+" : "") + pct.toFixed(2) + "%";
+    const scopeText = r.scope === "3day" ? "三日榜" : "单日榜";
+    const posText = r.position ? r.position : "位置未知";
+    const posDesc = (r.pos_pct === null || r.pos_pct === undefined)
+        ? "" : ("近 20 日 " + r.pos_pct + "%" + (r.streak ? " · " + r.streak + " 连板" : ""));
+
+    const tags = [
+        '<span class="lb-hero-pct ' + pctTone + '">' + escapeHtml(pctText) + "</span>",
+        '<span class="lb-hero-tag">' + escapeHtml(posText) + "</span>",
+        '<span class="lb-hero-tag">' + escapeHtml(lbMarketShort(r.code, r.market)) + "</span>",
+        '<span class="lb-hero-tag">' + escapeHtml(scopeText) + "</span>",
+    ];
+    if (posDesc) tags.push('<span class="lb-hero-tag muted">' + escapeHtml(posDesc) + "</span>");
+    if (r.inst_streak >= 2) {
+        tags.push('<span class="lb-hero-tag streak">机构连买 ' + r.inst_streak + " 日</span>");
+    }
+
+    const score = (r.score === null || r.score === undefined) ? null : Number(r.score);
+    const tone = lbTone(GRADE_TONE[r.grade] || "neutral");
+    const line = score === null ? "" : '<div class="lb-scoreline">'
+        + '<div class="lb-scorebar"><i class="lb-scorepin" style="left:'
+        + Math.max(0, Math.min(100, score)) + "%;background:" + tone + '"></i></div>'
+        + '<div class="lb-scoremeta"><span>0 · 强风险</span>'
+        + '<span class="lb-scoreval" style="color:' + tone + '">'
+        + escapeHtml(r.grade || "") + " · " + score + " 分</span>"
+        + "<span>重点观察池 · 100</span></div></div>";
+
+    const note = [
+        r.explanation ? "上榜原因：" + r.explanation : "",
+        "收盘 " + (r.close === null || r.close === undefined ? "—" : Number(r.close).toFixed(2)),
+        "换手 " + lbPct(r.turnover_rate),
+        "成交额 " + lbMoney(r.accum_amount, 1),
+    ].filter(Boolean).join(" · ");
+
+    return '<header class="lb-hero">'
+        + '<div class="lb-hero-top">'
+        + '<span class="lb-hero-name">' + escapeHtml(r.name) + "</span>"
+        + '<span class="lb-hero-code">' + escapeHtml(r.code) + "</span>"
+        + scenePill(r.scene)
+        + "</div>"
+        + '<div class="lb-hero-tags">' + tags.join("") + "</div>"
+        + line
+        + '<div class="lb-hero-note">' + escapeHtml(note) + "</div>"
+        + "</header>";
+}
+
+function mcardHtml(c) {
+    return '<div class="lb-mcard">'
+        + '<div class="lb-mcard-label">' + escapeHtml(c.label) + "</div>"
+        + '<div class="lb-mcard-value' + (c.text ? " text" : "") + '" style="color:' + c.tone + '">'
+        + escapeHtml(c.value)
+        + (c.unit ? "<small>" + escapeHtml(c.unit) + "</small>" : "")
+        + "</div>"
+        + '<div class="lb-mcard-sub"' + (c.subTone ? ' style="color:' + c.subTone + '"' : "") + ">"
+        + escapeHtml(c.sub) + "</div></div>";
+}
+
+function mcardsBlock(r, d) {
+    const net = lbAmountParts(r.net_amt);
+    const b5 = lbAmountParts(r.buy_amt);
+    const s5 = lbAmountParts(r.sell_amt);
+    const amt = lbAmountParts(r.accum_amount);
+    const first = (d.buy || [])[0];
+    const buy1 = first ? lbAmountParts(first.buy) : { n: "—", u: "" };
+    const alertN = (r.alerts || []).length;
+    const cards = [
+        {
+            label: "龙虎净额", value: net.n, unit: net.u,
+            tone: (Number(r.net_amt) || 0) >= 0 ? "#ef4444" : "#22c55e",
+            sub: "买五 " + b5.n + b5.u + " · 卖五 " + s5.n + s5.u,
+        },
+        {
+            label: "龙虎成交占比",
+            value: r.deal_ratio === null || r.deal_ratio === undefined ? "—" : Number(r.deal_ratio).toFixed(1),
+            unit: r.deal_ratio === null || r.deal_ratio === undefined ? "" : "%",
+            tone: "#1f2937", sub: "占当日成交额 " + amt.n + amt.u,
+        },
+        {
+            label: "买一集中度",
+            value: r.buy1_ratio === null || r.buy1_ratio === undefined ? "—" : Number(r.buy1_ratio).toFixed(0),
+            unit: r.buy1_ratio === null || r.buy1_ratio === undefined ? "" : "%",
+            tone: "#1f2937", sub: "买一 " + buy1.n + buy1.u,
+        },
+        {
+            label: "席位结构", value: r.combo_tag || "—", text: true,
+            tone: lbComboTone(r.combo_tag),
+            sub: "组合标签 · " + (alertN ? alertN + " 条告警" : "0 条告警"),
+            subTone: alertN ? "#b45309" : "",
+        },
+    ];
+    return '<div class="lb-mcards">' + cards.map(mcardHtml).join("") + "</div>";
+}
+
+// 单因子进度条按 |delta| / 20 归一（20 分≈一个最强单项，位置低位 10 分拍一半，和设计稿一致）
+const FACTOR_BAR_MAX = 20;
+
+function factorRow(x) {
+    const delta = Number(x.delta) || 0;
+    const tone = delta > 0 ? "plus" : (delta < 0 ? "minus" : "zero");
+    const width = Math.min(Math.abs(delta) / FACTOR_BAR_MAX, 1) * 100;
+    const label = x.label || "";
+    const value = x.value || "";
+    const note = x.note || x.text || "";
+    return '<div class="lb-factor ' + tone + '">'
+        + '<div class="lb-factor-head">'
+        + '<span class="lb-factor-name">' + escapeHtml(label || "调整项")
+        + (value ? '<span class="lb-factor-value"> · ' + escapeHtml(value) + "</span>" : "")
+        + "</span>"
+        + '<span class="lb-factor-delta">' + (delta > 0 ? "+" : "") + delta + "</span>"
+        + "</div>"
+        + '<div class="lb-factor-bar"><i style="width:' + width.toFixed(0) + '%"></i></div>'
+        + '<div class="lb-factor-note">' + escapeHtml(note) + "</div>"
+        + "</div>";
+}
+
+function factorsBlock(r) {
+    const list = r.reasons || [];
+    if (!list.length) {
+        return '<section class="lb-factors"><div class="lb-sec-title">打分因子拆解</div>'
+            + '<div class="lb-flat" style="font-size:0.78rem">这条记录没有加减分明细</div></section>';
+    }
+    return '<section class="lb-factors">'
+        + '<div class="lb-sec-title">打分因子拆解'
+        + '<span class="lb-sec-meta">基准 50 分 '
+        + (r.score === null || r.score === undefined ? "" : "→ 最终 " + r.score + " 分") + "</span></div>"
+        + list.map(factorRow).join("")
+        + "</section>";
+}
+
 function detailHtml(d) {
     const r = d.record;
-    const reasons = (r.reasons || []).map(function (x) {
-        const cls = x.delta > 0 ? "plus" : (x.delta < 0 ? "minus" : "zero");
-        const sign = x.delta > 0 ? "+" : "";
-        const delta = x.delta === 0 ? "·" : sign + x.delta;
-        return '<li><span class="d ' + cls + '">' + delta + "</span><span>"
-            + escapeHtml(x.text) + "</span></li>";
-    }).join("");
     const alerts = (r.alerts || []).map(function (a) {
         return '<li class="' + escapeHtml(a.level) + '"><b>' + escapeHtml(a.tag) + "</b>"
             + escapeHtml(a.text) + "</li>";
@@ -317,18 +479,9 @@ function detailHtml(d) {
     }).join("");
 
     return '<div class="lb-detail">'
-        + '<div class="lb-detail-head">'
-        + '<span class="lb-detail-title">' + escapeHtml(r.name) + " " + escapeHtml(r.code) + "</span>"
-        + scenePill(r.scene)
-        + '<span class="lb-detail-sub">' + escapeHtml(r.explanation || "") + "</span>"
-        + '<span class="lb-detail-sub">收盘 ' + (r.close === null ? "—" : Number(r.close).toFixed(2))
-        + " · 换手 " + lbPct(r.turnover_rate) + " · 成交额 " + lbMoney(r.accum_amount, 1)
-        + " · 龙虎占比 " + lbPct(r.deal_ratio)
-        + (r.inst_streak >= 2 ? " · 机构连买 " + r.inst_streak + " 日" : "") + "</span>"
-        + '<span class="lb-detail-sub">' + (r.combo_note
-            ? "组合解读（" + escapeHtml(r.combo_tag || "") + "）：" + escapeHtml(r.combo_note) : "")
-        + "</span>"
-        + "</div>"
+        + heroBlock(r)
+        + mcardsBlock(r, d)
+        + factorsBlock(r)
         + '<div class="lb-detail-grid">'
         /* 左：席位 */
         + '<div class="lb-panel"><div class="lb-panel-title">买卖前五席位'
@@ -339,15 +492,18 @@ function detailHtml(d) {
         + seatRows(d.sell, "sell") + "</div>"
         + '<div id="lbSeatProfile" class="lb-seat-profile" style="display:none"></div>'
         + "</div>"
-        /* 右：图 + 打分 + 告警 */
+        /* 右：图 + 组合解读 + 告警 */
         + '<div class="lb-panel"><div class="lb-panel-title">买五卖五对照'
         + '<span class="lb-panel-sub">单位：元（悬停看营业部）</span></div>'
         + '<div id="lbChart" class="lb-chart"></div>'
-        + '<div class="lb-panel-title" style="margin-top:0.8rem">打分拆解 '
-        + (r.score === null ? "" : "（" + r.score + " 分）") + "</div>"
-        + '<ul class="lb-reasons">' + (reasons || '<li><span class="d zero">·</span><span>无</span></li>') + "</ul>"
-        + (alerts ? '<div class="lb-panel-title" style="margin-top:0.6rem">告警</div>'
-            + '<ul class="lb-alert-list">' + alerts + "</ul>" : "")
+        + (r.combo_note
+            ? '<div class="lb-panel-title" style="margin-top:0.8rem">组合解读'
+              + '<span class="lb-panel-sub">' + escapeHtml(r.combo_tag || "") + "</span></div>"
+              + '<div class="lb-panel-note">' + escapeHtml(r.combo_note) + "</div>" : "")
+        + '<div class="lb-panel-title" style="margin-top:0.7rem">告警 '
+        + '<span class="lb-panel-sub">' + (alerts ? (r.alerts || []).length + " 条" : "无") + "</span></div>"
+        + (alerts ? '<ul class="lb-alert-list">' + alerts + "</ul>"
+            : '<div class="lb-panel-note">没有触发对倒 / 孤庄 / 三日榜等告警</div>')
         + "</div></div>"
         /* 下：该股历史上榜 */
         + '<div class="lb-panel" style="margin-top:0.8rem"><div class="lb-panel-title">该股历史龙虎'
@@ -502,9 +658,8 @@ async function openDetail(tid) {
         if (seq !== LHB.state.detailSeq) return;  // 期间点了别的行 / 关了抽屉
         body.innerHTML = detailHtml(data);
         swapFade(body);
-        const rec = data.record || {};
-        document.getElementById("lbDrawerTitle").textContent =
-            (rec.name || "") + " " + (rec.code || "") + " · 席位明细";
+        // 顶栏只留「席位明细」：股票名/代码在内容顶部已经是大字，重复一遍反而挤
+        document.getElementById("lbDrawerTitle").textContent = "席位明细";
         drawChart(data);
         // 席位点击 → 实测画像
         body.querySelectorAll(".lb-seat-row").forEach(function (el) {
