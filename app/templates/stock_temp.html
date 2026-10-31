@@ -393,6 +393,31 @@ function greedConfirmHtml(c) {
         + "</div></div>";
 }
 
+// 仅展示卡：权重 0，不参与任何计算（当前是科创100 PE-TTM）
+// 展示口径刻意与「沪深300 PE-TTM」那张主成分卡一致：读数 / 数据日期 / 分位 / 状态 +
+// 指标含义 / 怎么看，只是把权重换成「仅展示 · 权重 0」。
+function greedDisplayHtml(d) {
+    const has = d.percentile !== null && d.percentile !== undefined;
+    const color = tone(d.tone || "slate");
+    return "<div class=\"st-pc\" style=\"border-left-color:" + color + "\">"
+        + "<div class=\"st-pc-head\"><span class=\"st-pc-name\">" + escapeHtml(d.name) + "</span>"
+        + "<span class=\"st-pc-weight\">仅展示 · 权重 0</span></div>"
+        + "<div class=\"st-pc-sub\">" + escapeHtml(d.subtitle || "") + "</div>"
+        + "<div class=\"st-pc-row\"><span class=\"st-pc-pct\">读数 "
+        + (d.value === null || d.value === undefined ? "—"
+            : Number(d.value).toFixed(d.digits === undefined ? 2 : d.digits) + escapeHtml(d.unit || ""))
+        + "</span>"
+        + "<span class=\"st-pf-samples\">" + escapeHtml(d.as_of || "—") + "</span>"
+        + (has ? "<span class=\"st-pf-samples\">分位 " + Number(d.percentile).toFixed(1) + "%</span>" : "")
+        + "<span class=\"st-pc-hit\" style=\"color:" + color + "\">" + escapeHtml(d.state || "—") + "</span>"
+        + "</div>"
+        + "<div class=\"st-pc-hint\">" + escapeHtml(d.note || "") + "</div>"
+        + "<div class=\"st-explain st-pf-explain\">"
+        + "<p><span class=\"st-label\">指标含义</span>" + escapeHtml(d.meaning || "") + "</p>"
+        + "<p><span class=\"st-label\">怎么看</span>" + escapeHtml(d.guide || "") + "</p>"
+        + "</div></div>";
+}
+
 function greedSummaryHtml(p) {
     if (p.value === null || p.value === undefined) {
         return "<div class=\"st-psummary\"><div class=\"st-summary-title\">怎么读这个指数</div>"
@@ -445,6 +470,8 @@ function greedGaugeHtml(p) {
 
     const factors = (p.factors || []).map(greedFactorHtml).join("");
     const confirms = (p.confirms || []).map(greedConfirmHtml).join("");
+    // 仅展示项（权重 0，如科创100 PE-TTM）：不参与合成，单独一张卡
+    const displays = (p.displays || []).map(greedDisplayHtml).join("");
     const deep = p.deep ? "<div class=\"st-pdeep " + (p.deep.hit ? "hit" : "weak")
         + "\" style=\"border-left-color:" + tone(p.deep.tone || "slate") + "\">"
         + "<div class=\"st-pdeep-title\">" + escapeHtml(p.deep.title) + "</div>"
@@ -473,6 +500,12 @@ function greedGaugeHtml(p) {
         + "<span class=\"st-group-sub\">估值是慢变量，混进主指数会钝化日频灵敏度；"
         + "只在极端区确认，正好弥补 88% 情绪占比下估值信号的稀释</span></div>"
         + "<div class=\"st-pc-grid\">" + confirms + "</div>"
+        + (displays.length
+            ? "<div class=\"st-pc-title\">仅展示（权重 0，不参与任何计算）"
+              + "<span class=\"st-group-sub\">只作横向对照：读数照常抓取、照常更新，"
+              + "但不进加权合成、不做确认闸门</span></div>"
+              + "<div class=\"st-pc-grid\">" + displays + "</div>"
+            : "")
         + "<div class=\"st-gauge-note\">分位口径为<b>「项目历史表逐日累计 + V3.6c 基准值兜底」</b>："
         + "历史表里该分项有 <b>2 期以上</b>可比读数就直接用实测分位；一期都没有时用规格基准值"
         + "（对应 10/19 读数）兜底，卡片上标为「基准分位」。"
@@ -612,6 +645,9 @@ function notesHtml() {
         + "可以并排看——都高说明市场很热，都低说明冷清。</li>"
         + "<li><b>权重</b>：情绪 88%（市场宽度 / 全A换手率 / 两市成交额 / 融资余额占流通市值各 22%）"
         + "+ 估值 12%（沪深300 PE-TTM），合计 100%，<b>无资金主成分</b>。</li>"
+        + "<li><b>科创100 PE-TTM 只展示、不计算</b>：和沪深300 PE-TTM 并排列出，"
+        + "方便对照「成长股相对宽基贵多少」；它的权重是 0，不进加权合成、不做确认闸门，"
+        + "读数高低不会影响贪婪指数。</li>"
         + "<li><b>分位直接用历史分位</b>（越高越贪婪），不做「100 − 分位」的反向换算，"
         + "所以与综合温度计方向天然对齐。分子为<b>严格小于</b>当前值的样本数。</li>"
         + "<li><b>分位口径：逐日累计 + 基准值兜底</b>（不用固定窗口）。历史表里该分项有 2 期以上"

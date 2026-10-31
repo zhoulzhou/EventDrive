@@ -11,6 +11,12 @@
 （市场宽度 / 全A换手率 / 两市成交额 / 融资余额占流通市值 / 沪深300 PE-TTM），
 只做「分位 → 合成 → 判档 → 信号」。
 
+展示项（权重 0，不参与计算）
+---------------------------
+**科创100 PE-TTM**（stock_temp 的 kc100_pe，中证 000698）：用户 2026-10-31 要求，
+按沪深300 PE-TTM 同样的样式并列展示，**只展示、不参与任何计算** ——
+不进加权合成、不做确认闸门、不影响贪婪指数读数。见 GREED_DISPLAY。
+
 权重（V3.6c 定稿）
 ------------------
 情绪 88%：市场宽度 / 全A换手率 / 两市成交额 / 融资余额占流通市值，各 22%
@@ -197,6 +203,23 @@ GREED_CONFIRM: List[Dict[str, Any]] = [
 GREED_KEYS = [f["key"] for f in GREED_MAIN] + [f["key"] for f in GREED_CONFIRM]
 GREED_MAIN_MAP = {f["key"]: f for f in GREED_MAIN}
 GREED_CONFIRM_MAP = {f["key"]: f for f in GREED_CONFIRM}
+
+# ---------------------------------------------------------------- 仅展示指标
+#
+# 权重 0、不进合成、不做闸门 —— 只是把读数按「和沪深300 PE-TTM 一样」的样式
+# 摆在贪婪指数区块里作对照。
+# 用户 2026-10-31 要求：加科创100 PE-TTM，明确「只用来展示不参与计算」。
+# ⚠️ 指标本身的规格（读数判定/档位/含义）在 stock_temp.DISPLAY_ONLY_INDICATORS，
+#    这里只登记「要在贪婪指数区块里露出的 key + 一句为什么要摆它」。
+GREED_DISPLAY: List[Dict[str, Any]] = [
+    {
+        "key": "kc100_pe",
+        "title": "科创100 PE-TTM",
+        "note": ("与沪深300 PE-TTM 并排看：科创100 是科创板中等市值成长股集合，"
+                 "两者 PE 的比值走高说明风险偏好扩张、资金往成长股跑。"
+                 "本项权重 0，只展示、不参与贪婪指数与综合温度计的任何计算。"),
+    },
+]
 
 # ---------------------------------------------------------------- 五档区间
 #
@@ -422,6 +445,33 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     erp = next((c for c in confirms if c["key"] == "erp"), None)
     erp_pct = erp["percentile"] if erp else None
 
+    # ---- 仅展示（权重 0）：读数照抄 stock_temp 的 item，展示口径与沪深300 PE 一致
+    displays: List[Dict[str, Any]] = []
+    for spec in GREED_DISPLAY:
+        item = items.get(spec["key"]) or {}
+        detail = item.get("detail") or {}
+        displays.append({
+            "key": spec["key"],
+            "name": item.get("name") or spec.get("title") or spec["key"],
+            "subtitle": item.get("subtitle") or "",
+            "note": spec.get("note") or "",
+            "value": _finite(item.get("value")),
+            "unit": item.get("unit", ""),
+            "digits": item.get("digits", 2),
+            "as_of": item.get("as_of") or "—",
+            "state": item.get("state") or "—",
+            "tone": item.get("tone") or "slate",
+            "percentile": _finite(detail.get("分位")),
+            "percentile_window": detail.get("分位窗口"),
+            "samples": detail.get("样本期数"),
+            "detail_text": item.get("detail_text") or "",
+            "meaning": item.get("meaning") or "",
+            "guide": item.get("guide") or "",
+            "error": item.get("error"),
+            "weight": 0.0,
+            "weight_pct": 0.0,
+        })
+
     # ---- 深度确认：泡沫警示（贪婪指数 > 90 且 ERP 分位 < 20）
     deep = None
     if value is not None and value > BUBBLE_MIN:
@@ -455,11 +505,13 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         "zones": GREED_ZONES,
         "factors": factors,
         "confirms": confirms,
+        "displays": displays,
         "coverage": coverage,
         "deep": deep,
         "formula": ("市场贪婪指数 = 0.22 ×（市场宽度 + 全A换手率 + 两市成交额 + 融资余额占流通市值）"
                     " + 0.12 × 沪深300 PE-TTM"),
-        "weight_note": "情绪 88%（四项各 22%）+ 估值 12%（PE-TTM）= 100%，无资金主成分",
+        "weight_note": "情绪 88%（四项各 22%）+ 估值 12%（PE-TTM）= 100%，无资金主成分；"
+                       "科创100 PE-TTM 仅展示、不计入",
         "window_note": ("分位取自项目历史表逐日累计（满 %d 期即用实测；样本少于 %d 期时档位很粗，"
                         "卡片会标「精度低」）；还没有可比读数时用 V3.6c 基准值（对应 10/19 读数）兜底"
                         % (GREED_BASE_MIN_SAMPLES, GREED_LOW_PRECISION_AT)),
