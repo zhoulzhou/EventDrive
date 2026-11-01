@@ -7,7 +7,7 @@
     gap: 1.5rem;
     flex-wrap: wrap;
 }
-.macro-header-text { flex: 1; min-width: 320px; }
+.macro-header-text { flex: 1 1 640px; min-width: 0; }  /* 同 lhb：basis 640px 保证窄屏时工具栏整行让位 */
 .macro-header h1 { font-size: 2rem; color: #333; margin-bottom: 0.75rem; }
 .macro-toolbar { display: flex; align-items: center; gap: 0.85rem; }
 .macro-updated { color: #888; font-size: 0.85rem; }
