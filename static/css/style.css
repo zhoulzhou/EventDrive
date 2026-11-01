@@ -27,9 +27,13 @@ body {
 }
 
 .container {
-    max-width: 1200px;
+    /* 2026-11-01 用户要求：内容区不再锁 1200px 居中，铺满整个屏幕宽度
+       （宽屏上原来说明文字只到屏幕一半就折行）。左右留白随视口缩放：
+       窄屏 18px 保边距，超宽屏封顶 56px 防止完全贴边。 */
+    width: 100%;
+    max-width: 100%;
     margin: 0 auto;
-    padding: 0 20px;
+    padding: 0 clamp(18px, 2.2vw, 56px);
 }
 
 .navbar {
@@ -200,6 +204,9 @@ body {
 .news-summary {
     color: #666;
     line-height: 1.6;
+    /* 内容区改为全宽后，长摘要一行会到 200+ 字符，读起来很累；
+       这里只限制「正文阅读区」的行宽，顶部说明文字仍然铺满整屏。 */
+    max-width: 78ch;
 }
 
 .pagination {
@@ -307,6 +314,8 @@ body {
     font-size: 1.1rem;
     line-height: 1.8;
     color: #444;
+    /* 同上：新闻正文限制行宽，避免全宽下一行过长 */
+    max-width: 68ch;
 }
 
 .detail-footer {
