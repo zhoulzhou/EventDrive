@@ -198,12 +198,20 @@ async def refresh_macro_indicators(session: str = "manual"):
     log_crawl("=" * 50)
     mark_task_started("macro")
     t0 = datetime.now()
+    # scope="auto"：日频资金面每天抓；月频月度数据只在「15 号起、且本月还没拿到
+    # 上月数据」时才一起抓（规则见 macro_refresh.monthly_due）。
+    # 手动刷新（POST /api/macro/refresh）走的是 refresh_snapshot 默认的 scope="all"。
+    stats: Dict[str, Any] = {}
     try:
-        updated, errors, history_added = await asyncio.to_thread(refresh_snapshot)
-        log_crawl(f"宏观指标更新完成: 快照 {updated} 项, 历史新增 {history_added} 条")
+        updated, errors, history_added = await asyncio.to_thread(
+            lambda: refresh_snapshot(scope="auto", stats=stats))
+        log_crawl(
+            "宏观指标更新完成: 快照 %d 项, 历史新增 %d 条（抓取范围 %s：%s）"
+            % (updated, history_added, stats.get("scope"), stats.get("monthly_reason") or "-")
+        )
         for key, msg in (errors or {}).items():
             log_crawl(f"  ! {key} 抓取失败（保留上次读数）: {msg}")
-        _write_crawl_log(task="macro", session=session, source="macro",
+        _write_crawl_log(task="macro", session=session, source=f"macro:{stats.get('scope', 'all')}",
                          item_count=updated,
                          status="ok" if updated else "empty",
                          duration=int((datetime.now() - t0).total_seconds()))

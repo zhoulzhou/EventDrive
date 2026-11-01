@@ -3,17 +3,20 @@
 把「抓取 → 落库」从接口层抽出来，让 Web 接口与后台定时任务用同一份实现，
 避免两处逻辑漂移：
 
-- refresh_snapshot() ：抓取全部自动指标，写 macro_indicators（最新快照）
-                       与 macro_indicator_history（历史，读数变化才追加）
+- refresh_snapshot() ：抓取指标，写 macro_indicators（最新快照）
+                       与 macro_indicator_history（历史，读数变化才追加）。
+                       scope="all" 全抓（手动刷新）；scope="auto" 按日历决定
+                       —— 日频天天抓、月频每月 15 号起抓到为止（见 monthly_due）
 - backfill_history() ：按（指标, 数据日期）回溯写入历史序列，幂等可重复执行；
                        历史表过少时自动升级为全量回溯。**只由「宏观趋势」页的
                        「补齐历史数据」按钮触发，不在定时任务里跑**
 
-定时抓取由外部自动任务在北京时间 16:00 调用 POST /api/crawl/daily-refresh 点火
-（见 app/api/crawl.py）；定时任务只调用 refresh_snapshot() 抓当前读数，不做历史回溯。
+定时抓取由 CloudBase 云函数在北京时间 21:34 调用 POST /api/crawl/daily-refresh
+点火（见 app/api/crawl.py 与 app/scheduler.py 的收盘轮）；定时任务只调用
+refresh_snapshot() 抓当前读数，不做历史回溯。
 """
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -35,6 +38,69 @@ FULL_WINDOWS = {"months_daily": 24, "months_monthly": 60, "tsf_limit": 13}
 # 直接调用 backfill_history() 且不传窗口时的默认值（只补最近几个月，请求量小）。
 # 页面按钮走 POST /api/macro/backfill，会显式传全量窗口（24 个月日度 / 60 个月月度）。
 INCREMENTAL_WINDOWS = {"months_daily": 2, "months_monthly": 3, "tsf_limit": 3}
+
+# ---------------------------------------------------------------- 月频抓取日历
+#
+# 用户 2026-11-01 要求：**月度数据不再每天跟着收盘轮抓**。
+# 规则：每月 15 号起抓一次；当天没拿到（报告期没前进）就第二天再试，
+# 直到所有月频项的报告期都推进到「上月」为止，本月不再抓。
+#
+# 为什么是 15 号：统计局 / 央行的月度数据在次月上旬到 15 日之间发布完
+# （PPI 次月 9 日左右、社融与 M1/M2 次月 10~15 日、PMI 月末发布当月值）。
+# 15 号去抓，正常情况下上月的月度数据已经全齐。
+#
+# 为什么用「报告期」判断而不是写个「本月已抓」的标记：数据本身就是状态，
+# 天然幂等，不用额外维护一张标记表，也不会因为清库 / 换库而丢标记。
+#
+# ⚠️ 已知代价：PMI 当月在月末就发布，但要等到次月 15 号才抓，
+# 页面上的 PMI 会滞后约半个月。这是「月度数据不天天抓」必然的取舍。
+MONTHLY_START_DAY = 15
+
+
+def _period_of(as_of: Any) -> Optional[str]:
+    """把 as_of 归一成 "YYYY-MM"；不是合规月度报告期（如「兜底默认值」）返回 None。"""
+    text = str(as_of or "").strip()[:7]
+    if len(text) != 7 or text[4] != "-":
+        return None
+    if not (text[:4].isdigit() and text[5:].isdigit()):
+        return None
+    return text
+
+
+def _prev_month(today: date) -> str:
+    """上一自然月的 "YYYY-MM"（月度数据次月发布，故期望报告期就是上月）。"""
+    first = today.replace(day=1)
+    return (first - timedelta(days=1)).strftime("%Y-%m")
+
+
+def expected_monthly_period(today: Optional[date] = None) -> str:
+    """当前应有的最新月度报告期（"YYYY-MM"）。页面用来显示「月频数据到几月了」。"""
+    return _prev_month(today or date.today())
+
+
+def monthly_due(db: Session, today: Optional[date] = None) -> Tuple[bool, str]:
+    """本月是否还需要抓月频数据。返回 (是否需要抓, 一句原因)。
+
+    判定只看**库中月频项的报告期**是否都已推进到「上月」：
+      · 未到 15 号 → 不抓（哪怕还没齐，也等 15 号一起抓）
+      · 全部 ≥ 上月 → 不抓（本月已拿到）
+      · 仍有项 < 上月（含抓取失败导致 as_of 为空）→ 抓，次日再看
+    """
+    today = today or date.today()
+    if today.day < MONTHLY_START_DAY:
+        return False, "未到 %d 号（月频窗口从 %d 号开始）" % (MONTHLY_START_DAY, MONTHLY_START_DAY)
+
+    want = _prev_month(today)
+    rows = crud.get_macro_indicators(db)
+    pending = []
+    for key in mi.MONTHLY_KEYS:
+        row = rows.get(key)
+        period = _period_of(getattr(row, "as_of", None)) if row is not None else None
+        if period is None or period < want:
+            pending.append("%s=%s" % (key, period or getattr(row, "as_of", None) or "无"))
+    if pending:
+        return True, "待补齐至 %s：%s" % (want, ", ".join(pending))
+    return False, "本月已齐（报告期均 ≥ %s）" % want
 
 
 def anchor_value(db: Session) -> float:
@@ -130,22 +196,45 @@ def _record_thermometer(db: Session) -> int:
     }])
 
 
-def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str], int]:
-    """抓取全部自动指标并落库。
+def refresh_snapshot(db: Optional[Session] = None,
+                     scope: str = "all",
+                     stats: Optional[Dict[str, Any]] = None) -> Tuple[int, Dict[str, str], int]:
+    """抓取自动指标并落库。
 
     返回 (成功写入快照条数, {失败指标: 原因}, 新增历史记录条数)。
 
     抓取失败的指标保留上一次成功读数，不用空值覆盖。传入 db 时复用调用方会话
     （Web 接口走请求级 get_db），不传则自建并在结束时关闭（定时任务在请求上下文
     之外调用，无法依赖 FastAPI 的依赖注入）。
+
+    scope —— 抓取范围（2026-11-01 新增，起因是「月度数据不必每天拉」）：
+      · "all"（默认）：日频 + 月频全抓。手动刷新（页面「刷新数据」按钮）走这个，
+        行为与改造前完全一致。
+      · "auto"：**定时任务用**。按 macro_refresh.monthly_due 判断——本月还没拿到
+        月上月数据（且已过 15 号）就全抓，否则只抓日频资金面。
+      · "daily" / "monthly"：显式限定，供排查用。
+
+    stats —— 可选 dict，函数把本轮决策写进去（scope / monthly_reason），
+    供定时任务写进 crawl_logs，线上排查能看到「这轮为什么只抓了日频」。
+    不放进返回值是为了不破坏已有的三元组契约。
     """
     own = db is None
     if own:
         db = SessionLocal()
     try:
+        reason = ""
+        if scope == "auto":
+            due, reason = monthly_due(db)
+            scope = "all" if due else "daily"
+        if stats is not None:
+            stats["scope"] = scope
+            stats["monthly_reason"] = reason
+        logger.info("宏观抓取范围=%s（%s）", scope, reason or "显式指定")
+
         fetched = mi.fetch_auto_values(
             anchor_fallback=anchor_value(db),
             hints=current_hints(db),
+            scope=scope,
         )
 
         records = []

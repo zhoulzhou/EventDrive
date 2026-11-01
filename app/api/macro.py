@@ -17,10 +17,12 @@ A股估值/情绪类读数不在本页，见「股票指标」页（/stock-temp�
 - macro_indicators        ：每个指标一行，保存当前读数（覆盖式，页面读取用）
 - macro_indicator_history ：每次抓到的读数发生变化就追加一行（只增不改，用于回溯）
 
-**本页数据全部由定时任务抓取**：外部自动任务在**北京时间每天 16:00** 调用
-`POST /api/crawl/daily-refresh` 触发宏观指标抓取（实现见 app/utils/macro_refresh.py，
-与本文件的 POST /refresh 共用同一份）。GET 接口只读库、不触发任何外部请求，
-所以打开页面是瞬时的；要立刻更新就点页面的「刷新数据」按钮（POST /refresh）。
+**本页数据全部由定时任务抓取**：CloudBase 云函数在**北京时间 21:34（工作日）**调用
+`POST /api/crawl/daily-refresh` 触发（实现见 app/utils/macro_refresh.py，与本文件的
+POST /refresh 共用同一份）。其中**日频资金面每天抓，月频月度数据每月 15 号起抓一次**，
+拿到最新报告期后本月不再重复抓（见 macro_refresh.monthly_due）。
+GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时的；要立刻更新就点页面的
+「刷新数据」按钮（POST /refresh，它走全量抓取，不受月频日历限制）。
 
 **「宏观趋势」页的长历史序列不由定时任务生成**：定时任务只抓当前读数（顺带把读数
 发生变化的行追加进历史表），历史回溯完全靠页面「补齐历史数据」按钮按需触发
@@ -55,8 +57,8 @@ _macro_refresh_status: Dict[str, Any] = {"running": False, "last_result": None}
 # 页面「更新于」的展示时区（库中时间戳是 UTC，见 _utcnow）
 CN_TZ = ZoneInfo("Asia/Shanghai")
 
-# 超过这个时长没有落库就提示检查调度器。数据抓取任务每天只在**北京 16:00** 跑一次，
-# 正常间隔就是 24 小时，故阈值取 26 小时（留 2 小时缓冲）：既避免误报，
+# 超过这个时长没有落库就提示检查调度器。日频资金面每个交易日收盘轮（北京 21:34）都会写，
+# 正常间隔不超过 24 小时；阈值取 26 小时（留 2 小时缓冲）：既避免周末误报，
 # 又能在「某天没跑成」的次日晚上及时提示。
 DATA_STALE_HOURS = 26
 
@@ -151,6 +153,21 @@ def _payload(db: Session, refreshed: int, errors: Dict[str, str], history_added:
         age = (_utcnow() - written).total_seconds() / 3600
         payload["data_age_hours"] = round(age, 1)
         payload["stale"] = age >= DATA_STALE_HOURS
+
+    # 月频抓取状态（2026-11-01 起月度数据只在每月 15 号起抓，页面要能解释
+    # 「为什么月频卡片还停在上上月」）。纯读库判断，不触发任何外部请求。
+    try:
+        due, reason = mrf.monthly_due(db)
+        payload["monthly"] = {
+            "due": due,
+            "reason": reason,
+            "expected": mrf.expected_monthly_period(),
+            "start_day": mrf.MONTHLY_START_DAY,
+            "keys": list(mi.MONTHLY_KEYS),
+        }
+    except Exception as e:  # noqa: BLE001 - 展示用信息，判断失败不该拖垮整页
+        logger.warning("月频状态判定失败: %s", e)
+        payload["monthly"] = {"due": None, "reason": "判定失败：%s" % e}
     return payload
 
 
@@ -158,7 +175,8 @@ def _payload(db: Session, refreshed: int, errors: Dict[str, str], history_added:
 def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     """读取库中已有的指标与组合解读（**只读**，不触发抓取）。
 
-    数据由 `./start.sh` 启动的定时任务在**北京时间每天 16:00** 抓取写入；需要立刻更新时
+    数据由 CloudBase 云函数在**工作日北京 21:34** 点火抓取写入（日频每天抓、
+    月频每月 15 号起抓）；需要立刻更新时走 POST /api/macro/refresh（页面「刷新数据」按钮）。
     走 POST /api/macro/refresh（页面「刷新数据」按钮）。
 
     响应里的 `thermometer.model_limits` 是**模型缺陷与风控规则**（存单失真 / 季末脉冲 /

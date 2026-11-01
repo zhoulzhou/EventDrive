@@ -273,6 +273,11 @@ function notesHtml() {
                 <p class="macro-note-tail">
                     本页所有读数都由后端定时任务自动抓取（akshare + 央行官网），
                     站内只做口径转换与阈值判定，不提供手工录入。
+                    <br><b>抓取节奏</b>：日频资金面（DR007 偏离 / 存单 / 分层利差）每个交易日收盘轮抓一次；
+                    月频数据（PMI / PPI / 社融 / M1−M2 / 信用结构）<b>每月 15 号起抓一次</b>，
+                    当天没拿到最新报告期就次日再试，拿到后本月不再重复抓。
+                    所以每月 15 号之前，月频卡片通常停在<b>上上月</b>的报告期（新数据要么还没发布，
+                    要么等 15 号那轮才抓），属正常，不是抓取失败。
                 </p>
             </div>
         </div>
@@ -517,6 +522,18 @@ function thermoHtml(data) {
     </section>`;
 }
 
+// 月频抓取状态（后端 payload.monthly）：回答「为什么月频卡片还停在上上月的报告期」。
+// 2026-11-01 起月度数据只在每月 15 号起抓，抓到最新报告期后本月不再重复抓。
+function monthlyBadge(m) {
+    if (!m || !m.expected) return "";
+    if (m.due === null || m.due === undefined) return " · 月频状态未知";
+    if (!m.due) return ` · 月频已齐（报告期 ${m.expected}）`;
+    const waiting = String(m.reason || "").indexOf("未到") === 0;
+    return waiting
+        ? ` · 月频等 ${m.start_day || 15} 号抓取（目标 ${m.expected}）`
+        : ` · 月频待补齐（目标 ${m.expected}）`;
+}
+
 function render(data) {
     currentData = data;
     TONES = Object.assign({}, LOCAL_TONES, data.tones || {});
@@ -526,12 +543,13 @@ function render(data) {
         ? `<div class="macro-alert">本次有 ${errors.length} 项自动指标更新失败（${errors.map(escapeHtml).join("、")}），已展示上次成功读数。行情类指标依赖项目 venv 中的 akshare，央行类指标依赖 www.pbc.gov.cn 可访问；可稍后点「刷新数据」重试。</div>`
         : "";
     if (data.stale) {
-        notice += `<div class="macro-alert">数据已 ${data.data_age_hours} 小时未落库（最后更新 ${escapeHtml(data.updated_at)}）。本页读数由定时任务抓取（北京时间 16:00），本页自身不抓数据。</div>`;
+        notice += `<div class="macro-alert">数据已 ${data.data_age_hours} 小时未落库（最后更新 ${escapeHtml(data.updated_at)}）。本页读数由定时任务抓取（每个交易日收盘轮 21:34，含日频资金面；月频数据每月 15 号起抓），本页自身不抓数据。</div>`;
     }
     document.getElementById("macroNotice").innerHTML = notice;
     document.getElementById("macroUpdated").textContent =
         "数据更新于 " + (data.updated_at || "—")
-        + (data.refreshed ? `（本次刷新 ${data.refreshed} 项）` : "");
+        + (data.refreshed ? `（本次刷新 ${data.refreshed} 项）` : "")
+        + monthlyBadge(data.monthly);
 
     const html = comboHtml(data)
         + thermoHtml(data)

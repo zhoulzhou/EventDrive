@@ -391,6 +391,27 @@ PBC_KEYS = ["tsf_yoy", "corp_ml_loan_yoy", "household_ml_loan_yoy", "fiscal_depo
             PARAM_REVERSE_REPO]
 AUTO_KEYS = AK_KEYS + NCD_KEYS + PBC_KEYS
 
+# 抓取频率分组（2026-11-01 用户要求：月度数据不再每天收盘轮全量拉）
+#
+# 背景：10 项里只有资金面 3 项是日频，其余 7 项（统计局 / 央行的月度数据）一个月
+# 才更新一次，每天跟着收盘轮抓一遍纯属重复请求——既慢又增加被来源限流的概率。
+# 现在改为：日频项每天抓；月频项**每月 15 号起抓一次**，当天没拿到（报告期没前进）
+# 就次日再试，直到所有月频项的报告期都推进到「上月」为止，本月不再抓。
+# 具体日历逻辑在 app/utils/macro_refresh.py（monthly_due / refresh_snapshot）。
+#
+# 日频：资金面三项 + 政策利率锚（逆回购利率随公开市场操作公告发布）
+DAILY_KEYS = ["dr007_spread", "ncd_1y_aaa", "r001_dr001", PARAM_REVERSE_REPO]
+# 月频：报告期形如 "2026-09"，由各来源的月度发布节奏决定
+MONTHLY_KEYS = [
+    "pmi",                  # 制造业 PMI（统计局，月末发布当月值）
+    "ppi_yoy",              # PPI 同比（次月上旬）
+    "tsf_yoy",              # 社融存量同比（央行，次月 10~15 日）
+    "m1_m2",                # M1 − M2 剪刀差（同社融）
+    "corp_ml_loan_yoy",     # 企业中长贷同比多增（同社融）
+    "household_ml_loan_yoy",  # 住户中长贷同比多增（同社融）
+    "fiscal_deposit_mom",   # 财政存款当月环比（同社融）
+]
+
 # 有效自动来源；库中记录的 source 不在此集合内（如历史遗留的 manual）即视为待刷新
 AUTO_SOURCES = {"akshare", "pbc", "chinamoney"}
 
@@ -741,14 +762,33 @@ def _item(value, as_of, source, detail=None) -> Dict[str, Any]:
 def fetch_auto_values(
     anchor_fallback: Optional[float] = None,
     hints: Optional[Dict[str, Dict[str, Any]]] = None,
+    scope: str = "all",
 ) -> Dict[str, Dict[str, Any]]:
-    """抓取全部自动指标，返回 {key: {value, as_of, source, detail, error}}。
+    """抓取自动指标，返回 {key: {value, as_of, source, detail, error}}。
 
     单个指标抓取失败只影响该指标（value=None + error），不影响其他指标。
     anchor_fallback：库中已有的 7 天逆回购利率，抓取失败时兜底。
     hints           ：各指标已落库的 detail；现仅保留参数以兼容调用方
                       （原「超储率报告期未变则跳过下载 PDF」的逻辑已随分项下线）。
+    scope           ：抓取范围，决定本轮打哪些来源
+                      · "all"（默认）：全抓，手动刷新用
+                      · "daily"：只抓日频资金面（DAILY_KEYS），收盘轮常态走这个
+                      · "monthly"：只抓月频月度数据（MONTHLY_KEYS）
+
+    ⚠️ 被 scope 排除的键**不出现在返回里**（不是给个 error），这样调用方
+    refresh_snapshot 就不会把它当成「抓取失败」记进 errors，也不会用空值覆盖库中读数。
+    日历决策（哪天该抓月频）不在这里，见 macro_refresh.monthly_due。
     """
+    if scope not in ("all", "daily", "monthly"):
+        raise ValueError("scope 只能是 all / daily / monthly，收到 %r" % (scope,))
+
+    def _want(key: str) -> bool:
+        if scope == "daily":
+            return key in DAILY_KEYS
+        if scope == "monthly":
+            return key in MONTHLY_KEYS
+        return True
+
     result: Dict[str, Dict[str, Any]] = {}
 
     def _fail(key: str, source: str, exc: Exception):
@@ -762,59 +802,66 @@ def fetch_auto_values(
         }
 
     # ---------------- 中国货币网：1Y AAA 同业存单收益率（替代原超储率）
-    ncd = _import_ncd()
-    if ncd is None:
-        for key in NCD_KEYS:
-            _fail(key, "chinamoney", RuntimeError("存单利率模块不可用"))
-    else:
-        try:
-            item = _fetch_ncd_rate(ncd)
-            result["ncd_1y_aaa"] = _item(item["value"], item["as_of"], "chinamoney",
-                                         item.get("detail"))
-        except Exception as exc:
-            _fail("ncd_1y_aaa", "chinamoney", exc)
+    if _want("ncd_1y_aaa"):
+        ncd = _import_ncd()
+        if ncd is None:
+            for key in NCD_KEYS:
+                _fail(key, "chinamoney", RuntimeError("存单利率模块不可用"))
+        else:
+            try:
+                item = _fetch_ncd_rate(ncd)
+                result["ncd_1y_aaa"] = _item(item["value"], item["as_of"], "chinamoney",
+                                             item.get("detail"))
+            except Exception as exc:
+                _fail("ncd_1y_aaa", "chinamoney", exc)
 
     # ---------------- 央行官网：逆回购利率 / 社融存量同比 / 分部门存贷款（信用·部门三项）
     pbc = _import_pbc()
     if pbc is None:
         for key in PBC_KEYS:
-            _fail(key, "pbc", RuntimeError("央行数据模块不可用"))
+            if _want(key):
+                _fail(key, "pbc", RuntimeError("央行数据模块不可用"))
     else:
-        try:
-            item = pbc.fetch_reverse_repo_rate()
-            result[PARAM_REVERSE_REPO] = _item(
-                item["value"], item.get("as_of"), "pbc", item.get("detail"))
-        except Exception as exc:
-            _fail(PARAM_REVERSE_REPO, "pbc", exc)
+        if _want(PARAM_REVERSE_REPO):
+            try:
+                item = pbc.fetch_reverse_repo_rate()
+                result[PARAM_REVERSE_REPO] = _item(
+                    item["value"], item.get("as_of"), "pbc", item.get("detail"))
+            except Exception as exc:
+                _fail(PARAM_REVERSE_REPO, "pbc", exc)
 
-        try:
-            item = pbc.fetch_tsf_stock_yoy()
-            result["tsf_yoy"] = _item(
-                item["value"], item.get("as_of"), "pbc", item.get("detail"))
-        except Exception as exc:
-            _fail("tsf_yoy", "pbc", exc)
+        if _want("tsf_yoy"):
+            try:
+                item = pbc.fetch_tsf_stock_yoy()
+                result["tsf_yoy"] = _item(
+                    item["value"], item.get("as_of"), "pbc", item.get("detail"))
+            except Exception as exc:
+                _fail("tsf_yoy", "pbc", exc)
 
-        try:
-            credit = pbc.fetch_credit_structure()
-            for key in ("corp_ml_loan_yoy", "household_ml_loan_yoy", "fiscal_deposit_mom"):
-                node = (credit.get("items") or {}).get(key) or {}
-                value = node.get("value")
-                if value is None:
-                    _fail(key, "pbc", RuntimeError("分部门贷款 / 财政存款解析不到该项"))
-                    continue
-                detail = dict(node.get("detail") or {})
-                # 温度计「取数与口径」表要读整份明细，故随该项一并落库
-                detail["_全量口径"] = credit.get("detail") or {}
-                result[key] = _item(value, node.get("as_of"), "pbc", detail)
-        except Exception as exc:
-            for key in ("corp_ml_loan_yoy", "household_ml_loan_yoy", "fiscal_deposit_mom"):
-                _fail(key, "pbc", exc)
+        # 三项（企业中长贷 / 住户中长贷 / 财政存款）来自同一份报告，同抓同跳
+        if _want("corp_ml_loan_yoy"):
+            try:
+                credit = pbc.fetch_credit_structure()
+                for key in ("corp_ml_loan_yoy", "household_ml_loan_yoy", "fiscal_deposit_mom"):
+                    node = (credit.get("items") or {}).get(key) or {}
+                    value = node.get("value")
+                    if value is None:
+                        _fail(key, "pbc", RuntimeError("分部门贷款 / 财政存款解析不到该项"))
+                        continue
+                    detail = dict(node.get("detail") or {})
+                    # 温度计「取数与口径」表要读整份明细，故随该项一并落库
+                    detail["_全量口径"] = credit.get("detail") or {}
+                    result[key] = _item(value, node.get("as_of"), "pbc", detail)
+            except Exception as exc:
+                for key in ("corp_ml_loan_yoy", "household_ml_loan_yoy", "fiscal_deposit_mom"):
+                    _fail(key, "pbc", exc)
 
     # ---------------- akshare
     ak = _import_akshare()
     if ak is None:
         for key in AK_KEYS:
-            _fail(key, "akshare", RuntimeError("当前运行环境未安装 akshare，无法自动获取"))
+            if _want(key):
+                _fail(key, "akshare", RuntimeError("当前运行环境未安装 akshare，无法自动获取"))
         return result
 
     # 政策利率锚：本次抓到的央行值 > 库中已有值 > 兜底默认值
@@ -824,44 +871,51 @@ def fetch_auto_values(
     if anchor is None:
         anchor = PARAM_META[PARAM_REVERSE_REPO]["default"]
 
-    repo = None
-    try:
-        repo = _fetch_repo_rates(ak)
-    except Exception as exc:
-        _fail("dr007_spread", "akshare", exc)
-        _fail("r001_dr001", "akshare", exc)
+    # 日频资金面：DR007 / R001 定盘价（repo_rate_hist，一次请求供两项使用）
+    if _want("dr007_spread") or _want("r001_dr001"):
+        repo = None
+        try:
+            repo = _fetch_repo_rates(ak)
+        except Exception as exc:
+            for key in ("dr007_spread", "r001_dr001"):
+                if _want(key):
+                    _fail(key, "akshare", exc)
 
-    if repo is not None:
-        last = repo.get("last") or {}
-        avg = repo.get("mean5") or {}
-        fdr007 = avg.get("FDR007")
-        fdr001 = avg.get("FDR001")
-        fr001 = avg.get("FR001")
+        if repo is not None:
+            last = repo.get("last") or {}
+            avg = repo.get("mean5") or {}
+            fdr007 = avg.get("FDR007")
+            fdr001 = avg.get("FDR001")
+            fr001 = avg.get("FR001")
 
-        if fdr007 is None:
-            _fail("dr007_spread", "akshare", RuntimeError("缺少 FDR007 读数"))
-        else:
-            result["dr007_spread"] = _item(
-                round((fdr007 - anchor) * 100, 1), repo["date"], "akshare",
-                {"DR007 当日": last.get("FDR007"), "DR007 5日均": fdr007,
-                 "逆回购利率": anchor, "均线样本天数": repo.get("days")},
-            )
+            if _want("dr007_spread"):
+                if fdr007 is None:
+                    _fail("dr007_spread", "akshare", RuntimeError("缺少 FDR007 读数"))
+                else:
+                    result["dr007_spread"] = _item(
+                        round((fdr007 - anchor) * 100, 1), repo["date"], "akshare",
+                        {"DR007 当日": last.get("FDR007"), "DR007 5日均": fdr007,
+                         "逆回购利率": anchor, "均线样本天数": repo.get("days")},
+                    )
 
-        if fdr001 is None or fr001 is None:
-            _fail("r001_dr001", "akshare", RuntimeError("缺少 FR001 / FDR001 读数"))
-        else:
-            result["r001_dr001"] = _item(
-                round((fr001 - fdr001) * 100, 1), repo["date"], "akshare",
-                {"R001 当日": last.get("FR001"), "DR001 当日": last.get("FDR001"),
-                 "R001 5日均": fr001, "DR001 5日均": fdr001,
-                 "均线样本天数": repo.get("days")},
-            )
+            if _want("r001_dr001"):
+                if fdr001 is None or fr001 is None:
+                    _fail("r001_dr001", "akshare", RuntimeError("缺少 FR001 / FDR001 读数"))
+                else:
+                    result["r001_dr001"] = _item(
+                        round((fr001 - fdr001) * 100, 1), repo["date"], "akshare",
+                        {"R001 当日": last.get("FR001"), "DR001 当日": last.get("FDR001"),
+                         "R001 5日均": fr001, "DR001 5日均": fdr001,
+                         "均线样本天数": repo.get("days")},
+                    )
 
     for key, fetcher in (
         ("pmi", _fetch_pmi),
         ("ppi_yoy", _fetch_ppi),
         ("m1_m2", _fetch_money_supply),
     ):
+        if not _want(key):
+            continue
         try:
             item = fetcher(ak)
             result[key] = _item(item["value"], item["as_of"], "akshare", item.get("detail"))
