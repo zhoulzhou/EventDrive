@@ -6,7 +6,7 @@
 - refresh_snapshot() ：抓取指标，写 macro_indicators（最新快照）
                        与 macro_indicator_history（历史，读数变化才追加）。
                        scope="all" 全抓（手动刷新）；scope="auto" 按报告期决定
-                       —— 日频天天抓、月频"没拿到上月报告期就一直试"（见 monthly_due）
+                       —— 日频每轮都抓、月频只在各自发布日之后才抓（见 monthly_plan）
 - backfill_history() ：按（指标, 数据日期）回溯写入历史序列，幂等可重复执行；
                        历史表过少时自动升级为全量回溯。**只由「宏观趋势」页的
                        「补齐历史数据」按钮触发，不在定时任务里跑**
@@ -41,19 +41,21 @@ INCREMENTAL_WINDOWS = {"months_daily": 2, "months_monthly": 3, "tsf_limit": 3}
 
 # ---------------------------------------------------------------- 月频抓取判定
 #
-# 用户 2026-11-01 要求：月度数据不要每天跟着收盘轮重复抓；**不看日历，
-# 只看报告期** —— 只要月频项的报告期还没推进到「上月」，这一轮就抓；
-# 全部推进到上月后，本月不再抓（下一轮又因为期望报告期推进而重新开始）。
+# 用户 2026-11-01 要求：月度数据不要每轮都去试探，**只在各自发布日之后才拉**。
+# 于是每项月频有一个「次月第几天起可抓」的日历（macro_indicators.MONTHLY_RELEASE_DAYS）：
+#   PMI 次月 1 号（统计局当月最后一天就发布）｜PPI 次月 10 号｜
+#   社融 / M1−M2 / 信贷结构 次月 16 号（央行次月 10~15 日发布）
 #
-# 为什么用「报告期」判断而不是写个「本月已抓」的标记：数据本身就是状态，
-# 天然幂等，不用额外维护一张标记表，也不会因为清库 / 换库而丢标记。
+# 判定 = 报告期 + 发布日两个条件同时满足才抓：
+#   · 报告期已 ≥ 上月 → 不抓（本月已拿到）
+#   · 报告期落后但还没到发布日 → 不抓，也不发请求（这就是「不每天试探」）
+#   · 报告期落后且已过发布日 → 抓；抓不到保留旧读数，次日再来，直到拿到
 #
-# 副作用（已知且接受）：月初数据还没发布的那几天，每轮都会去试探一次，
-# 抓不到就保留旧读数、次日再来，直到拿到为止。发布节奏是
-# PMI 月末当天、PPI 次月 9 日左右、社融与 M1/M2 次月 10~15 日。
+# 为什么仍用「报告期」而不是「本月已抓」标记：数据本身就是状态，天然幂等，
+# 清库 / 换库都不会丢判断依据。
 #
-# ⚠️ 不要加回「每月 N 号才抓」的日历门槛：那会让 PMI 白等半个月
-# （PMI 当月最后一天就发布了，日历门槛反而害它滞后）。
+# ⚠️ 不要改回"所有月频共用一个日子"：PMI 当月最后一天就发布，跟社融一起等到
+# 16 号会让它白滞后半个月。各项错峰才能"发布完就拿到"。
 
 
 def _period_of(as_of: Any) -> Optional[str]:
@@ -77,28 +79,87 @@ def expected_monthly_period(today: Optional[date] = None) -> str:
     return _prev_month(today or date.today())
 
 
-def monthly_due(db: Session, today: Optional[date] = None) -> Tuple[bool, str]:
-    """月频是否还需要抓。返回 (是否需要抓, 一句原因)。
+def _release_date(period: str, day: int) -> date:
+    """报告期 period（"YYYY-MM"）的发布日 = 次月第 day 天。
 
-    判定**只看库中月频项的报告期**（不看几号）：
-      · 全部 ≥ 上月 → 不抓（本月已拿到，等期望报告期推进后再开始）
-      · 仍有项 < 上月（含抓取失败导致的空值 / 兜底默认值）→ 抓，次轮再判断
+    例：period="2026-10"、day=16 → 2026-11-16（10 月社融在 11 月 16 号起可抓）。
+    """
+    year, month = int(period[:4]), int(period[5:7])
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return date(next_year, next_month, day)
 
-    之所以不看日历：各指标发布日散在次月 9~15 日，PMI 更是当月最后一天就发布，
-    任何固定的「N 号开关」都会让先发布的那几项白等。
+
+def monthly_plan(db: Session, today: Optional[date] = None) -> Dict[str, Any]:
+    """月频抓取计划（**纯读库判断**，不打任何外部请求）。
+
+    每项月频数据只在它自己的发布日之后才去抓（见 macro_indicators.MONTHLY_RELEASE_DAYS），
+    所以月初不会为了 1 项 PMI 把 6 个还没发布的接口全试一遍。
+
+    返回：
+      due          : 本轮是否有月频项该抓
+      reason       : 一句可读原因（写 crawl_logs / 页面提示）
+      expected     : 期望报告期 "YYYY-MM"（上月）
+      pending      : [(key, 当前报告期)] 已过发布日但报告期还没到位 → 本轮抓
+      waiting      : [(key, 发布日 date)] 还没到发布日 → 本轮连请求都不发
+      targets      : 本轮该抓的月频键（= pending 的 key）
+      next_release : 最近一次"等待中"的发布日，没有则 None（页面显示「等 X 号起抓」）
     """
     today = today or date.today()
     want = _prev_month(today)
     rows = crud.get_macro_indicators(db)
-    pending = []
+    pending: list = []
+    waiting: list = []
+    targets: list = []
+    next_release: Optional[date] = None
+
     for key in mi.MONTHLY_KEYS:
         row = rows.get(key)
         period = _period_of(getattr(row, "as_of", None)) if row is not None else None
-        if period is None or period < want:
-            pending.append("%s=%s" % (key, period or getattr(row, "as_of", None) or "无"))
+        if period is not None and period >= want:
+            continue  # 已到位，本月不再抓这一项
+        release = _release_date(want, mi.MONTHLY_RELEASE_DAYS.get(key, 1))
+        if today < release:
+            waiting.append((key, release))
+            if next_release is None or release < next_release:
+                next_release = release
+        else:
+            shown = period or getattr(row, "as_of", None) or "无"
+            pending.append((key, shown))
+            targets.append(key)
+
     if pending:
-        return True, "待补齐至 %s：%s" % (want, ", ".join(pending))
-    return False, "本月已齐（报告期均 ≥ %s）" % want
+        reason = "待补齐至 %s：%s" % (
+            want, ", ".join("%s=%s" % (k, v) for k, v in pending))
+        due = True
+    elif waiting:
+        # 按发布日分组，避免把「11-10 才发的 PPI」和「11-16 才发的社融」写成同一天
+        groups: Dict[date, list] = {}
+        for key, release in waiting:
+            groups.setdefault(release, []).append(key)
+        reason = "；".join(
+            "%s 起抓 %s" % (day.isoformat(), ", ".join(keys))
+            for day, keys in sorted(groups.items())
+        )
+        due = False
+    else:
+        reason = "本月已齐（报告期均 ≥ %s）" % want
+        due = False
+
+    return {
+        "due": due,
+        "reason": reason,
+        "expected": want,
+        "pending": pending,
+        "waiting": waiting,
+        "targets": targets,
+        "next_release": next_release,
+    }
+
+
+def monthly_due(db: Session, today: Optional[date] = None) -> Tuple[bool, str]:
+    """本轮是否还需要抓月频。返回 (是否需要抓, 一句原因)。规则见 monthly_plan。"""
+    plan = monthly_plan(db, today)
+    return plan["due"], plan["reason"]
 
 
 def anchor_value(db: Session) -> float:
@@ -208,8 +269,8 @@ def refresh_snapshot(db: Optional[Session] = None,
     scope —— 抓取范围（2026-11-01 新增，起因是「月度数据不必每天拉」）：
       · "all"（默认）：日频 + 月频全抓。手动刷新（页面「刷新数据」按钮）走这个，
         行为与改造前完全一致。
-      · "auto"：**定时任务用**。按 macro_refresh.monthly_due 判断——月频项的报告期
-        还没推进到「上月」就全抓（不看今天几号），全部到位后只抓日频资金面。
+      · "auto"：**定时任务用**。按 macro_refresh.monthly_plan 判断——只抓日频 4 项
+        加上"已过发布日、报告期还没到位"的月频项；未到发布日的月频项不发请求。
       · "daily" / "monthly"：显式限定，供排查用。
 
     stats —— 可选 dict，函数把本轮决策写进去（scope / monthly_reason），
@@ -221,9 +282,14 @@ def refresh_snapshot(db: Optional[Session] = None,
         db = SessionLocal()
     try:
         reason = ""
+        only_keys: Optional[set] = None
         if scope == "auto":
-            due, reason = monthly_due(db)
-            scope = "all" if due else "daily"
+            plan = monthly_plan(db)
+            reason = plan["reason"]
+            # 只请求「日频 4 项 + 已过发布日且报告期还没到位的月频项」，
+            # 没到发布日的月频项连请求都不发（这才是「不每天试探」）。
+            only_keys = set(mi.DAILY_KEYS) | set(plan["targets"])
+            scope = "all" if plan["targets"] else "daily"
         if stats is not None:
             stats["scope"] = scope
             stats["monthly_reason"] = reason
@@ -233,6 +299,7 @@ def refresh_snapshot(db: Optional[Session] = None,
             anchor_fallback=anchor_value(db),
             hints=current_hints(db),
             scope=scope,
+            only_keys=only_keys,
         )
 
         records = []

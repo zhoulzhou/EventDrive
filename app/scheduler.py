@@ -198,9 +198,9 @@ async def refresh_macro_indicators(session: str = "manual"):
     log_crawl("=" * 50)
     mark_task_started("macro")
     t0 = datetime.now()
-    # scope="auto"：日频资金面每轮都抓；月频月度数据按报告期判断——还没推进到
-    # 「上月」就连月频一起抓，全部到位后只抓日频（规则见 macro_refresh.monthly_due）。
-    # 手动刷新（POST /api/macro/refresh）走的是 refresh_snapshot 默认的 scope="all"。
+    # scope="auto"：日频资金面每轮都抓；月频月度数据只在各自发布日之后才抓
+    # （PMI 次月1号 / PPI 次月10号 / 社融与信贷结构次月16号，规则见 macro_refresh.monthly_plan）。
+    # 未到发布日的月频项连请求都不发；手动刷新（POST /api/macro/refresh）走 scope="all"。
     stats: Dict[str, Any] = {}
     try:
         updated, errors, history_added = await asyncio.to_thread(

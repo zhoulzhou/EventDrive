@@ -273,11 +273,13 @@ function notesHtml() {
                 <p class="macro-note-tail">
                     本页所有读数都由后端定时任务自动抓取（akshare + 央行官网），
                     站内只做口径转换与阈值判定，不提供手工录入。
-                    <br><b>抓取节奏</b>：日频资金面（DR007 偏离 / 存单 / 分层利差）每个交易日收盘轮抓一次；
-                    月频数据（PMI / PPI / 社融 / M1−M2 / 信用结构）<b>不按日期开关，只看报告期</b> ——
-                    只要有月频项的报告期还没推进到「上月」，这一轮就连月频一起抓；全部推进到上月后，
-                    本月不再重复抓。所以月初那几天，月频卡片停在<b>上上月</b>的报告期属正常
-                    （数据还没发布，每轮只是去试探一次，拿不到就保留旧读数、次日再来）。
+                    <br><b>抓取节奏</b>：日频资金面（DR007 偏离 / 存单 / 分层利差 / 逆回购利率）每个交易日收盘轮抓一次；
+                    月频数据<b>只在各自发布日之后才抓</b>，没到发布日的项连请求都不发：
+                    PMI <b>次月 1 号</b>（统计局当月最后一天就发布）、
+                    PPI <b>次月 10 号</b>、
+                    社融 / M1−M2 / 信贷结构（企业中长贷、住户中长贷、财政存款）<b>次月 16 号</b>（央行次月 10~15 日发布）。
+                    到了发布日还没拿到（来源临时延迟）就次日再试，直到拿到为止，之后本月不再抓。
+                    所以月初那几天，月频卡片停在<b>上上月</b>的报告期属正常，不是抓取失败。
                 </p>
             </div>
         </div>
@@ -523,12 +525,16 @@ function thermoHtml(data) {
 }
 
 // 月频抓取状态（后端 payload.monthly）：回答「为什么月频卡片还停在上上月的报告期」。
-// 月度数据不跟日历走：报告期没推进到上月就每轮都试，全部到位后本月不再抓。
+// 每项只在各自发布日之后才抓，未到发布日不发请求。
 function monthlyBadge(m) {
     if (!m || !m.expected) return "";
     if (m.due === null || m.due === undefined) return " · 月频状态未知";
-    if (!m.due) return ` · 月频已齐（报告期 ${m.expected}）`;
-    return ` · 月频待补齐（目标 ${m.expected}）`;
+    if (m.due) return ` · 月频待补齐（目标 ${m.expected}）`;
+    if (m.next_release) {
+        const day = String(m.next_release).slice(5);   // "2026-11-16" → "11-16"
+        return ` · 月频等 ${day} 起抓（目标 ${m.expected}）`;
+    }
+    return ` · 月频已齐（报告期 ${m.expected}）`;
 }
 
 function render(data) {
@@ -540,7 +546,7 @@ function render(data) {
         ? `<div class="macro-alert">本次有 ${errors.length} 项自动指标更新失败（${errors.map(escapeHtml).join("、")}），已展示上次成功读数。行情类指标依赖项目 venv 中的 akshare，央行类指标依赖 www.pbc.gov.cn 可访问；可稍后点「刷新数据」重试。</div>`
         : "";
     if (data.stale) {
-        notice += `<div class="macro-alert">数据已 ${data.data_age_hours} 小时未落库（最后更新 ${escapeHtml(data.updated_at)}）。本页读数由定时任务抓取（每个交易日收盘轮 21:34，含日频资金面；月频数据按报告期自动补齐），本页自身不抓数据。</div>`;
+        notice += `<div class="macro-alert">数据已 ${data.data_age_hours} 小时未落库（最后更新 ${escapeHtml(data.updated_at)}）。本页读数由定时任务抓取（每个交易日收盘轮 21:34，含日频资金面；月频等各自发布日抓），本页自身不抓数据。</div>`;
     }
     document.getElementById("macroNotice").innerHTML = notice;
     document.getElementById("macroUpdated").textContent =

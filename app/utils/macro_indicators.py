@@ -40,7 +40,7 @@ import json
 import logging
 from datetime import date, timedelta
 from statistics import mean
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from app.utils import macro_thermometer
 
@@ -393,11 +393,11 @@ AUTO_KEYS = AK_KEYS + NCD_KEYS + PBC_KEYS
 
 # 抓取频率分组（2026-11-01 用户要求：月度数据不再每天收盘轮全量拉）
 #
-# 背景：10 项里只有资金面 3 项是日频，其余 7 项（统计局 / 央行的月度数据）一个月
+# 背景：10 项里只有资金面 4 项是日频，其余 7 项（统计局 / 央行的月度数据）一个月
 # 才更新一次，每天跟着收盘轮抓一遍纯属重复请求——既慢又增加被来源限流的概率。
-# 现在改为：日频项每天抓；月频项**每月 15 号起抓一次**，当天没拿到（报告期没前进）
-# 就次日再试，直到所有月频项的报告期都推进到「上月」为止，本月不再抓。
-# 具体日历逻辑在 app/utils/macro_refresh.py（monthly_due / refresh_snapshot）。
+# 现在改为：日频项每轮抓；月频项**等到各自发布日之后才抓**（见 MONTHLY_RELEASE_DAYS），
+# 抓不到（报告期没前进）就次日再试，直到该报告期拿到为止，之后本月不再抓。
+# 发布日期与重试逻辑在 app/utils/macro_refresh.py（monthly_plan / refresh_snapshot）。
 #
 # 日频：资金面三项 + 政策利率锚（逆回购利率随公开市场操作公告发布）
 DAILY_KEYS = ["dr007_spread", "ncd_1y_aaa", "r001_dr001", PARAM_REVERSE_REPO]
@@ -411,6 +411,25 @@ MONTHLY_KEYS = [
     "household_ml_loan_yoy",  # 住户中长贷同比多增（同社融）
     "fiscal_deposit_mom",   # 财政存款当月环比（同社融）
 ]
+
+# 各月频项在「次月第几天」起可以抓到（发布日历，2026-11-01 用户要求错峰抓取）。
+#
+# 只在发布日之后才去请求，避免月初那几天每轮都去白试一遍。数字取各来源的**最晚**
+# 常规发布日，宁可晚一两天也不要空跑：
+#   · PMI：国家统计局在**当月最后一天**发布当月值 → 次月 1 号起必然有
+#   · PPI：统计局次月 9 日左右（节假日顺延）→ 取 10 号
+#   · 社融 / M1−M2 / 信贷结构（企业中长贷、住户中长贷、财政存款）：央行
+#     《金融统计数据报告》次月 10~15 日发布 → 取 16 号
+# ⚠ 改这里等于改抓取日历，页面说明区与 README 有同一份日历，需同步。
+MONTHLY_RELEASE_DAYS: Dict[str, int] = {
+    "pmi": 1,
+    "ppi_yoy": 10,
+    "tsf_yoy": 16,
+    "m1_m2": 16,
+    "corp_ml_loan_yoy": 16,
+    "household_ml_loan_yoy": 16,
+    "fiscal_deposit_mom": 16,
+}
 
 # 有效自动来源；库中记录的 source 不在此集合内（如历史遗留的 manual）即视为待刷新
 AUTO_SOURCES = {"akshare", "pbc", "chinamoney"}
@@ -763,6 +782,7 @@ def fetch_auto_values(
     anchor_fallback: Optional[float] = None,
     hints: Optional[Dict[str, Dict[str, Any]]] = None,
     scope: str = "all",
+    only_keys: Optional[Iterable[str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """抓取自动指标，返回 {key: {value, as_of, source, detail, error}}。
 
@@ -770,19 +790,26 @@ def fetch_auto_values(
     anchor_fallback：库中已有的 7 天逆回购利率，抓取失败时兜底。
     hints           ：各指标已落库的 detail；现仅保留参数以兼容调用方
                       （原「超储率报告期未变则跳过下载 PDF」的逻辑已随分项下线）。
+    only_keys       ：精确白名单，**优先级高于 scope**。定时任务用它只抓"这轮真该抓的"
+                      那几项（日频 4 项 + 已到发布日且报告期还没到位的月频项），
+                      其余一律不请求 —— 这样月初不会为了 1 项 PMI 去白试 6 个还没
+                      发布的接口。
     scope           ：抓取范围，决定本轮打哪些来源
                       · "all"（默认）：全抓，手动刷新用
                       · "daily"：只抓日频资金面（DAILY_KEYS），收盘轮常态走这个
                       · "monthly"：只抓月频月度数据（MONTHLY_KEYS）
 
-    ⚠️ 被 scope 排除的键**不出现在返回里**（不是给个 error），这样调用方
+    ⚠️ 被排除的键**不出现在返回里**（不是给个 error），这样调用方
     refresh_snapshot 就不会把它当成「抓取失败」记进 errors，也不会用空值覆盖库中读数。
-    日历决策（哪天该抓月频）不在这里，见 macro_refresh.monthly_due。
+    发布日历决策（哪天该抓月频）不在这里，见 macro_refresh.monthly_plan。
     """
     if scope not in ("all", "daily", "monthly"):
         raise ValueError("scope 只能是 all / daily / monthly，收到 %r" % (scope,))
+    allow = set(only_keys) if only_keys is not None else None
 
     def _want(key: str) -> bool:
+        if allow is not None:
+            return key in allow
         if scope == "daily":
             return key in DAILY_KEYS
         if scope == "monthly":
