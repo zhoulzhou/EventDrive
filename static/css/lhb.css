@@ -7,12 +7,14 @@
  * 否则「改个类型色要改两处」。
  */
 
-.lb-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; flex-wrap: wrap; }
-/* flex-basis 给到 640px 而不是 min-width:320px 的原因（2026-11-01）：
-   320px 太小，窗口不够宽时说明文字仍会和右侧按钮挤在一行，被工具栏压成半屏宽、
-   一两句就折行。改成 basis 640px 后，一行放不下时工具栏整行让位、说明独占整行宽度。 */
-.lb-header-text { flex: 1 1 640px; min-width: 0; }
-.lb-header h1 { font-size: 1.9rem; color: #1f2937; margin-bottom: 0.6rem; }
+/* 页头分两层（2026-11-01）：
+   第一层 = 标题 + 右侧工具栏（同一行，space-between）；
+   第二层 = 说明段落，**独占整行宽度**，只有排到屏幕边缘才换行。
+   早前把说明和工具栏放在同一个 flex 行里，工具栏实测要占 590px，1280 窗口下
+   说明被压成 595px（正好一半），才会出现「只显示到一半就换行」。 */
+.lb-header { display: block; }
+.lb-header-top { display: flex; justify-content: space-between; align-items: center; gap: 1rem 1.5rem; flex-wrap: wrap; margin-bottom: 0.7rem; }
+.lb-header h1 { font-size: 1.9rem; color: #1f2937; margin-bottom: 0; }
 .lb-toolbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 /* 交易日只做展示（本页固定看最新一日，不提供切换到历史日） */
 .lb-date-text {

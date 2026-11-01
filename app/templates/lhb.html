@@ -8,25 +8,25 @@
 
 {% block content %}
 <div class="page-header lb-header">
-    <div class="lb-header-text">
+    <div class="lb-header-top">
         <h1>龙虎榜 · 资金痕迹复盘</h1>
-        <p class="form-hint">
-            不看「谁买了」，看<strong>结构</strong>：席位构成 → 资金集中度 → 个股位置 → 时序跟踪。
-            同一份榜单，<strong>低位首板</strong>和<strong>高位 5 板</strong>是完全相反的两个结论，
-            所以本页把<strong>位置</strong>放在打分权重第一位（位置 &gt; 席位 &gt; 净额）。
-            每一行都给出<strong>0-100 分、档位、加减分明细与告警标签</strong>，点开看买卖前五席位。
-        </p>
-        <p class="form-hint lb-src-line">
-            数据源：东方财富龙虎榜（榜单 + 买卖前五席位）· 腾讯/东财日线（判断低位/中位/高位）。
-            <strong>收盘后披露、只含前五席位</strong>，由定时任务（北京时间 21:34）抓取落库，
-            本页只读展示、自身不抓数据。
-        </p>
+        <div class="lb-toolbar">
+            <span id="lbDate" class="lb-date-text">加载中…</span>
+            <span id="lbUpdated" class="lb-updated">加载中…</span>
+            <button id="lbRefresh" class="btn btn-primary">抓取最新</button>
+        </div>
     </div>
-    <div class="lb-toolbar">
-        <span id="lbDate" class="lb-date-text">加载中…</span>
-        <span id="lbUpdated" class="lb-updated">加载中…</span>
-        <button id="lbRefresh" class="btn btn-primary">抓取最新</button>
-    </div>
+    <p class="form-hint">
+        不看「谁买了」，看<strong>结构</strong>：席位构成 → 资金集中度 → 个股位置 → 时序跟踪。
+        同一份榜单，<strong>低位首板</strong>和<strong>高位 5 板</strong>是完全相反的两个结论，
+        所以本页把<strong>位置</strong>放在打分权重第一位（位置 &gt; 席位 &gt; 净额）。
+        每一行都给出<strong>0-100 分、档位、加减分明细与告警标签</strong>，点开看买卖前五席位。
+    </p>
+    <p class="form-hint lb-src-line">
+        数据源：东方财富龙虎榜（榜单 + 买卖前五席位）· 腾讯/东财日线（判断低位/中位/高位）。
+        <strong>收盘后披露、只含前五席位</strong>，由定时任务（北京时间 21:34）抓取落库，
+        本页只读展示、自身不抓数据。
+    </p>
 </div>
 
 <div class="lb-notice">

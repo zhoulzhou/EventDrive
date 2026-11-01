@@ -1,14 +1,9 @@
 /* 宏观指标 / 宏观趋势 两页共用样式 */
 
-.macro-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1.5rem;
-    flex-wrap: wrap;
-}
-.macro-header-text { flex: 1 1 640px; min-width: 0; }  /* 同 lhb：basis 640px 保证窄屏时工具栏整行让位 */
-.macro-header h1 { font-size: 2rem; color: #333; margin-bottom: 0.75rem; }
+/* 页头分两层：标题 + 工具栏同一行；说明段落独占整行（原因见 lhb.css 同名注释） */
+.macro-header { display: block; }
+.macro-header-top { display: flex; justify-content: space-between; align-items: center; gap: 1rem 1.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.macro-header h1 { font-size: 2rem; color: #333; margin-bottom: 0; }
 .macro-toolbar { display: flex; align-items: center; gap: 0.85rem; }
 .macro-updated { color: #888; font-size: 0.85rem; }
 

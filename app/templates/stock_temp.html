@@ -8,25 +8,25 @@
 
 {% block content %}
 <div class="page-header st-header">
-    <div class="st-header-text">
+    <div class="st-header-top">
         <h1>股市热度 · A 股冷热三层温度计</h1>
-        <p class="form-hint">
-            A 股冷热要分三层看 —— <strong>估值层</strong>（贵不贵）、<strong>情绪层</strong>（亢奋不亢奋）、
-            <strong>资金层</strong>（钱进不进），最后合成一个 <strong>0-100 市场温度计</strong>。
-            慢变量定方向 · 快变量定情绪 · 资金变量定底气；<strong>全部用历史分位说话</strong>。
-            本页只放<strong>当前读数</strong>；历史曲线与走势图见 <a href="/stock-trend">热度趋势</a>。
-        </p>
-        <p class="form-hint st-src-line">
-            数据源：乐咕乐股（PE/PB、破净率、市场宽度）· 沪深交易所官网（成交额、流通市值）·
-            中债国债收益率（ERP）· 东财数据中心（两融、重要股东增减持）· 新浪/东财（宽基ETF份额、新基金发行）。
-            <strong>全部 11 项自动抓取、无手工录入项</strong>，由定时任务
-            （北京时间 16:00）抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
-        </p>
+        <div class="st-toolbar">
+            <span id="stUpdated" class="st-updated">加载中…</span>
+            <button id="stRefresh" class="btn btn-primary">刷新数据</button>
+        </div>
     </div>
-    <div class="st-toolbar">
-        <span id="stUpdated" class="st-updated">加载中…</span>
-        <button id="stRefresh" class="btn btn-primary">刷新数据</button>
-    </div>
+    <p class="form-hint">
+        A 股冷热要分三层看 —— <strong>估值层</strong>（贵不贵）、<strong>情绪层</strong>（亢奋不亢奋）、
+        <strong>资金层</strong>（钱进不进），最后合成一个 <strong>0-100 市场温度计</strong>。
+        慢变量定方向 · 快变量定情绪 · 资金变量定底气；<strong>全部用历史分位说话</strong>。
+        本页只放<strong>当前读数</strong>；历史曲线与走势图见 <a href="/stock-trend">热度趋势</a>。
+    </p>
+    <p class="form-hint st-src-line">
+        数据源：乐咕乐股（PE/PB、破净率、市场宽度）· 沪深交易所官网（成交额、流通市值）·
+        中债国债收益率（ERP）· 东财数据中心（两融、重要股东增减持）· 新浪/东财（宽基ETF份额、新基金发行）。
+        <strong>全部 11 项自动抓取、无手工录入项</strong>，由定时任务收盘轮
+        （北京时间 21:34）抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
+    </p>
 </div>
 
 <div id="stNotice"></div>

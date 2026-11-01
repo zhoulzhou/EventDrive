@@ -8,27 +8,27 @@
 
 {% block content %}
 <div class="page-header macro-header">
-    <div class="macro-header-text">
+    <div class="macro-header-top">
         <h1>宏观指标</h1>
-        <p class="form-hint">
-            <strong>三个维度 · 10 项读数</strong>：① 资金面（钱贵不贵）② 实体热度（经济跑不跑）
-            ③ 信用 / 部门（钱在谁手里）。
-            这些读数再由 <strong>宏观温度计</strong>归成三个子温度计加权合成 0-100 总分
-            （资金面 × 25% + 实体热度 × 45% + 信用/部门 × 30%），并给出「温差」看政策到实体的传导。
-            资金面看「价」（DR007 偏离、分层利差）与「银行负债成本」（1Y AAA 同业存单），三项均取 5 日均线；
-            实体热度看「先行」（PMI）、「价格」（PPI）、「信用水位」（社融）与「活化」（M1−M2）；
-            信用/部门看企业扩产（中长贷）、居民杠杆（中长贷）与政府投放（财政存款），一律同比多增或环比变动。
-            数据取自 akshare、<strong>中国货币网</strong>与<strong>央行官网</strong>（《金融统计数据报告》/《公开市场业务交易公告》），
-            <strong>全部自动抓取、无手工录入项</strong>，由定时任务每日 1 次
-            （北京时间 16:00）抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
-            历史曲线与走势图见 <a href="/macro-trend">宏观趋势</a>；A股估值与情绪（PE/PB、ERP、成交额、两融）见
-            <a href="/stock-temp">股市热度</a>。
-        </p>
+        <div class="macro-toolbar">
+            <span id="macroUpdated" class="macro-updated">加载中…</span>
+            <button id="macroRefresh" class="btn btn-primary">刷新数据</button>
+        </div>
     </div>
-    <div class="macro-toolbar">
-        <span id="macroUpdated" class="macro-updated">加载中…</span>
-        <button id="macroRefresh" class="btn btn-primary">刷新数据</button>
-    </div>
+    <p class="form-hint">
+        <strong>三个维度 · 10 项读数</strong>：① 资金面（钱贵不贵）② 实体热度（经济跑不跑）
+        ③ 信用 / 部门（钱在谁手里）。
+        这些读数再由 <strong>宏观温度计</strong>归成三个子温度计加权合成 0-100 总分
+        （资金面 × 25% + 实体热度 × 45% + 信用/部门 × 30%），并给出「温差」看政策到实体的传导。
+        资金面看「价」（DR007 偏离、分层利差）与「银行负债成本」（1Y AAA 同业存单），三项均取 5 日均线；
+        实体热度看「先行」（PMI）、「价格」（PPI）、「信用水位」（社融）与「活化」（M1−M2）；
+        信用/部门看企业扩产（中长贷）、居民杠杆（中长贷）与政府投放（财政存款），一律同比多增或环比变动。
+        数据取自 akshare、<strong>中国货币网</strong>与<strong>央行官网</strong>（《金融统计数据报告》/《公开市场业务交易公告》），
+        <strong>全部自动抓取、无手工录入项</strong>，由定时任务在每个交易日收盘轮
+        （北京时间 21:34）抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
+        历史曲线与走势图见 <a href="/macro-trend">宏观趋势</a>；A股估值与情绪（PE/PB、ERP、成交额、两融）见
+        <a href="/stock-temp">股市热度</a>。
+    </p>
 </div>
 
 <div id="macroNotice"></div>
