@@ -19,10 +19,10 @@ A股估值/情绪类读数不在本页，见「股票指标」页（/stock-temp�
 
 **本页数据全部由定时任务抓取**：CloudBase 云函数在**北京时间 21:34（工作日）**调用
 `POST /api/crawl/daily-refresh` 触发（实现见 app/utils/macro_refresh.py，与本文件的
-POST /refresh 共用同一份）。其中**日频资金面每天抓，月频月度数据每月 15 号起抓一次**，
-拿到最新报告期后本月不再重复抓（见 macro_refresh.monthly_due）。
+POST /refresh 共用同一份）。其中**日频资金面每轮都抓，月频月度数据只看报告期**
+—— 报告期没推进到「上月」就每轮都试，全部到位后本月不再抓（见 macro_refresh.monthly_due）。
 GET 接口只读库、不触发任何外部请求，所以打开页面是瞬时的；要立刻更新就点页面的
-「刷新数据」按钮（POST /refresh，它走全量抓取，不受月频日历限制）。
+「刷新数据」按钮（POST /refresh，它走全量抓取，不受报告期判断限制）。
 
 **「宏观趋势」页的长历史序列不由定时任务生成**：定时任务只抓当前读数（顺带把读数
 发生变化的行追加进历史表），历史回溯完全靠页面「补齐历史数据」按钮按需触发
@@ -154,15 +154,14 @@ def _payload(db: Session, refreshed: int, errors: Dict[str, str], history_added:
         payload["data_age_hours"] = round(age, 1)
         payload["stale"] = age >= DATA_STALE_HOURS
 
-    # 月频抓取状态（2026-11-01 起月度数据只在每月 15 号起抓，页面要能解释
-    # 「为什么月频卡片还停在上上月」）。纯读库判断，不触发任何外部请求。
+    # 月频抓取状态（月度数据不跟日历走，纯按报告期判断；页面用它解释
+    # 「为什么月频卡片还停在上上月的报告期」）。纯读库判断，不触发任何外部请求。
     try:
         due, reason = mrf.monthly_due(db)
         payload["monthly"] = {
             "due": due,
             "reason": reason,
             "expected": mrf.expected_monthly_period(),
-            "start_day": mrf.MONTHLY_START_DAY,
             "keys": list(mi.MONTHLY_KEYS),
         }
     except Exception as e:  # noqa: BLE001 - 展示用信息，判断失败不该拖垮整页
@@ -175,9 +174,8 @@ def _payload(db: Session, refreshed: int, errors: Dict[str, str], history_added:
 def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     """读取库中已有的指标与组合解读（**只读**，不触发抓取）。
 
-    数据由 CloudBase 云函数在**工作日北京 21:34** 点火抓取写入（日频每天抓、
-    月频每月 15 号起抓）；需要立刻更新时走 POST /api/macro/refresh（页面「刷新数据」按钮）。
-    走 POST /api/macro/refresh（页面「刷新数据」按钮）。
+    数据由 CloudBase 云函数在**工作日北京 21:34** 点火抓取写入（日频每轮都抓、
+    月频只看报告期是否已推进到上月）；需要立刻更新时走 POST /api/macro/refresh（页面「刷新数据」按钮）。
 
     响应里的 `thermometer.model_limits` 是**模型缺陷与风控规则**（存单失真 / 季末脉冲 /
     春节错月 / 定位边界四条，定义见 macro_thermometer.MODEL_LIMITS），页面原样渲染；
