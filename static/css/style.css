@@ -204,9 +204,9 @@ body {
 .news-summary {
     color: #666;
     line-height: 1.6;
-    /* 内容区改为全宽后，长摘要一行会到 200+ 字符，读起来很累；
-       这里只限制「正文阅读区」的行宽，顶部说明文字仍然铺满整屏。 */
-    max-width: 78ch;
+    /* 不加 max-width：用户 2026-11-01 明确要求「文字顶满再换行」，
+       曾试过 78ch 限行宽（读起来省力），但页面上看起来是「只显示到一半」，
+       已下线。宽度交给卡片自身。 */
 }
 
 .pagination {
@@ -314,8 +314,7 @@ body {
     font-size: 1.1rem;
     line-height: 1.8;
     color: #444;
-    /* 同上：新闻正文限制行宽，避免全宽下一行过长 */
-    max-width: 68ch;
+    /* 同 .news-summary：不限制行宽，跟着容器顶满再换行 */
 }
 
 .detail-footer {
