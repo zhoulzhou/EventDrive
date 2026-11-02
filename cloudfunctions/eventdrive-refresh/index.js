@@ -34,7 +34,13 @@
  * （`?domains=news,market`）—— 9:15 北京 = 前一天 21:15 美东，早已收盘，
  * 拿的是刚结束的交易日；而 21:34 北京 = 09:34 美东，美股当日刚开盘，拿到的
  * 还是同一份「上一交易日收盘」，重复抓没有任何新数据。
- * 于是本函数跑的是 macro / lhb / stock_temp 三域（market 从 NEED 里移除）。
+ * 于是本函数跑的是 macro / lhb / a_share / stock_temp 四域（market 从 NEED 里移除）。
+ *
+ * 2026-11-02 调整：新增 **a_share** 域（A 股指数行情：上证指数 / 科创50 日线，
+ * 见 app/utils/index_daily.py）。它必须在这个时段跑 —— A 股 15:00 收盘，
+ * 21:34 拿到的就是当日最终收盘；放到上午 9:15 那轮，当天还没开盘，抓到的是
+ * 上一交易日，页面会一直慢一天。该域很轻（两次 HTTP + 一次批量 upsert，约 2~5 秒），
+ * 归入快域与 macro / lhb 并发。
  */
 
 const https = require('https');
@@ -51,7 +57,7 @@ const KEY = process.env.EVENTDRIVE_CLOUD_DB_KEY || '';
 // （`?domains=news,market`）。21:34 北京 = 09:34 美东，美股当日刚开盘，
 // 抓到的是**上一交易日**收盘 —— 与早上 9:15 拿到的完全同一份数据，
 // 晚上再抓一遍纯属重复。行情域改由上午那轮负责，失败时手动补。
-const FAST = ['macro', 'lhb'];
+const FAST = ['macro', 'lhb', 'a_share'];
 const SLOW = ['stock_temp'];
 const NEED = [...FAST, ...SLOW];
 

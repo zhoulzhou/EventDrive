@@ -584,6 +584,40 @@ def get_market_history(db: Session, symbol: str) -> List[models.MarketPrice]:
     )
 
 
+def get_market_history_multi(db: Session, symbols: List[str],
+                             since: Optional[str] = None) -> Dict[str, List]:
+    """一次取多个 symbol 的历史（按日期升序），返回 {symbol: [行, ...]}。
+
+    为什么要批量：云库单次往返 0.25~0.9s，「股市行情」页要同时画上证指数与
+    科创50，两次 `get_market_history()` 就是两倍等待；这里一条
+    ``symbol=in.(...)`` 就能取回来。行对象两种后端都支持 `.date` / `.value`
+    （云库是 cloud_db.Row），上层无需分支。
+    """
+    if not symbols:
+        return {}
+    if _USE_CLOUD:
+        filters: Dict[str, Any] = {"symbol": "in.(" + ",".join(symbols) + ")"}
+        if since:
+            filters["date"] = f"gte.{since}"
+        rows = _cdb.select_all(
+            T_MARKET_PRICE, columns="symbol,name,unit,value,date",
+            filters=filters, order="date.asc", max_rows=20000,
+            context="get_market_history_multi",
+        )
+        out: Dict[str, List] = {s: [] for s in symbols}
+        for r in rows:
+            out.setdefault(r["symbol"], []).append(r)
+        return out
+
+    q = db.query(models.MarketPrice).filter(models.MarketPrice.symbol.in_(symbols))
+    if since:
+        q = q.filter(models.MarketPrice.date >= since)
+    out = {s: [] for s in symbols}
+    for row in q.order_by(models.MarketPrice.date.asc()).all():
+        out.setdefault(row.symbol, []).append(row)
+    return out
+
+
 def get_market_peak(db: Session, symbol: str) -> Optional[models.MarketPrice]:
     """返回某 symbol 历史最大值记录（作为峰值，用于回撤预警）。"""
     if _USE_CLOUD:

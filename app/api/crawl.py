@@ -14,6 +14,7 @@ from app.scheduler import (
     refresh_macro_indicators,
     refresh_stock_temp,
     refresh_lhb,
+    refresh_a_share_index,
 )
 from app.api.login import require_auth
 
@@ -143,7 +144,10 @@ _daily_refresh_state = {
 # = 美东 09:34，美股当天刚开盘，拿到的还是**上一交易日**收盘，与早上 9:15
 # （美东前一天 21:15，早已收盘）拿到的是同一份数据 —— 晚上再抓一遍纯粹重复。
 # 行情域仍保留在 _DOMAIN_TASKS 里，`?domains=market` 可随时手动补跑。
-CLOSE_DOMAINS = ("macro", "lhb", "stock_temp")
+#
+# **含 a_share**（2026-11-02 新增）：A 股指数行情（上证指数 / 科创50）只在收盘轮抓 ——
+# A 股 15:00 收盘，21:34 拿到的是当日最终收盘；早上 9:15 那轮当天还没开盘，抓了也是前一日。
+CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp")
 # 可单独补跑的域集合（含 news / market —— 这两域由上午那轮负责，失败时手动补）
 ALL_DOMAINS = ("news", "market") + CLOSE_DOMAINS
 
@@ -157,6 +161,7 @@ _DOMAIN_TASKS = {
     "market": lambda: crawl_market_data(session="close"),
     "macro": lambda: refresh_macro_indicators(session="close"),
     "lhb": lambda: refresh_lhb(session="close"),
+    "a_share": lambda: refresh_a_share_index(session="close"),
     "stock_temp": lambda: refresh_stock_temp(session="close"),
 }
 
@@ -166,13 +171,13 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
 
     返回 False 表示**请求的域里有正在跑的**（与已跑任务冲突），调用方应稍后重试。
 
-    domains 为 None 时跑整轮 close_session（宏观 + 龙虎榜 + 股市热度，
+    domains 为 None 时跑整轮 close_session（宏观 + 龙虎榜 + A股指数 + 股市热度，
     **不含新闻、不含市场行情** —— 这两个域在上午 09:15 那轮抓）；
     传入列表则只跑指定数据域。指定域之间是**并发**执行的（gather），
     因此拿 `macro,lhb` 这个组合时总耗时取决于最慢的那一个，
     而不是两者相加 —— 云端等待窗口很紧，这个差别很关键。
 
-    例外：显式传入的域恰好等于收盘轮三域时仍走 close_session，
+    例外：显式传入的域恰好等于收盘轮四域时仍走 close_session，
     以保留「快域并发 → 慢域独占」的编排（慢域与快域并发会被拖垮，见 close_session 注释）。
 
     域之间互不重叠时允许并行点火（见 _running_domains 的注释）：
@@ -280,7 +285,7 @@ async def trigger_daily_refresh(
     domains: Optional[str] = None,
     auth: bool = Depends(require_auth),
 ):
-    """外部定时任务入口：跑一轮收盘抓取（宏观 + 龙虎榜 + 股市热度）。
+    """外部定时任务入口：跑一轮收盘抓取（宏观 + 龙虎榜 + A股指数 + 股市热度）。
 
     **不含新闻，也不含市场行情**：这两个域都在上午 09:15 那轮抓
     （`?domains=news,market`）。晚上的 21:34 = 美东 09:34，美股刚开盘，
@@ -291,7 +296,7 @@ async def trigger_daily_refresh(
     同步执行必然 504。落库由后台线程完成，稍后查 `/crawl/daily-status` 看进度。
 
     可选 `domains` 参数（逗号分隔）只跑指定数据域，用于补跑被中断的部分：
-    `news,market,macro,lhb,stock_temp`
+    `news,market,macro,lhb,a_share,stock_temp`
 
     注意：**不含财务指标**，财务在页面手动抓取（`POST /api/finance/fetch`）。
     """

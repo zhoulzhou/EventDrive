@@ -17,7 +17,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
 from app.api import (news, crawl, login, market, index_alarm, finance, valuation,
-                     macro, stock_temp, lhb)
+                     macro, stock_temp, lhb, a_share)
 from app.api.login import is_logged_in
 
 logger = logging.getLogger(__name__)
@@ -247,6 +247,7 @@ app.include_router(valuation.router, prefix="/api", tags=["valuation"])
 app.include_router(macro.router, prefix="/api", tags=["macro"])
 app.include_router(stock_temp.router, prefix="/api", tags=["stock-temp"])
 app.include_router(lhb.router, prefix="/api", tags=["lhb"])
+app.include_router(a_share.router, prefix="/api", tags=["a-share"])
 # 数据源探测（诊断用；验证候选源在沙箱网络里是否可用，验证完可删）
 
 
@@ -330,6 +331,17 @@ async def market_page(request: Request):
     return render_template("market.html", {"request": request})
 
 
+@app.get("/a-share")
+async def a_share_page(request: Request):
+    """股市行情：上证指数与科创50 今年以来的日线曲线（数据域 a_share）。
+
+    与 /market（美股：纳斯达克100 / VIX / 美债）并列，互不共用卡片口径。
+    """
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("a_share.html", {"request": request})
+
+
 @app.get("/index-alarm")
 async def index_alarm_page(request: Request):
     if not is_logged_in(request):
@@ -396,7 +408,8 @@ async def lhb_page(request: Request):
 _PAGE_LINKS = [
     ("/home", "首页"),
     ("/crawl", "抓取"),
-    ("/market", "行情"),
+    ("/market", "全球行情"),
+    ("/a-share", "股市行情"),
     ("/index-alarm", "指数预警"),
     ("/finance", "财务"),
     ("/valuation", "估值"),

@@ -13,6 +13,7 @@ from app.utils.anti_crawl import (
 )
 from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
+from app.utils.index_daily import refresh_a_share_index as refresh_a_share_index_sync
 from app.utils import lhb_refresh as lhb_refresh_mod
 
 logger = logging.getLogger(__name__)
@@ -174,6 +175,47 @@ async def crawl_market_data(session: str = "manual"):
 
     log_crawl("=" * 50)
     log_crawl("市场行情更新任务完成")
+    log_crawl("=" * 50)
+
+
+async def refresh_a_share_index(session: str = "manual"):
+    """抓取 A 股宽基指数（上证指数 / 科创50）日线，落 market_prices。
+
+    轻量域：两次 HTTP + 一次批量 upsert，实测 2~5 秒，与宏观 / 龙虎榜同批并发跑，
+    不会拖累收盘轮。**放在收盘轮（21:34）而不是早间 9:15**：A 股 15:00 才收盘，
+    早上那轮当天还没开盘，抓到的仍是上一交易日。
+
+    补漏由落库逻辑负责（见 app/utils/index_daily.py）：只写库里缺的日期 +
+    永远重写当天那一行，所以某天没跑成，下一轮会自动补上。
+    """
+    log_crawl("=" * 50)
+    log_crawl(f"开始更新股市行情（A股指数）... (轮次: {session})")
+    log_crawl("=" * 50)
+    t0 = datetime.now()
+    try:
+        data = await asyncio.to_thread(lambda: refresh_a_share_index_sync())
+        items = data.get("items", [])
+        valid = sum(1 for x in items if x.get("ok"))
+        for it in items:
+            if not it.get("ok"):
+                log_crawl(f"  ! {it.get('name')} 抓取失败: {it.get('error')}")
+                continue
+            latest = it.get("latest") or {}
+            log_crawl(
+                f"  - {it['name']}: {latest.get('value')} ({latest.get('date')}) "
+                f"来源={it.get('source_label')} 写入 {it.get('added')} 行 / 共 {it.get('fetched')} 个点"
+            )
+        _write_crawl_log(
+            task="a_share", session=session, source=data.get("source", "a_share"),
+            item_count=valid, status="ok" if valid else "empty",
+            duration=int((datetime.now() - t0).total_seconds()),
+        )
+    except Exception as e:
+        log_crawl(f"A 股指数行情更新出错: {str(e)}")
+        logger.error(f"!!! A 股指数行情更新出错: {e}", exc_info=True)
+        _write_crawl_log(task="a_share", session=session, source="a_share",
+                         item_count=0, status="failed", error_message=str(e)[:500],
+                         duration=int((datetime.now() - t0).total_seconds()))
     log_crawl("=" * 50)
 
 
@@ -394,7 +436,7 @@ async def full_crawl(session: str = "manual"):
 
 
 async def close_session():
-    """北京时间 21:34 —— 收盘一轮：抓取宏观 / 龙虎榜 / 股市热度。
+    """北京时间 21:34 —— 收盘一轮：抓取宏观 / 龙虎榜 / A股指数行情 / 股市热度。
 
     A 股 15:00 收盘，本轮落库即为当日最终值。落库时：
     - 宏观 / 股票温度：更新最新值，历史表按日期追加
@@ -415,7 +457,7 @@ async def close_session():
     耗时且低频，改为在财务页面手动抓取（POST /api/finance/fetch）。
     """
     log_crawl("#" * 50)
-    log_crawl("### 收盘轮次 21:34：宏观 / 龙虎榜 / 股市热度（不含新闻、不含市场行情） ###")
+    log_crawl("### 收盘轮次 21:34：宏观 / 龙虎榜 / A股指数 / 股市热度（不含新闻、不含市场行情） ###")
     log_crawl("#" * 50)
     t0 = datetime.now()
 
@@ -425,11 +467,12 @@ async def close_session():
     fast_results = await asyncio.gather(
         refresh_macro_indicators(session=SESSION_CLOSE),
         refresh_lhb(session=SESSION_CLOSE),
+        refresh_a_share_index(session=SESSION_CLOSE),
         return_exceptions=True,
     )
     for key, name, r in zip(
-        ["macro", "lhb"],
-        ["宏观指标", "龙虎榜"],
+        ["macro", "lhb", "a_share"],
+        ["宏观指标", "龙虎榜", "A股指数行情"],
         fast_results,
     ):
         if isinstance(r, Exception):

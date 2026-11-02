@@ -41,6 +41,7 @@
 | 指数预警 | `index/*.csv` 离线导入 |
 | 宏观指标 | akshare + 央行官网 |
 | 股票温度计 | akshare + 交易所官网 |
+| A 股指数行情 | 腾讯日线（新浪指数日线 / 东财日线兜底） |
 | 龙虎榜 | 东财数据中心（榜单 + 买卖前五席位）+ 新浪日线（个股位置） |
 | 财务指标 | akshare 新浪财报 |
 
@@ -56,6 +57,19 @@
 > 这组指标**保持海外数据源不变**。指数与国债类指标各自的备源为 FRED，主源无数据时自动降级。
 > 注意：这些均为境外接口，抓取需要服务器能访问外网；`push2his` 类历史 K 线接口在部分国内网络环境下不可达。
 
+**A 股指数行情**（`/a-share`）是两个指数的日收盘曲线，落 `market_prices` 表
+（`symbol = SH000001 / SH000688`，与美股四项同表不同 symbol）：
+
+| 指标 | 代码 | 数据源（降级顺序） |
+|------|------|--------|
+| 上证指数 | `SH000001` | 腾讯日线 → 新浪指数日线 → 东财 kline |
+| 科创50 | `SH000688` | 同上 |
+
+> 三源实测读数完全一致（2026-11-02 收盘 3638.03 / 1196.94），排序按**耗时**而非权威性：
+> 腾讯 0.5 秒、新浪 5.8 秒（一次回全历史 8700+ 根）。新浪作为口径兜底 —— 「股市热度」的
+> 成交额/换手率本来就取新浪指数日线，读数能对上。历史**只回填今年以来**（约 199 个交易日），
+> 之后每个交易日增量补齐。
+
 ## 项目结构
 
 ```
@@ -69,22 +83,25 @@ EventDrive/
 │   ├── crud.py                 # 数据访问层
 │   ├── scheduler.py            # APScheduler 编排
 │   ├── market_strategy.py      # 峰值回撤策略引擎
-│   ├── api/                    # 9 个 router
+│   ├── api/                    # 11 个 router
 │   │   ├── news.py             # 新闻列表 / 详情
 │   │   ├── crawl.py            # 手动触发抓取 + 抓取状态
 │   │   ├── login.py            # 登录鉴权
-│   │   ├── market.py           # 市场行情
+│   │   ├── market.py           # 全球行情（美股）
+│   │   ├── a_share.py          # 股市行情（A 股指数：上证指数 / 科创50）
 │   │   ├── index_alarm.py      # 指数预警
 │   │   ├── finance.py          # 财务指标
 │   │   ├── valuation.py        # 公司估值（DCF）
 │   │   ├── macro.py            # 宏观指标
-│   │   └── stock_temp.py       # 股票温度计
+│   │   ├── stock_temp.py       # 股票温度计
+│   │   └── lhb.py              # 龙虎榜
 │   ├── crawlers/
 │   │   ├── base.py             # BaseCrawler / NewsItem
 │   │   ├── eastmoney_depth.py  # 东方财富（接口方式，唯一新闻源）
 │   │   └── market_data.py      # 市场行情
-│   ├── utils/                  # 11 个工具模块
-│   └── templates/              # 13 个页面模板
+│   ├── utils/                  # 15 个工具模块
+│   │   └── index_daily.py      # A 股指数日线（上证 / 科创50，多源降级 + 今年以来回填）
+│   └── templates/              # 15 个页面模板
 ├── static/                     # CSS / JS / 第三方 echarts
 ├── data/db.sqlite3             # SQLite 数据库
 ├── index/*.csv                 # 指数历史数据（FRED 导出）
@@ -189,7 +206,7 @@ python run_server.py
 | 时刻 | 云函数 | 抓取内容 |
 |------|--------|---------|
 | **09:15** | `eventdrive-morning-news` | 新闻（东方财富）+ **市场行情**（纳斯达克100 / VIX / 美债） |
-| **21:34**（工作日） | `eventdrive-refresh` | 收盘整轮：宏观指标（日频；月频见下）/ 龙虎榜 / 股票温度计 |
+| **21:34**（工作日） | `eventdrive-refresh` | 收盘整轮：宏观指标（日频；月频见下）/ 龙虎榜 / A 股指数行情 / 股票温度计 |
 
 A 股 15:00 收盘。收盘轮原定 16:17，2026-10-27 后移到 **21:34**：16:17 抓沪深300
 PE-TTM（中证估值表）时当日文件还没发布，拿到的 `as_of` 一直是上一交易日，PE / ERP
@@ -203,6 +220,10 @@ PE-TTM（中证估值表）时当日文件还没发布，拿到的 `as_of` 一�
 抓到的还是**同一份上一交易日收盘** —— 晚上再跑一遍没有任何新数据，纯属重复。
 所以美股类指标从收盘轮移除，`?domains=market` 与 `POST /api/market/refresh`
 仍可随时手动补跑（后者支持 `force=true&rebuild_peak=true`）。
+
+**A 股指数行情只在 21:34 抓**：A 股 15:00 收盘，这个点拿到的是当日最终收盘；
+放到 09:15 那轮的话当天还没开盘，抓到的仍是上一交易日，页面会一直慢一天。
+该域很轻（两次 HTTP + 一次批量 upsert，实测 1~2 秒），与宏观 / 龙虎榜同批并发。
 
 **财务指标不在自动抓取范围内** —— 它按股票代码逐只查询、耗时且低频，
 请在财务页面手动抓取（`POST /api/finance/fetch`）。
@@ -245,13 +266,13 @@ PE-TTM（中证估值表）时当日文件还没发布，拿到的 `as_of` 一�
 定时抓取**不由 Web 进程调度**，而是由 CloudBase 云函数在上述时刻调用接口点火：
 
 ```bash
-POST /api/crawl/daily-refresh               # 整轮（macro/lhb/stock_temp，不含新闻与行情）
+POST /api/crawl/daily-refresh               # 整轮（macro/lhb/a_share/stock_temp，不含新闻与行情）
 POST /api/crawl/daily-refresh?domains=news,market  # 早间函数用这个
 POST /api/crawl/daily-refresh?domains=macro # 补跑单个域
 GET  /api/crawl/daily-status                # 查进度
 ```
 
-可补跑数据域：`news` / `market` / `macro` / `lhb` / `stock_temp`。
+可补跑数据域：`news` / `market` / `macro` / `lhb` / `a_share` / `stock_temp`。
 接口**点火后台线程后立即返回**（反代硬超时 60 秒，而整轮要 3~7 分钟，同步必 504），
 实际进度查 `/api/crawl/daily-status`。
 
@@ -262,7 +283,8 @@ GET  /api/crawl/daily-status                # 查进度
 ### 收盘轮的内部编排
 
 ```
-宏观指标 / 龙虎榜   ← 两者并发，约 1 分钟（龙虎榜单日约 10 秒）
+宏观指标 / 龙虎榜 / A 股指数行情   ← 三者并发，约 1 分钟（龙虎榜单日约 10 秒，
+                                     A 股指数 1~2 秒，宏观最慢）
   ↓
 股票温度计（股市热度） ← 独占，约 4~5 分钟
 ```
@@ -271,7 +293,7 @@ GET  /api/crawl/daily-status                # 查进度
 表现为「开始了但 crawl_logs 里连一条失败都没有」。
 拆成「快域并发 → 慢域独占」后峰值得以下降，慢域拿到干净的时间窗（实测独占 260 秒）。
 
-云函数侧同时改成**自适应轮询**（每 20 秒查 `crawl_logs`，三域齐了提前收工）+
+云函数侧同时改成**自适应轮询**（每 20 秒查 `crawl_logs`，四域齐了提前收工）+
 **缺失域自动补跑一次**，并把「进程还在跑只是慢」和「进程已被回收」区分开报告。
 
 云函数源码在 `cloudfunctions/<函数名>/index.js`，部署配置在同级 `config.json`。
@@ -357,7 +379,8 @@ TASK_DAILY_QUOTA=8
 | `/` `/home` | 新闻列表（支持搜索、来源筛选、分页） |
 | `/news/{news_id}` | 新闻详情 |
 | `/crawl` | 抓取控制台（手动触发 + 实时日志） |
-| `/market` | 市场行情 |
+| `/market` | 市场行情（美股：纳斯达克100 / VIX / 美债） |
+| `/a-share` | 股市行情（上证指数 / 科创50 今年以来曲线） |
 | `/index-alarm` | 指数预警 |
 | `/macro` `/macro-trend` | 宏观指标 |
 | `/stock-temp` `/stock-trend` | 股票温度计 |
@@ -561,7 +584,7 @@ TASK_DAILY_QUOTA=8
 
 ## 前端资源与缓存
 
-- **所有曲线一律用 ECharts**（硬约定）：`static/js/echarts.min.js` 本地库，5 个图表页共用（市场行情 / 指数预警 / 财务指标 / 热度趋势 / 宏观趋势）。不使用外部 CDN，也不引入 Chart.js 或其他图表库；新增图表沿用「独立 `*_charts.js` + `echarts.init` + `chart-load-failed` 兜底」的现有模式。
+- **所有曲线一律用 ECharts**（硬约定）：`static/js/echarts.min.js` 本地库，6 个图表页共用（市场行情 / 股市行情 / 指数预警 / 财务指标 / 热度趋势 / 宏观趋势）。不使用外部 CDN，也不引入 Chart.js 或其他图表库；新增图表沿用「独立 `*_charts.js` + `echarts.init` + `chart-load-failed` 兜底」的现有模式。
 - 原 `static/js/chart.umd.min.js`（Chart.js 4.4.1）在全部页面迁移到 ECharts 后已无引用，2026-10-21 删除。
 - 静态资源统一带 `Cache-Control: public, max-age=31536000, immutable`，URL 上是 `?v=<内容哈希>`
   （`jinja_env.globals["static_ver"]` / `vendor_ver`，见下条）。
