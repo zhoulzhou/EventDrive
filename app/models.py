@@ -290,6 +290,26 @@ class LhbSeat(Base):
     fetched_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
+class DailyHotspot(Base):
+    """今日热点日报：一个交易日一行，整份聚合结果以 JSON 存在 payload 里。
+
+    为什么不做成多表（主线/榜单/资金各一张）：
+    页面是「一次性打开看全貌」，拆表意味着 5~6 次往返（云库单次 0.25~0.9s），
+    还都得在 Python 里再拼一次；而这份数据**每天只生成一次、之后只读**，
+    天生适合整份快照。写入用 upsert(market_date)，重跑即覆盖，不会堆垃圾。
+    """
+
+    __tablename__ = "daily_hotspots"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    market_date = Column(Text, nullable=False, unique=True, index=True)   # 2026-11-02
+    payload = Column(Text, nullable=False)                                # 整份 JSON
+    source = Column(Text, nullable=True)
+    item_count = Column(Integer, nullable=False, default=0)
+    generated_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class CrawlLog(Base):
     """抓取任务日志：每轮调度 / 手动触发写入一条，便于复盘与排查。"""
 

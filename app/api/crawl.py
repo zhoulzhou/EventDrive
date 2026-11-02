@@ -15,6 +15,7 @@ from app.scheduler import (
     refresh_stock_temp,
     refresh_lhb,
     refresh_a_share_index,
+    refresh_hotspot,
 )
 from app.api.login import require_auth
 
@@ -147,7 +148,11 @@ _daily_refresh_state = {
 #
 # **含 a_share**（2026-11-02 新增）：A 股指数行情（上证指数 / 科创50）只在收盘轮抓 ——
 # A 股 15:00 收盘，21:34 拿到的是当日最终收盘；早上 9:15 那轮当天还没开盘，抓了也是前一日。
-CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp")
+#
+# **含 hotspot**（2026-11-02 新增）：今日热点日报。它**依赖** stock_temp / a_share /
+# news 的当日结果，所以在 close_session 里排最后一步串行执行（见 scheduler.close_session），
+# 不要把它挪进并发的快域组，否则定调条会读到昨天的成交额与指数。
+CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp", "hotspot")
 # 可单独补跑的域集合（含 news / market —— 这两域由上午那轮负责，失败时手动补）
 ALL_DOMAINS = ("news", "market") + CLOSE_DOMAINS
 
@@ -163,6 +168,7 @@ _DOMAIN_TASKS = {
     "lhb": lambda: refresh_lhb(session="close"),
     "a_share": lambda: refresh_a_share_index(session="close"),
     "stock_temp": lambda: refresh_stock_temp(session="close"),
+    "hotspot": lambda: refresh_hotspot(session="close"),
 }
 
 
@@ -296,7 +302,7 @@ async def trigger_daily_refresh(
     同步执行必然 504。落库由后台线程完成，稍后查 `/crawl/daily-status` 看进度。
 
     可选 `domains` 参数（逗号分隔）只跑指定数据域，用于补跑被中断的部分：
-    `news,market,macro,lhb,a_share,stock_temp`
+    `news,market,macro,lhb,a_share,stock_temp,hotspot`
 
     注意：**不含财务指标**，财务在页面手动抓取（`POST /api/finance/fetch`）。
     """

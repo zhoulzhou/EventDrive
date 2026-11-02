@@ -30,6 +30,7 @@ T_TEMP_HIST = "stock_temp_history"
 T_CRAWL_LOG = "crawl_logs"
 T_LHB_RECORD = "lhb_records"
 T_LHB_SEAT = "lhb_seats"
+T_HOTSPOT = "daily_hotspots"
 
 # ---- 大表（第二步迁移）----
 T_NEWS = "news"
@@ -1846,3 +1847,97 @@ def get_lhb_last_updated(db: Session) -> Optional[datetime]:
                            context="lhb_last_updated")
         return _as_utc(rows[0]["fetched_at"]) if rows else None
     return db.query(func.max(models.LhbRecord.fetched_at)).scalar()
+
+
+# ------------------------------------------------------------ 今日热点
+#
+# 一个交易日一行，整份聚合 JSON 存 payload（理由见 models.DailyHotspot）。
+# 读写都只有一条记录，天然绕开「单响应 1000 行」与批量 key 一致性的坑。
+
+def _field(row, key: str, default=None):
+    """同时兼容云库 Row 与 SQLite ORM 实例的取字段方式。
+
+    云库返回 cloud_db.Row（支持 row["x"]），SQLite 返回 ORM 实例（只有属性）。
+    这里统一成一种写法，避免每个新函数都要写两套读取代码 —— 直接用 row["x"]
+    在 SQLite 分支会抛 `TypeError: 'Xxx' object is not subscriptable`。
+    """
+    if row is None:
+        return default
+    try:
+        return row[key]
+    except (TypeError, KeyError, IndexError):
+        return getattr(row, key, default)
+
+
+def save_daily_hotspot(db: Session, market_date: str, payload: dict,
+                       source: str = "hotspot", item_count: int = 0) -> bool:
+    """写入/覆盖某交易日的热点日报，返回是否落库成功。"""
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if _USE_CLOUD:
+        stamp = _cdb.utc_now_iso()
+        rows = _cdb.upsert(T_HOTSPOT, [{
+            "market_date": market_date,
+            "payload": text,
+            "source": source,
+            "item_count": item_count or 0,
+            "generated_at": stamp,
+            "updated_at": stamp,
+        }], on_conflict="market_date", context="save_daily_hotspot")
+        return bool(rows)
+    row = db.query(models.DailyHotspot).filter(
+        models.DailyHotspot.market_date == market_date).first()
+    if row is None:
+        row = models.DailyHotspot(market_date=market_date)
+        db.add(row)
+    row.payload = text
+    row.source = source
+    row.item_count = item_count or 0
+    row.generated_at = datetime.now()
+    row.updated_at = datetime.now()
+    db.commit()
+    return True
+
+
+def get_daily_hotspot(db: Session, market_date: Optional[str] = None) -> Optional[dict]:
+    """取某交易日的日报；market_date 为空则取**最新一份**。
+
+    返回 ``{"market_date": ..., "payload": {...}, "generated_at": datetime}``，
+    payload 解析失败时返回 None（宁可页面提示没数据，也不要抛 500）。
+    """
+    if _USE_CLOUD:
+        filters = {"market_date": f"eq.{market_date}"} if market_date else None
+        rows = _cdb.select(T_HOTSPOT, filters=filters,
+                           order="market_date.desc", limit=1,
+                           context="get_daily_hotspot")
+        row = rows[0] if rows else None
+    else:
+        query = db.query(models.DailyHotspot)
+        if market_date:
+            query = query.filter(models.DailyHotspot.market_date == market_date)
+        row = query.order_by(models.DailyHotspot.market_date.desc()).first()
+    if row is None:
+        return None
+    raw = _field(row, "payload")
+    try:
+        payload = json.loads(raw or "{}")
+    except (ValueError, TypeError):
+        logger.warning("热点日报 payload 解析失败: %s", _field(row, "market_date"))
+        return None
+    return {
+        "market_date": _field(row, "market_date"),
+        "payload": payload,
+        "source": _field(row, "source"),
+        "generated_at": _field(row, "generated_at"),
+    }
+
+
+def list_hotspot_dates(db: Session, limit: int = 30) -> List[str]:
+    """已生成日报的交易日列表（新→旧），供页面日期切换。"""
+    if _USE_CLOUD:
+        rows = _cdb.select(T_HOTSPOT, columns="market_date",
+                           order="market_date.desc", limit=limit,
+                           context="list_hotspot_dates")
+        return [r["market_date"] for r in rows]
+    rows = (db.query(models.DailyHotspot.market_date)
+            .order_by(models.DailyHotspot.market_date.desc()).limit(limit).all())
+    return [r[0] for r in rows]

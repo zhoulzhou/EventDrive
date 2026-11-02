@@ -15,6 +15,7 @@ from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
 from app.utils.index_daily import refresh_a_share_index as refresh_a_share_index_sync
 from app.utils import lhb_refresh as lhb_refresh_mod
+from app.utils import hotspot as hotspot_mod
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +367,70 @@ def _refresh_lhb_sync(days: int = 1) -> dict:
             pass
 
 
+def _refresh_hotspot_sync() -> dict:
+    """在线程里跑：自己开 session（云库模式下 SessionLocal 只是壳）。"""
+    db = SessionLocal()
+    try:
+        return hotspot_mod.refresh_hotspot(db)
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def refresh_hotspot(session: str = "manual"):
+    """生成「今日热点」日报（抓涨停池/资金流 + 聚合库内指标，落 daily_hotspots）。
+
+    **依赖前置域**，顺序不能提前：
+      · stock_temp —— 成交额、市场宽度、综合温度（定调条）
+      · a_share    —— 上证 / 科创50 当日收盘（定调条）
+      · news       —— 当日新闻（题材匹配 + 时间轴）
+    这三者任一没跑完，生成出来的日报就会有空洞。所以它排在 close_session
+    的最后一步（stock_temp 独占跑完之后），而不是和快域一起并发。
+
+    抓取侧成本很低（7 次 HTTP，约 8~15 秒），失败时按域记 failed，不影响其它域。
+    """
+    if not check_task_allowed("hotspot"):
+        log_crawl("今日热点：已达今日配额或正在运行，跳过")
+        _write_crawl_log(task="hotspot", session=session, source="hotspot",
+                         item_count=0, status="skipped",
+                         error_message="已达今日配额或正在运行")
+        return
+
+    log_crawl("=" * 50)
+    log_crawl(f"开始生成今日热点日报... (轮次: {session})")
+    log_crawl("=" * 50)
+    mark_task_started("hotspot")
+    t0 = datetime.now()
+    try:
+        summary = await asyncio.to_thread(_refresh_hotspot_sync)
+        log_crawl(
+            "热点日报生成完成: %s 涨停 %d / 跌停 %d，主线 %s，落库=%s"
+            % (summary.get("market_date"), summary.get("limit_up", 0),
+               summary.get("limit_down", 0),
+               "、".join(summary.get("themes") or []) or "无", summary.get("saved"))
+        )
+        for gap in summary.get("gaps") or []:
+            log_crawl(f"  ! {gap}")
+        _write_crawl_log(
+            task="hotspot", session=session, source="hotspot",
+            item_count=int(summary.get("limit_up", 0)),
+            status="ok" if summary.get("saved") else "empty",
+            duration=int((datetime.now() - t0).total_seconds()),
+        )
+    except Exception as e:
+        log_crawl(f"热点日报生成出错: {str(e)}")
+        logger.error(f"!!! 热点日报生成出错: {e}", exc_info=True)
+        _write_crawl_log(task="hotspot", session=session, source="hotspot",
+                         item_count=0, status="failed", error_message=str(e)[:500],
+                         duration=int((datetime.now() - t0).total_seconds()))
+    finally:
+        mark_task_finished("hotspot")
+
+    log_crawl("=" * 50)
+
+
 async def full_crawl(session: str = "manual"):
     """抓取新闻。
 
@@ -497,6 +562,16 @@ async def close_session():
             log_crawl(f"  ! 股票温度 抓取异常: {r}")
             _write_crawl_log(task="stock_temp", session=SESSION_CLOSE, source="股票温度",
                              item_count=0, status="failed", error_message=str(r)[:500])
+
+    # 今日热点**最后跑**：它要读 stock_temp / a_share 的当日结果与当日新闻，
+    # 抢在前面跑会拿到旧值（定调条写着昨天的成交额）。自身只 7 次 HTTP，
+    # 8~15 秒，放在 stock_temp 之后不会拖累整轮。
+    try:
+        await refresh_hotspot(session=SESSION_CLOSE)
+    except Exception as e:  # noqa: BLE001 —— 热点失败不能影响整轮收尾
+        log_crawl(f"  ! 今日热点 生成异常: {e}")
+        _write_crawl_log(task="hotspot", session=SESSION_CLOSE, source="hotspot",
+                         item_count=0, status="failed", error_message=str(e)[:500])
 
     log_crawl("#" * 50)
     log_crawl(f"收盘轮次完成，总耗时 {int((datetime.now() - t0).total_seconds())} 秒")

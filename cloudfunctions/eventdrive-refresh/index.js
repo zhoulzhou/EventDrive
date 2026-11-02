@@ -58,7 +58,11 @@ const KEY = process.env.EVENTDRIVE_CLOUD_DB_KEY || '';
 // 抓到的是**上一交易日**收盘 —— 与早上 9:15 拿到的完全同一份数据，
 // 晚上再抓一遍纯属重复。行情域改由上午那轮负责，失败时手动补。
 const FAST = ['macro', 'lhb', 'a_share'];
-const SLOW = ['stock_temp'];
+// **hotspot 放 SLOW**（2026-11-02 新增）：今日热点日报要读 stock_temp 的当日成交额 /
+// 宽度 / 温度，以及 a_share 的指数收盘、news 的当日新闻 —— 它在 close_session 里
+// 排在 stock_temp **之后**串行执行。放进 FAST 会让云函数以为它和宏观并发跑完了，
+// 实际要等 stock_temp（260s）结束才开始，最后误判「缺失」并重复补跑。
+const SLOW = ['stock_temp', 'hotspot'];
 const NEED = [...FAST, ...SLOW];
 
 const POLL_MS = 20 * 1000;

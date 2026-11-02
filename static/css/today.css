@@ -1,0 +1,498 @@
+/* ==========================================================================
+   今日热点（/today）
+   --------------------------------------------------------------------------
+   结构对照 app/templates/today.html：
+     .today-header        两层页头（h1 + 工具栏 / 说明段独立成行）
+     .th-tone             A 今日定调（六个数字 + 一句话）
+     .th-themes           B 今日主线（卡片）
+     .th-split            C 热股三榜 + D 资金地图（2:1）
+     .th-timeline         E 今日大事
+   ⚠ 正文与说明**不加 max-width**（用户要求文字顶满再换行）。
+   涨跌配色按 A 股惯例：涨红跌绿。
+   ========================================================================== */
+
+:root {
+    --th-up: #d64545;
+    --th-down: #1a9e6f;
+    --th-flat: #8a8a8a;
+    --th-line: #e6e8ee;
+    --th-bg: #ffffff;
+    --th-soft: #f7f8fb;
+}
+
+/* ------------------------------------------------------------ 页头 */
+.today-header-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.today-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.today-toolbar select {
+    padding: 0.45rem 0.7rem;
+    border: 1px solid #dcdfe6;
+    border-radius: 8px;
+    background: #fff;
+    color: #333;
+    font-size: 0.9rem;
+}
+
+.th-updated {
+    font-size: 0.82rem;
+    color: #8a8f99;
+    white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ 通用卡片 */
+.th-card {
+    background: var(--th-bg);
+    border: 1px solid var(--th-line);
+    border-radius: 12px;
+    padding: 16px 18px;
+}
+
+.th-section {
+    margin-bottom: 16px;
+}
+
+.th-section-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #2c3140;
+    margin-bottom: 10px;
+}
+
+.th-section-title em {
+    font-style: normal;
+    font-size: 0.78rem;
+    font-weight: 400;
+    color: #9aa0ab;
+}
+
+/* ------------------------------------------------------------ A 定调 */
+.th-tone {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.th-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 10px;
+}
+
+.th-metric {
+    background: var(--th-soft);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+.th-metric-label {
+    font-size: 0.76rem;
+    color: #8a8f99;
+    margin-bottom: 3px;
+}
+
+.th-metric-value {
+    font-size: 1.28rem;
+    font-weight: 600;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+}
+
+.th-metric-sub {
+    font-size: 0.75rem;
+    color: #9aa0ab;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
+.th-verdict {
+    border-left: 3px solid #667eea;
+    background: #f5f6ff;
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    font-size: 0.92rem;
+    color: #3a3f4b;
+    line-height: 1.7;
+}
+
+.th-up { color: var(--th-up); }
+.th-down { color: var(--th-down); }
+.th-flat { color: var(--th-flat); }
+
+/* ------------------------------------------------------------ B 主线 */
+.th-themes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+}
+
+.th-theme {
+    background: var(--th-bg);
+    border: 1px solid var(--th-line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.th-theme-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.th-theme-name {
+    font-size: 1.02rem;
+    font-weight: 600;
+    color: #23272f;
+}
+
+.th-stage {
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    border: 1px solid transparent;
+}
+
+.th-stage.s-start { color: #b45309; background: #fff7e6; border-color: #f6d9a8; }
+.th-stage.s-accel { color: #b91c1c; background: #fdeaea; border-color: #f3c1c1; }
+.th-stage.s-cont { color: #1d4ed8; background: #eef2ff; border-color: #c7d2fe; }
+.th-stage.s-diverge { color: #6b7280; background: #f3f4f6; border-color: #e0e2e7; }
+
+.th-theme-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    font-size: 0.82rem;
+    color: #5b6272;
+}
+
+.th-theme-stats b {
+    font-weight: 600;
+    color: #23272f;
+    font-variant-numeric: tabular-nums;
+}
+
+.th-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.th-chip {
+    font-size: 0.74rem;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--th-soft);
+    color: #5b6272;
+    white-space: nowrap;
+}
+
+.th-leads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.th-lead {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.78rem;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: #fdf2f2;
+    color: #9b2c2c;
+    white-space: nowrap;
+}
+
+.th-lead small {
+    color: #b06a6a;
+    font-size: 0.72rem;
+}
+
+/* ------------------------------------------------------------ C/D 分栏 */
+.th-split {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 12px;
+    /* 两栏各自按内容高度，别互相拉伸 —— 否则资金榜条数少的时候，
+       左侧卡片会被撑到和右侧一样高，底下留一大片空白。 */
+    align-items: start;
+}
+
+@media (max-width: 980px) {
+    .th-split {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* Tab */
+.th-tabs {
+    display: flex;
+    gap: 16px;
+    border-bottom: 1px solid var(--th-line);
+    margin-bottom: 10px;
+}
+
+.th-tab {
+    background: none;
+    border: none;
+    padding: 0 0 8px;
+    font-size: 0.88rem;
+    color: #8a8f99;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    font-family: inherit;
+}
+
+.th-tab.active {
+    color: #23272f;
+    font-weight: 600;
+    border-bottom-color: #667eea;
+}
+
+.th-pane { display: none; }
+.th-pane.active { display: block; }
+
+/* 榜单表格 */
+.th-rows {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 22px;
+}
+
+@media (max-width: 720px) {
+    .th-rows { grid-template-columns: minmax(0, 1fr); }
+}
+
+.th-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 5px 0;
+    border-bottom: 1px dashed #f0f1f5;
+    font-size: 0.85rem;
+}
+
+.th-row:last-child { border-bottom: none; }
+
+.th-row-name {
+    color: #2c3140;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.th-row-name small {
+    color: #a4a9b3;
+    margin-left: 6px;
+    font-size: 0.75rem;
+}
+
+.th-row-val {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.th-list-head {
+    font-size: 0.76rem;
+    color: #9aa0ab;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--th-line);
+    margin-bottom: 4px;
+}
+
+/* 涨停梯队 */
+.th-ladder-group {
+    margin-bottom: 10px;
+}
+
+.th-ladder-title {
+    font-size: 0.8rem;
+    color: #5b6272;
+    margin-bottom: 6px;
+}
+
+.th-ladder-title b {
+    color: var(--th-up);
+    font-size: 0.92rem;
+}
+
+.th-ladder-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* 资金地图 */
+.th-board-tag {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.tag-start { color: #b91c1c; background: #fdeaea; border-color: #f3c1c1; }
+.tag-build { color: #b45309; background: #fff7e6; border-color: #f6d9a8; }
+.tag-exit { color: #4b5563; background: #f3f4f6; border-color: #e0e2e7; }
+.tag-in { color: #c2410c; background: #fff1e8; border-color: #fbd0b5; }
+.tag-reb { color: #1d4ed8; background: #eef2ff; border-color: #c7d2fe; }
+
+.th-board-list + .th-board-list {
+    margin-top: 14px;
+}
+
+.th-legend {
+    font-size: 0.72rem;
+    color: #9aa0ab;
+    line-height: 1.6;
+    margin-top: 10px;
+    border-top: 1px solid var(--th-line);
+    padding-top: 8px;
+}
+
+/* 粗行业名旁的大方向角标：与「今日主线」同名字，方便对照 */
+.th-board-group {
+    font-size: 0.7rem;
+    color: #6b7280;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 0 5px;
+    margin-right: 2px;
+    white-space: nowrap;
+}
+
+/* 资金数据来源（东财 / 新浪口径不同，必须标出来） */
+.th-fund-src {
+    display: block;
+    font-size: 0.72rem;
+    color: #9aa0ab;
+    line-height: 1.6;
+    margin-top: 8px;
+}
+
+/* ------------------------------------------------------------ E 时间轴 */
+.th-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.th-news-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 0.86rem;
+    line-height: 1.6;
+}
+
+.th-news-time {
+    color: #9aa0ab;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.78rem;
+    flex-shrink: 0;
+    width: 42px;
+}
+
+.th-news-tag {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.tag-policy { color: #9b2c2c; background: #fdeaea; }
+.tag-fund { color: #0969a8; background: #e8f4fd; }
+.tag-data { color: #166534; background: #eaf6ee; }
+.tag-industry { color: #5b6272; background: #f3f4f6; }
+
+.th-news-item a {
+    color: #2c3140;
+    text-decoration: none;
+}
+
+.th-news-item a:hover {
+    color: #667eea;
+    text-decoration: underline;
+}
+
+/* ------------------------------------------------------------ 空态与提示 */
+.th-empty {
+    background: var(--th-bg);
+    border: 1px dashed #d7dae2;
+    border-radius: 12px;
+    padding: 34px 20px;
+    text-align: center;
+    color: #6b7280;
+}
+
+.th-empty h3 {
+    font-size: 1rem;
+    color: #2c3140;
+    margin-bottom: 8px;
+}
+
+.th-empty p {
+    font-size: 0.86rem;
+    line-height: 1.7;
+    margin-bottom: 14px;
+}
+
+.th-gaps {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    color: #92400e;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 0.82rem;
+    line-height: 1.7;
+    margin-bottom: 14px;
+}
+
+.th-notice {
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    margin-bottom: 14px;
+}
+
+.th-notice.error {
+    background: #fdeaea;
+    border: 1px solid #f3c1c1;
+    color: #9b2c2c;
+}
+
+.th-notice.ok {
+    background: #eaf6ee;
+    border: 1px solid #bfe3cc;
+    color: #166534;
+}
+
+.th-loading {
+    padding: 40px 0;
+    text-align: center;
+    color: #8a8f99;
+}

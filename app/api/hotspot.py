@@ -1,0 +1,102 @@
+"""今日热点接口：读库为主，只在手动刷新时抓取。
+
+页面只发一个请求（``GET /api/hotspot/today``）拿整份日报 —— 定调、主线、榜单、
+资金地图、时间轴都在同一个 payload 里，理由见 app/utils/hotspot.py 顶部注释。
+"""
+
+import logging
+import threading
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
+
+from app import crud
+from app.database import SessionLocal
+from app.api.login import require_auth
+from app.utils import hotspot as hotspot_mod
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# 刷新是重活（7 次外部请求 + 若干库读），并发点两次没意义还可能触发东财限流
+_refresh_lock = threading.Lock()
+
+
+@router.get("/hotspot/today")
+def get_hotspot(date: Optional[str] = Query(None, description="交易日 YYYY-MM-DD，空取最新"),
+                auth: bool = Depends(require_auth)):
+    """取某交易日的热点日报。
+
+    没有数据时返回 ``status="empty"`` 而不是 404 —— 上线首日、或收盘轮还没跑完时，
+    页面需要区分「这一天还没生成」和「接口挂了」，前端据此显示不同的空态文案。
+    """
+    db = SessionLocal()
+    try:
+        record = crud.get_daily_hotspot(db, date)
+        dates = crud.list_hotspot_dates(db, limit=40)
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not record:
+        return {
+            "status": "empty",
+            "message": "还没有生成热点日报。收盘轮（21:34）跑完会自动生成，"
+                       "也可以在页面上点「重新生成」。",
+            "dates": dates,
+        }
+
+    payload = record["payload"]
+    return {
+        "status": "ok",
+        "date": record["market_date"],
+        "generated_at": payload.get("generated_at"),
+        "dates": dates,
+        "payload": payload,
+    }
+
+
+@router.post("/hotspot/refresh")
+def refresh_hotspot(date: Optional[str] = Query(None, description="交易日 YYYY-MM-DD，空取今天"),
+                    auth: bool = Depends(require_auth)):
+    """重新抓取并生成某交易日的热点日报（同步执行，约 10~25 秒）。
+
+    为什么同步：整轮只有 7 次外部请求，最长也在反代 60 秒超时之内；
+    同步能让页面直接拿到结果、当场看到刷新后的数字，比「先返回再轮询」体验好。
+    并发放并发用一把锁挡住 —— 重跑会覆盖同一天的行，重复执行纯属浪费配额。
+    """
+    if not _refresh_lock.acquire(blocking=False):
+        return {"status": "running", "message": "正在生成中，请稍候再试"}
+
+    db = SessionLocal()
+    try:
+        summary = hotspot_mod.refresh_hotspot(db, date)
+        return {"status": "ok", "summary": summary}
+    except hotspot_mod.HotspotError as exc:
+        logger.error("热点刷新失败: %s", exc)
+        return {"status": "error", "message": str(exc)[:300]}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("热点刷新异常: %s", exc, exc_info=True)
+        return {"status": "error", "message": f"生成失败：{str(exc)[:300]}"}
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _refresh_lock.release()
+
+
+@router.get("/hotspot/dates")
+def hotspot_dates(auth: bool = Depends(require_auth)):
+    """已生成日报的交易日（新→旧），供页面日期切换。"""
+    db = SessionLocal()
+    try:
+        return {"dates": crud.list_hotspot_dates(db, limit=60)}
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass

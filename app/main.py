@@ -17,7 +17,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
 from app.api import (news, crawl, login, market, index_alarm, finance, valuation,
-                     macro, stock_temp, lhb, a_share)
+                     macro, stock_temp, lhb, a_share, hotspot)
 from app.api.login import is_logged_in
 
 logger = logging.getLogger(__name__)
@@ -248,6 +248,7 @@ app.include_router(macro.router, prefix="/api", tags=["macro"])
 app.include_router(stock_temp.router, prefix="/api", tags=["stock-temp"])
 app.include_router(lhb.router, prefix="/api", tags=["lhb"])
 app.include_router(a_share.router, prefix="/api", tags=["a-share"])
+app.include_router(hotspot.router, prefix="/api", tags=["hotspot"])
 # 数据源探测（诊断用；验证候选源在沙箱网络里是否可用，验证完可删）
 
 
@@ -331,6 +332,18 @@ async def market_page(request: Request):
     return render_template("market.html", {"request": request})
 
 
+@app.get("/today")
+async def today_page(request: Request):
+    """今日热点：一个交易日的盘面聚合日报（定调 / 主线 / 热股 / 资金 / 大事）。
+
+    数据在收盘轮（21:34）生成并存库，页面只读 GET /api/hotspot/today，
+    手动「重新生成」走 POST /api/hotspot/refresh。
+    """
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("today.html", {"request": request})
+
+
 @app.get("/a-share")
 async def a_share_page(request: Request):
     """股市行情：上证指数与科创50 今年以来的日线曲线（数据域 a_share）。
@@ -407,6 +420,7 @@ async def lhb_page(request: Request):
 
 _PAGE_LINKS = [
     ("/home", "首页"),
+    ("/today", "今日热点"),
     ("/crawl", "抓取"),
     ("/market", "全球行情"),
     ("/a-share", "股市行情"),
