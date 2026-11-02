@@ -492,15 +492,15 @@ TEMP_KEYS = [ind["key"] for ind in INDICATORS if ind.get("temp_weight")]
 #   · 只在「市场贪婪指数」区块里以**权重 0** 的单卡展示，用于横向对照
 # 只看不算是它们的全部意义：多一个估值参照，不让指针变得不可解释。
 #
-# 用户 2026-10-31 要求加科创100 PE-TTM（展示样式对齐沪深300 PE-TTM）。
+# 用户 2026-10-31 要求加「科创板 PE-TTM」仅展示项，2026-11-02 指定由科创100 换成**科创50**。
 # ⚠️ 加新项时：key 同时登记到 app/utils/greed_index.py 的 GREED_DISPLAY，
 #    页面才会渲染卡片；本表只负责抓取与读数判定（状态/档位色）。
 DISPLAY_ONLY_INDICATORS: List[Dict[str, Any]] = [
     {
-        "key": "kc100_pe",
+        "key": "kc50_pe",
         "group": GROUP_VALUATION,
-        "name": "科创100 PE-TTM",
-        "subtitle": "上证科创板100指数滚动市盈率（仅展示）",
+        "name": "科创50 PE-TTM",
+        "subtitle": "上证科创板50成份指数滚动市盈率（仅展示）",
         "unit": "倍",
         "digits": 2,
         "temp_layer": GROUP_VALUATION,
@@ -509,13 +509,14 @@ DISPLAY_ONLY_INDICATORS: List[Dict[str, Any]] = [
         "freq": "月频",
         "judge": "percentile",
         "meaning": (
-            "上证科创板100 指数（000698）成分股的滚动市盈率（PE-TTM，市值加权）。"
-            "科创100 是科创板里中等市值的成长股集合，估值弹性比沪深300 大得多，"
+            "上证科创板50 成份指数（000688）成分股的滚动市盈率（PE-TTM，市值加权）。"
+            "科创50 由科创板市值最大、流动性最好的 50 只龙头构成，是科创板的宽基代表"
+            "（半导体、高端装备、生物医药等硬科技为主），估值弹性比沪深300 大得多，"
             "与沪深300 PE-TTM 并排看，能直观感受「成长股相对宽基贵多少」。"
         ),
         "guide": (
             "读数高不等于「该卖」——科创板利润基数小、成长期公司多，PE 天然偏高，"
-            "所以它只用来对照幅度：科创100 PE ÷ 沪深300 PE 的倍数走高，"
+            "所以它只用来对照幅度：科创50 PE ÷ 沪深300 PE 的倍数走高，"
             "说明资金在往成长股跑；倍数回落说明风险偏好在收缩。"
             "本指标不参与贪婪指数与综合温度计的任何计算。"
         ),
@@ -887,7 +888,7 @@ def _csindex_pe(symbol: str = "000300", cache_key: str = "csindex300") -> Dict[s
     只给当日一行用：市盈率1 = 总市值/最近年报净利润（静态），
     市盈率2 = 总市值/最近四个季度净利润（滚动 TTM），本模块主值取**滚动**。
 
-    symbol 默认 000300（沪深300）；科创100 用 000698（见 fetch_kc100_pe）。
+    symbol 默认 000300（沪深300）；科创50 用 000688（见 fetch_kc50_pe）。
     两者同一个接口、同一套字段，只是指数代码不同 —— 所以复用同一个函数，
     免得两处解析逻辑各写一遍、日后字段变了只改一处。
     """
@@ -1028,18 +1029,20 @@ def fetch_hs300_pe() -> Dict[str, Any]:
         return _fetch_hs300_pe_legu()
 
 
-def fetch_kc100_pe() -> Dict[str, Any]:
-    """科创100 PE-TTM（中证 000698）：**只用于展示，不参与任何计算**。
+def fetch_kc50_pe() -> Dict[str, Any]:
+    """科创50 PE-TTM（中证 000688）：**只用于展示，不参与任何计算**。
 
     用户 2026-10-31 要求：在股市热度页「市场贪婪指数」的分项说明里，按沪深300
-    PE-TTM 同样的样式再列一个科创100 PE-TTM，但只作对照展示 ——
-    既不加进贪婪指数的权重（仍是 4×22% + 12%），也不进综合温度计的三层合成。
+    PE-TTM 同样的样式再列一个科创板 PE-TTM；2026-11-02 指定标的由
+    **科创100（000698）改为科创50（000688）** —— 科创50 是科创板龙头宽基，
+    与沪深300 对照时口径更稳（成分少、不随中小市值轮动漂移）。
 
-    所以它刻意**不在 INDICATORS 里**（那里是温度计成分表），而是登记在
-    DISPLAY_ONLY_INDICATORS；抓取/落库/分位补算与其它指标走同一条链路，
-    只是不参与加权。
+    只作对照展示：既不加进贪婪指数的权重（仍是 4×22% + 12%），
+    也不进综合温度计的三层合成。所以它刻意**不在 INDICATORS 里**
+    （那里是温度计成分表），而是登记在 DISPLAY_ONLY_INDICATORS；
+    抓取/落库/分位补算与其它指标走同一条链路，只是不参与加权。
     """
-    snap = _csindex_pe(symbol="000698", cache_key="csindex698")
+    snap = _csindex_pe(symbol="000688", cache_key="csindex688")
     return {
         "value": round(snap["pe_ttm"], 2),
         "as_of": snap.get("as_of"),
@@ -1049,7 +1052,7 @@ def fetch_kc100_pe() -> Dict[str, Any]:
             "PE-静态": round(snap["pe_static"], 2) if snap.get("pe_static") else None,
             "股息率": round(snap["dividend"], 2) if snap.get("dividend") else None,
             "分位": None,       # 交给 _fill_percentiles 用本页历史样本补算（仅供展示参考）
-            "数据源": "中证指数官网 stock_zh_index_value_csindex（000698 当日估值，市盈率2=滚动）",
+            "数据源": "中证指数官网 stock_zh_index_value_csindex（000688 当日估值，市盈率2=滚动）",
         },
         "series": [],
     }
@@ -2078,8 +2081,8 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
     except Exception as e:
         logger.warning("股票指标 hs300_pe 抓取失败: %s", e)
         out["hs300_pe"] = {"error": str(e)[:200]}
-    # 科创100 PE-TTM：只展示、不参与任何计算（见 DISPLAY_ONLY_INDICATORS）
-    _run("kc100_pe", fetch_kc100_pe)
+    # 科创50 PE-TTM：只展示、不参与任何计算（见 DISPLAY_ONLY_INDICATORS）
+    _run("kc50_pe", fetch_kc50_pe)
     _run("hs300_pb", fetch_hs300_pb)
 
     y10 = None
@@ -2444,7 +2447,7 @@ def build_response(raw: Dict[str, dict]) -> dict:
     for ind in INDICATORS:
         items[ind["key"]] = build_item(ind, raw.get(ind["key"]))
 
-    # 仅展示指标（科创100 PE-TTM）：同样 build 成 item 塞进 items，
+    # 仅展示指标（科创50 PE-TTM）：同样 build 成 item 塞进 items，
     # 好让贪婪指数拿到和沪深300 PE 完全一致的一套字段（value/as_of/state/分位/含义）。
     # 但**不进 groups**（分组表按 INDICATOR_KEYS 遍历），也不参与温度计合成。
     for ind in DISPLAY_ONLY_INDICATORS:

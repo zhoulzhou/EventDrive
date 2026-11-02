@@ -393,7 +393,7 @@ function greedConfirmHtml(c) {
         + "</div></div>";
 }
 
-// 仅展示卡：权重 0，不参与任何计算（当前是科创100 PE-TTM）
+// 仅展示卡：权重 0，不参与任何计算（当前是科创50 PE-TTM）
 // 展示口径刻意与「沪深300 PE-TTM」那张主成分卡一致：读数 / 数据日期 / 分位 / 状态 +
 // 指标含义 / 怎么看，只是把权重换成「仅展示 · 权重 0」。
 function greedDisplayHtml(d) {
@@ -470,7 +470,7 @@ function greedGaugeHtml(p) {
 
     const factors = (p.factors || []).map(greedFactorHtml).join("");
     const confirms = (p.confirms || []).map(greedConfirmHtml).join("");
-    // 仅展示项（权重 0，如科创100 PE-TTM）：不参与合成，单独一张卡
+    // 仅展示项（权重 0，如科创50 PE-TTM）：不参与合成，单独一张卡
     const displays = (p.displays || []).map(greedDisplayHtml).join("");
     const deep = p.deep ? "<div class=\"st-pdeep " + (p.deep.hit ? "hit" : "weak")
         + "\" style=\"border-left-color:" + tone(p.deep.tone || "slate") + "\">"
@@ -648,8 +648,9 @@ function notesHtml() {
         + "<li><b>全A换手率用股数法</b>（两市成交量 ÷ 两市流通股本），与东方财富、同花顺等行情软件"
         + "同口径，也和综合温度计用的是同一个读数；旧的「成交额 ÷ 流通市值」金额法系统性高约 27%，"
         + "已不再使用、也不在页面上展示。</li>"
-        + "<li><b>科创100 PE-TTM 只展示、不计算</b>：和沪深300 PE-TTM 并排列出，"
-        + "方便对照「成长股相对宽基贵多少」；它的权重是 0，不进加权合成、不做确认闸门，"
+        + "<li><b>科创50 PE-TTM 只展示、不计算</b>：和沪深300 PE-TTM 并排列出，"
+        + "方便对照「成长股相对宽基贵多少」（科创50 是科创板 50 只大市值龙头的宽基）；"
+        + "它的权重是 0，不进加权合成、不做确认闸门，"
         + "读数高低不会影响贪婪指数。</li>"
         + "<li><b>分位直接用历史分位</b>（越高越贪婪），不做「100 − 分位」的反向换算，"
         + "所以与综合温度计方向天然对齐。分子为<b>严格小于</b>当前值的样本数。</li>"
