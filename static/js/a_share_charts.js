@@ -193,34 +193,40 @@ function asTrendOption(items) {
         };
     });
 
-    const tooltips = slices.map(function (s, i) {
-        const m = valMap[s.it.symbol] || {};
-        return {
-            trigger: "axis", confine: true, gridIndex: i,
-            axisPointer: { lineStyle: { color: AS.axis } },
-            backgroundColor: "rgba(255,255,255,0.97)",
-            borderColor: "#e2e8f0", borderWidth: 1, padding: [8, 11],
-            textStyle: { color: AS.ink, fontSize: 12, lineHeight: 18 },
-            formatter: function (params) {
-                if (!params || !params.length) return "";
-                const d = params[0].axisValue;
-                const idx = dates.indexOf(d);
-                const v = m[d];
-                if (v === undefined) return "<b>" + d + "</b><br/>" + escapeHtml(s.it.name) + "：休市";
-                const prev = idx > 0 ? m[dates[idx - 1]] : undefined;
-                let extra = "";
-                if (prev !== undefined && prev) {
-                    const chg = v - prev;
-                    const pct = chg / prev * 100;
-                    const color = chg >= 0 ? AS.up : AS.down;
-                    extra = '<br/><span style="color:' + color + '">较前一交易日 '
-                        + asSigned(chg) + "（" + asSigned(pct) + "%）</span>";
-                }
-                return "<b>" + d + "</b><br/>" + escapeHtml(s.it.name)
-                    + '：<b>' + asNum(v) + "</b>" + extra;
+    // ⚠ 只能用**一个** tooltip，不能按 grid 配成数组：tooltip 没有 gridIndex 这个匹配项，
+    // 数组写法在鼠标落进第二栏时仍会命中第一个（于是科创50 的悬停显示成了上证的读数）。
+    // 多 grid 单 tooltip 时 ECharts 只会带上指针所在那一栏的系列，formatter 再用
+    // seriesIndex 回溯到对应指数，双保险。
+    const tooltip = {
+        trigger: "axis", confine: true,
+        axisPointer: { lineStyle: { color: AS.axis } },
+        backgroundColor: "rgba(255,255,255,0.97)",
+        borderColor: "#e2e8f0", borderWidth: 1, padding: [8, 11],
+        textStyle: { color: AS.ink, fontSize: 12, lineHeight: 18 },
+        formatter: function (params) {
+            if (!params || !params.length) return "";
+            const p = params[0];
+            const s = slices[p.seriesIndex] || slices[0];
+            const m = valMap[s.it.symbol] || {};
+            const d = p.axisValue;
+            const v = m[d];
+            if (v === undefined) {
+                return "<b>" + d + "</b><br/>" + escapeHtml(s.it.name) + "：休市";
             }
-        };
-    });
+            const idx = dates.indexOf(d);
+            const prev = idx > 0 ? m[dates[idx - 1]] : undefined;
+            let extra = "";
+            if (prev !== undefined && prev) {
+                const chg = v - prev;
+                const pct = chg / prev * 100;
+                const color = chg >= 0 ? AS.up : AS.down;
+                extra = '<br/><span style="color:' + color + '">较前一交易日 '
+                    + asSigned(chg) + "（" + asSigned(pct) + "%）</span>";
+            }
+            return "<b>" + d + "</b><br/>" + escapeHtml(s.it.name)
+                + '：<b>' + asNum(v) + "</b>" + extra;
+        }
+    };
 
     return {
         animationDuration: 260,
@@ -253,7 +259,7 @@ function asTrendOption(items) {
                 textStyle: { color: AS.sub, fontSize: 10 }
             }
         ],
-        tooltip: tooltips,
+        tooltip: tooltip,
         xAxis: xAxes,
         yAxis: yAxes,
         series: series
