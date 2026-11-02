@@ -637,7 +637,7 @@ def upsert_history(table: str, records: Sequence[Dict[str, Any]], *,
             seen[pair].update({k: v for k, v in rec.items() if k != "fetched_at"})
     uniq = [seen[p] for p in order]
 
-    existing_rows = fetch_history_series(table, [r["key"] for r in uniq],
+    existing_rows = fetch_history_series(table, list(dict.fromkeys(r["key"] for r in uniq)),
                                          per_key_limit=100000, fetch_all=True)
     existing: Dict[Tuple[str, Optional[str]], Row] = {}
     for key, rows in existing_rows.items():
