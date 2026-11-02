@@ -2,16 +2,15 @@
  *
  * 由 app/templates/a_share.html 引用；依赖 main.js 的 fetchWithAuth / escapeHtml。
  *
- * 两张图：
- *   1) asTrend  双面板走势 —— 两个指数点位差三倍（上证 ~3600 / 科创50 ~1200），
- *      叠一张图会把科创50 压成直线，所以**各自一个 grid 各用各的 Y 轴**，
- *      再用 axisPointer.link 把竖线联动起来（悬停任一栏，两栏指示线对齐）。
- *      为什么不用两张独立 ECharts 实例：各自 autoSkip 算刻度数不同，竖线会错开，
- *      对不齐；单实例多 grid 由库统一算像素，天然对齐（同 /market 页的做法）。
- *   2) asNorm   归一化对比（今年首个交易日 = 100）—— 点位不可比，涨幅可比。
+ * 只有一张图：asTrend 双面板走势 —— 两个指数点位差三倍（上证 ~3600 / 科创50 ~1200），
+ * 叠一张图会把科创50 压成直线，所以**各自一个 grid 各用各的 Y 轴**，
+ * 再用 axisPointer.link 把竖线联动起来（悬停任一栏，两栏指示线对齐）。
+ * 为什么不用两张独立 ECharts 实例：各自 autoSkip 算刻度数不同，竖线会错开，
+ * 对不齐；单实例多 grid 由库统一算像素，天然对齐（同 /market 页的做法）。
  *
- * 区间按钮只裁剪显示范围，**不重算归一化基准**：基准恒为今年首个交易日，
- * 否则切到「近 1 月」后「年初 = 100」这个标题就不成立了。
+ * 相对强弱不另画归一化曲线（曾有过「年初 = 100」一图，2026-11-02 按用户要求撤掉），
+ * 改由卡片里的「年内涨跌幅」承担 —— 两者同为今年以来的累计涨跌，口径已可比。
+ * 区间按钮只裁剪显示范围，不改变任何基准。
  */
 
 const AS = {
@@ -238,88 +237,6 @@ function asTrendOption(items) {
     };
 }
 
-/* ---------------- 归一化对比图 ---------------- */
-function asNormOption(items) {
-    const slices = items.map(function (it) {
-        const base = it.points.length ? it.points[0].value : null;
-        return { it: it, points: asClip(it.points), base: base };
-    }).filter(function (s) { return s.base; });
-
-    const dates = asDates(slices.map(function (s) { return s.points; }));
-    if (!dates.length || !slices.length) return null;
-
-    const normMap = {};
-    slices.forEach(function (s) {
-        const m = {};
-        s.points.forEach(function (p) { m[p.date] = p.value / s.base * 100; });
-        normMap[s.it.symbol] = m;
-    });
-
-    const series = slices.map(function (s) {
-        const style = AS_META[s.it.symbol] || { color: AS.sub, area: "rgba(148,163,184,0.08)" };
-        const m = normMap[s.it.symbol] || {};
-        return {
-            name: s.it.name + "（年初=100）",
-            type: "line",
-            showSymbol: false, symbol: "circle", symbolSize: 6,
-            data: dates.map(function (d) { return m[d] === undefined ? null : +m[d].toFixed(2); }),
-            lineStyle: { width: 1.9, color: style.color },
-            itemStyle: { color: style.color },
-            connectNulls: false,
-            markLine: {
-                silent: true, symbol: "none",
-                lineStyle: { color: AS.axis, type: "dashed", width: 1 },
-                label: { show: true, position: "insideEndTop", formatter: "年初 = 100", color: AS.sub, fontSize: 10 },
-                data: [{ yAxis: 100 }]
-            }
-        };
-    });
-
-    return {
-        animationDuration: 260,
-        grid: { left: 52, right: 130, top: 26, bottom: 30 },
-        legend: {
-            top: 0, right: 0, icon: "roundRect", itemWidth: 10, itemHeight: 3,
-            textStyle: { color: AS.ink, fontSize: 11 }
-        },
-        tooltip: {
-            trigger: "axis", confine: true,
-            axisPointer: { lineStyle: { color: AS.axis } },
-            backgroundColor: "rgba(255,255,255,0.97)",
-            borderColor: "#e2e8f0", borderWidth: 1, padding: [8, 11],
-            textStyle: { color: AS.ink, fontSize: 12, lineHeight: 18 },
-            formatter: function (params) {
-                if (!params || !params.length) return "";
-                const lines = ["<b>" + params[0].axisValue + "</b>"];
-                params.forEach(function (p) {
-                    const v = p.value;
-                    if (v === null || v === undefined) return;
-                    const pct = v - 100;
-                    const color = pct >= 0 ? AS.up : AS.down;
-                    lines.push('<span style="color:' + p.color + '">●</span> '
-                        + escapeHtml(p.seriesName.replace("（年初=100）", ""))
-                        + '：<b>' + asNum(v) + "</b>"
-                        + ' <span style="color:' + color + '">' + asSigned(pct) + "%</span>");
-                });
-                return lines.join("<br/>");
-            }
-        },
-        xAxis: {
-            type: "category", data: dates, boundaryGap: false,
-            axisLine: { lineStyle: { color: AS.axis } }, axisTick: { show: false },
-            axisLabel: { color: AS.sub, fontSize: 10, hideOverlap: true, showMaxLabel: true },
-            splitLine: { show: false }
-        },
-        yAxis: {
-            type: "value", scale: true,
-            axisLine: { show: false }, axisTick: { show: false },
-            axisLabel: { color: AS.sub, fontSize: 10 },
-            splitLine: { lineStyle: { color: AS.grid } }
-        },
-        series: series
-    };
-}
-
 /* ---------------- 渲染 ---------------- */
 function asRender(data) {
     const items = data.items || [];
@@ -331,15 +248,11 @@ function asRender(data) {
     const withPoints = items.filter(function (it) { return it.points && it.points.length; });
     if (!withPoints.length) {
         asEmpty("asTrend", "还没有 A 股指数数据：点右上「抓取最新」回填今年以来");
-        asEmpty("asNorm", "还没有 A 股指数数据");
         return;
     }
 
     const trend = asTrendOption(items);
     if (trend) asMount("asTrend", trend); else asEmpty("asTrend", "所选区间内没有数据");
-
-    const norm = asNormOption(items);
-    if (norm) asMount("asNorm", norm); else asEmpty("asNorm", "所选区间内没有数据");
 }
 
 /* 提示条：空库 / 数据滞后 */
@@ -381,7 +294,6 @@ async function asLoad() {
         document.getElementById("asCards").innerHTML =
             '<div class="error-state"><h2>加载失败</h2><p>' + escapeHtml(error.message) + "</p></div>";
         asEmpty("asTrend", "加载失败");
-        asEmpty("asNorm", "加载失败");
     }
 }
 

@@ -19,7 +19,7 @@
         两条曲线都是<strong>日收盘点位</strong>：<strong>上证指数</strong>看全市场水位（大盘蓝筹为主），
         <strong>科创50</strong>看科技成长风格（科创板市值最大的 50 只）。
         点位量级差三倍，直接叠在一张图上会被压扁，所以走势<strong>分两栏各画各的 Y 轴</strong>；
-        要比强弱就看下面的<strong>归一化对比（年初 = 100）</strong> —— 同一把尺子量两条曲线。
+        要比强弱看卡片里的<strong>年内涨跌幅</strong>（两者都是今年以来的累计涨跌，可直接对比）。
     </p>
     <p class="form-hint as-src-line">
         数据源：腾讯日线（新浪指数日线 / 东财日线兜底，三源读数一致）。
@@ -43,14 +43,6 @@
         </div>
     </div>
     <div id="asTrend" class="as-chart as-chart-trend"></div>
-</div>
-
-<div class="as-panel">
-    <div class="as-panel-head">
-        <h2>强弱对比 · 年初 = 100</h2>
-        <span class="as-sub">只看相对强弱，不看绝对点位；两条线在 100 上方即为年内上涨</span>
-    </div>
-    <div id="asNorm" class="as-chart as-chart-norm"></div>
 </div>
 {% endblock %}
 

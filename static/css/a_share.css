@@ -74,13 +74,11 @@
     gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem;
 }
 .as-panel-head h2 { font-size: 1.15rem; color: #333; }
-.as-sub { font-size: 0.82rem; color: #94a3b8; }
 .as-range { display: flex; gap: 0.35rem; }
 .as-range .page-btn { padding: 0.35rem 0.8rem; font-size: 0.85rem; }
 
 .as-chart { width: 100%; }
 .as-chart-trend { height: 620px; }
-.as-chart-norm { height: 320px; }
 
 /* 图内空态（数据还没回填时） */
 .as-empty {
@@ -106,7 +104,6 @@
 
 @media (max-width: 860px) {
     .as-chart-trend { height: 520px; }
-    .as-chart-norm { height: 300px; }
 }
 
 @media (max-width: 640px) {
