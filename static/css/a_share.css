@@ -74,11 +74,11 @@
     gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem;
 }
 .as-panel-head h2 { font-size: 1.15rem; color: #333; }
-.as-range { display: flex; gap: 0.35rem; }
-.as-range .page-btn { padding: 0.35rem 0.8rem; font-size: 0.85rem; }
+.as-tip { font-size: 0.82rem; color: #94a3b8; }
 
 .as-chart { width: 100%; }
-.as-chart-trend { height: 620px; }
+/* 660 = grid 固定布局（40+232+84+232=588）+ 轴标签(~20) + 底部拖动条(26+边距)，改高度要同步改 JS 的 grids */
+.as-chart-trend { height: 660px; }
 
 /* 图内空态（数据还没回填时） */
 .as-empty {
@@ -103,11 +103,10 @@
 .as-notice.error .as-notice-tag { background: rgba(220, 38, 38, 0.14); }
 
 @media (max-width: 860px) {
-    .as-chart-trend { height: 520px; }
+    .as-panel { padding: 1rem 1rem 1.1rem; }
 }
 
 @media (max-width: 640px) {
     .as-header h1 { font-size: 1.45rem; }
     .as-value { font-size: 1.9rem; }
-    .as-chart-trend { height: 460px; }
 }

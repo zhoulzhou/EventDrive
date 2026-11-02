@@ -10,7 +10,10 @@
  *
  * 相对强弱不另画归一化曲线（曾有过「年初 = 100」一图，2026-11-02 按用户要求撤掉），
  * 改由卡片里的「年内涨跌幅」承担 —— 两者同为今年以来的累计涨跌，口径已可比。
- * 区间按钮只裁剪显示范围，不改变任何基准。
+ *
+ * 区间按钮也已删除（同日用户要求）：默认就是**全部交易日**，看局部靠 dataZoom ——
+ * 底部拖动条 + 滚轮缩放（做法同 /index-alarm）。两个 grid 的 xAxisIndex 一起挂，
+ * 缩放时上下两栏始终对齐同一天；拖动条本身只有一条，落在容器最底部。
  */
 
 const AS = {
@@ -24,7 +27,7 @@ const AS_META = {
     SH000688: { color: AS.kc, area: "rgba(37, 99, 235, 0.07)" }
 };
 
-const asState = { items: [], range: "ytd", loading: false };
+const asState = { loading: false };
 const asCharts = {};
 
 /* ---------------- 小工具 ---------------- */
@@ -67,14 +70,6 @@ function asEmpty(id, msg) {
     if (!dom) return;
     if (asCharts[id]) { asCharts[id].dispose(); delete asCharts[id]; }
     dom.innerHTML = '<div class="as-empty">' + escapeHtml(msg) + "</div>";
-}
-
-/* 按区间裁剪（只影响显示范围） */
-function asClip(points) {
-    const r = asState.range;
-    if (!r || r === "ytd") return points;
-    const n = parseInt(r, 10);
-    return n > 0 ? points.slice(-n) : points;
 }
 
 /* 两条曲线的日期并集（升序）—— 理论上交易日完全一致，仍按并集对齐，缺的点补 null */
@@ -123,7 +118,7 @@ function asCardHtml(it) {
 /* ---------------- 走势图（双面板） ---------------- */
 function asTrendOption(items) {
     const slices = items.map(function (it) {
-        return { it: it, points: asClip(it.points) };
+        return { it: it, points: it.points || [] };
     });
     const dates = asDates(slices.map(function (s) { return s.points; }));
     if (!dates.length) return null;
@@ -135,6 +130,8 @@ function asTrendOption(items) {
         valMap[s.it.symbol] = m;
     });
 
+    // 高度与 .as-chart-trend 的 CSS 高度一一对应（grid 是固定 px，容器变矮会压掉第二栏）
+    // 布局：40 标题 / 232 上证 / 84 间距(含第二栏标题) / 232 科创50 / 26 轴标签 / 拖动条
     const PANEL_H = 232;
     const grids = [
         { left: 64, right: 26, top: 40, height: PANEL_H },
@@ -230,6 +227,32 @@ function asTrendOption(items) {
         title: titles,
         grid: grids,
         axisPointer: { link: [{ xAxisIndex: "all" }] },
+        // 只缩放不改变数据：拖动条与滚轮都作用于两个 grid，保证上下两栏永远同一天
+        dataZoom: [
+            {
+                type: "inside", xAxisIndex: [0, 1],
+                zoomOnMouseWheel: true, moveOnMouseWheel: false,
+                preventDefaultMouseMove: true
+            },
+            {
+                type: "slider", xAxisIndex: [0, 1],
+                bottom: 4, height: 26, left: 64, right: 26,
+                borderColor: "#e2e8f0", backgroundColor: "#f8fafc",
+                fillerColor: "rgba(37, 99, 235, 0.12)",
+                // 拖动条里那条缩略曲线：不画没人知道两端对应哪段，画了才能一眼定位
+                dataBackground: {
+                    lineStyle: { color: "#cbd5e1", width: 1 },
+                    areaStyle: { color: "rgba(203, 213, 225, 0.35)" }
+                },
+                selectedDataBackground: {
+                    lineStyle: { color: "#93c5fd", width: 1 },
+                    areaStyle: { color: "rgba(147, 197, 253, 0.30)" }
+                },
+                handleStyle: { color: "#fff", borderColor: "#94a3b8", borderWidth: 1 },
+                moveHandleStyle: { color: "#94a3b8", opacity: 0.5 },
+                textStyle: { color: AS.sub, fontSize: 10 }
+            }
+        ],
         tooltip: tooltips,
         xAxis: xAxes,
         yAxis: yAxes,
@@ -240,7 +263,6 @@ function asTrendOption(items) {
 /* ---------------- 渲染 ---------------- */
 function asRender(data) {
     const items = data.items || [];
-    asState.items = items;
 
     const cards = document.getElementById("asCards");
     cards.innerHTML = items.map(asCardHtml).join("");
@@ -326,24 +348,9 @@ async function asRefresh() {
     }
 }
 
-function asBindRange() {
-    const box = document.getElementById("asRange");
-    if (!box) return;
-    box.addEventListener("click", function (e) {
-        const btn = e.target.closest("button[data-range]");
-        if (!btn) return;
-        asState.range = btn.getAttribute("data-range");
-        box.querySelectorAll("button").forEach(function (b) {
-            b.classList.toggle("active", b === btn);
-        });
-        asRender({ items: asState.items });
-    });
-}
-
 document.addEventListener("DOMContentLoaded", function () {
     const btn = document.getElementById("asRefresh");
     if (btn) btn.addEventListener("click", asRefresh);
-    asBindRange();
     asLoad();
 
     window.addEventListener("resize", debounce(function () {
