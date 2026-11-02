@@ -7,7 +7,7 @@
 - POST /api/macro/backfill  回溯补齐历史（**页面已无入口**，仅备必要时手动调用）
 
 三个维度（3 / 4 / 3 项），全部自动获取、无手工录入：
-- ① 资金面      akshare：DR007 偏离、R001−DR001；中国货币网：1Y AAA 同业存单收益率
+- ① 资金面      akshare：DR001 偏离、R001−DR001；中国货币网：1Y AAA 同业存单收益率
 - ② 实体热度    akshare：PMI、PPI、M1−M2；央行：社融存量同比
 - ③ 信用/部门   央行《金融统计数据报告》：企业中长贷同比多增、住户中长贷同比多增、财政存款当月环比
 
@@ -109,7 +109,7 @@ def _load_raw(db: Session) -> Dict[str, dict]:
 
 
 def _load_params(db: Session) -> Dict[str, dict]:
-    """读取 7 天逆回购利率锚（自动抓取自央行公告，只读展示）。"""
+    """读取隔夜逆回购利率锚（2026-11-02 起的主要政策利率，自动抓取自央行公告，只读展示）。"""
     meta = mi.PARAM_META[mi.PARAM_REVERSE_REPO]
     row = crud.get_macro_indicator(db, mi.PARAM_REVERSE_REPO)
     value = row.value if row is not None and row.value is not None else meta["default"]
@@ -270,7 +270,7 @@ def get_macro_history(
 ):
     """查询市场指标历史读数（只增不改的历史表）。
 
-    - key   ：指标键；不传则返回全部指标的历史（如 dr007_spread / ncd_1y_aaa /
+    - key   ：指标键；不传则返回全部指标的历史（如 dr001_spread / ncd_1y_aaa /
               r001_dr001 / pmi / tsf_yoy / m1_m2 / ppi_yoy / corp_ml_loan_yoy /
               household_ml_loan_yoy / fiscal_deposit_mom / reverse_repo_rate）
     - limit ：返回条数，1~2000，默认 200
@@ -319,12 +319,13 @@ def get_macro_series(
 ):
     """返回「三组一定位」图表面板所需的全部历史序列。
 
-    - daily  ：日频序列（DR007 偏离、R001 − DR001、1Y AAA 同业存单收益率）
+    - daily  ：日频序列（DR001 偏离、R001 − DR001、1Y AAA 同业存单收益率）
     - monthly：月度序列（PMI、PPI、社融存量同比、M1/M2 同比、M1−M2 剪刀差），
                用于阈值带图、双线剪刀差图、归一化叠加与四象限轨迹
     - thermometer：宏观温度计序列（总分 + 三个子温度计 + 价差）。温度计是**合成值**，
                不在指标表里，由历史表 key="macro_thermometer" 的打卡记录还原
-    - anchor_steps：7 天逆回购操作利率的历史档位（回溯 DR007 偏离时的锚）
+    - anchor_steps / overnight_steps：政策利率档位。2026-11-02 换锚前用 7 天期档位
+               减去 overnight_offset_bp 折算成隔夜等价，之后直接用隔夜期档位
 
     序列一律按时间正序返回，元素为 {as_of, value, source}。
     """
@@ -366,6 +367,8 @@ def get_macro_series(
             "monthly": monthly,
             "thermometer": thermometer,
             "anchor_steps": [{"from": d, "rate": r} for d, r in mbf.POLICY_RATE_STEPS],
+            "overnight_steps": [{"from": d, "rate": r} for d, r in mbf.OVERNIGHT_POLICY_STEPS],
+            "overnight_offset_bp": mbf.OVERNIGHT_EQUIV_OFFSET_BP,
             "counts": counts,
             "total": sum(counts.values()),
         }

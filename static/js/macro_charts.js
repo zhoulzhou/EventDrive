@@ -53,6 +53,19 @@ function anchorRateOn(date, steps) {
     for (let i = 0; i < list.length; i++) if (d >= list[i].from) return list[i].rate;
     return list.length ? list[list.length - 1].rate : null;
 }
+/* 政策利率锚：2026-11-02 换锚前用 7 天期档位 − 15bp 折算成隔夜等价，之后直接用隔夜期档位 */
+function policyAnchorOn(date, steps, oSteps, offsetBp) {
+    const d = String(date || "").slice(0, 10);
+    const os = (oSteps || []).slice().sort(function (a, b) { return a.from < b.from ? 1 : -1; });
+    if (os.length && d >= os[0].from) return { rate: anchorRateOn(d, os), label: "隔夜逆回购" };
+    const r7 = anchorRateOn(d, steps);
+    const off = (offsetBp === null || offsetBp === undefined ? 15 : offsetBp) / 100;
+    if (r7 === null) return { rate: null, label: "" };
+    return {
+        rate: Math.round((r7 - off) * 10000) / 10000,
+        label: "7天逆回购 " + num(r7, 2) + "% 折算(减" + Math.round(off * 100) + "bp)"
+    };
+}
 function monthlyAvg(rows) {
     const map = {};
     (rows || []).forEach(function (r) {
@@ -90,14 +103,13 @@ function alignTo(axis, rows, field) {
 }
 
 /* ---------------- 状态词（与后端阈值一致，用于图上直接标注） ---------------- */
-function dr007State(v) {
-    if (v < -20) return ["松，钱富余", CH.blue];
-    if (v < -10) return ["偏松", CH.cyan];
+function dr001State(v) {
+    if (v < -5) return ["松，钱富余", CH.blue];
+    if (v < 0) return ["偏松", CH.cyan];
     if (v <= 10) return ["央行合意区间，平稳", CH.green];
     if (v < 20) return ["略偏紧", CH.amber];
-    if (v <= 30) return ["边际偏紧", CH.amber];
-    if (v < 50) return ["偏紧", CH.orange];
-    if (v < 100) return ["明显紧张", CH.orange];
+    if (v < 35) return ["偏紧", CH.orange];
+    if (v < 60) return ["明显紧张", CH.orange];
     return ["钱荒级别", CH.red];
 }
 function r001State(v) {
@@ -146,10 +158,10 @@ function shortNcd(v) {
     if (v < 1.00) return "极低位"; if (v < 1.30) return "偏低位"; if (v < 1.60) return "中性偏松";
     if (v < 1.95) return "偏高"; return "高位";
 }
-function shortDr007(v) {
-    if (v < -20) return "松"; if (v < -10) return "偏松"; if (v <= 10) return "平稳";
-    if (v < 20) return "略偏紧"; if (v <= 30) return "边际偏紧"; if (v < 50) return "偏紧";
-    if (v < 100) return "明显紧张"; return "钱荒";
+function shortDr001(v) {
+    if (v < -5) return "松"; if (v < 0) return "偏松"; if (v <= 10) return "平稳";
+    if (v < 20) return "略偏紧"; if (v < 35) return "偏紧";
+    if (v < 60) return "明显紧张"; return "钱荒";
 }
 function shortR001(v) {
     if (v < 15) return "正常"; if (v < 30) return "分层走阔";
@@ -273,38 +285,38 @@ function lineSeries(name, vals, color, o) {
     }, o.extra || {});
 }
 
-/* ---------------- ① 资金松紧：DR007 偏离 ---------------- */
-function drawDr007(bag, steps) {
-    const rows = pick(bag, "dr007_spread");
-    if (!rows.length) { chartEmpty("mpDr007", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
+/* ---------------- ① 资金松紧：DR001 偏离 ---------------- */
+function drawDr001(bag, steps, oSteps, oOffset) {
+    const rows = pick(bag, "dr001_spread");
+    if (!rows.length) { chartEmpty("mpDr001", "暂无历史序列，等待定时任务每日收盘写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const ma5 = movingAvg(vals, 5);
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
-    const pad = Math.max(8, (hi - lo) * 0.18);
-    let yMin = Math.min(Math.round((lo - pad) / 5) * 5, -25);
-    let yMax = Math.max(Math.round((hi + pad) / 5) * 5, 25);
+    const pad = Math.max(6, (hi - lo) * 0.18);
+    let yMin = Math.min(Math.round((lo - pad) / 5) * 5, -10);
+    let yMax = Math.max(Math.round((hi + pad) / 5) * 5, 30);
     const x0 = dates[0], x1 = dates[dates.length - 1];
 
     const bands = [];
-    pushBand(bands, x0, x1, yMin, -20, yMin, yMax, CH.blue, "松，钱富余");
-    pushBand(bands, x0, x1, -20, 20, yMin, yMax, CH.green, "合意区 ±20bp");
-    pushBand(bands, x0, x1, 20, 50, yMin, yMax, CH.amber, "偏紧");
-    pushBand(bands, x0, x1, 50, yMax, yMin, yMax, CH.red, "钱荒级");
+    pushBand(bands, x0, x1, yMin, -5, yMin, yMax, CH.blue, "松，钱富余");
+    pushBand(bands, x0, x1, -5, 10, yMin, yMax, CH.green, "合意区 −5 ~ +10bp");
+    pushBand(bands, x0, x1, 10, 35, yMin, yMax, CH.amber, "偏紧");
+    pushBand(bands, x0, x1, 35, yMax, yMin, yMax, CH.red, "钱荒级");
 
     const opt = baseOption(dates, {
         yName: "bp", yMin: yMin, yMax: yMax,
         tooltip: function (p) {
             const i = p[0].dataIndex, d = dates[i], v = vals[i];
-            const st = dr007State(v), rate = anchorRateOn(d, steps);
+            const st = dr001State(v), anchor = policyAnchorOn(d, steps, oSteps, oOffset);
             return "<b>" + escapeHtml(d) + "</b><br>"
-                + '<span style="color:' + CH.blue + '">●</span> DR007 偏离：<b>' + signed(v, 1) + " bp</b><br>"
-                + (rate !== null ? '<span style="color:' + CH.sub + '">锚：7天逆回购 ' + num(rate, 2) + "%</span><br>" : "")
+                + '<span style="color:' + CH.blue + '">●</span> DR001 偏离：<b>' + signed(v, 1) + " bp</b><br>"
+                + (anchor.rate !== null ? '<span style="color:' + CH.sub + '">锚：' + escapeHtml(anchor.label) + " " + num(anchor.rate, 2) + "%</span><br>" : "")
                 + (ma5[i] !== null ? '<span style="color:' + CH.amber + '">●</span> 5日均线：' + num(ma5[i], 1) + " bp<br>" : "")
                 + '<span style="color:' + st[1] + '">状态：' + escapeHtml(st[0]) + "</span>";
         },
         series: [
-            Object.assign(lineSeries("DR007 偏离", vals, CH.blue), {
+            Object.assign(lineSeries("DR001 偏离", vals, CH.blue), {
                 areaStyle: { color: withAlpha(CH.blue, 0.10) },
                 markArea: { silent: true, data: bands },
                 markLine: {
@@ -315,14 +327,14 @@ function drawDr007(bag, steps) {
                 },
                 markPoint: marksFor(
                     dates, vals, CH.blue,
-                    shortDr007(vals[vals.length - 1]) + " " + signed(vals[vals.length - 1], 0) + "bp",
+                    shortDr001(vals[vals.length - 1]) + " " + signed(vals[vals.length - 1], 0) + "bp",
                     function (tag, v) { return tag + " " + signed(v, 0) + "bp"; }
                 )
             }),
             lineSeries("5 日均线", ma5, CH.amber, { dash: true, width: 1.4 })
         ]
     });
-    mount("mpDr007", opt);
+    mount("mpDr001", opt);
 }
 
 /* ---------------- ① 资金松紧：R001 − DR001 ---------------- */
@@ -801,7 +813,7 @@ function panelHtml() {
         + "</div>"
         + '<div class="mp-grid">'
         + panelCard("mp-liq", "① 资金松紧", "日频", [
-            panelChart("主图 · DR007 − 7天逆回购利率", "偏离度线 + 0 轴 + ±20bp 带 + 5 日均线", "mpDr007"),
+            panelChart("主图 · DR001 − 隔夜逆回购利率", "偏离度线 + 0 轴 + −5~+10bp 合意带 + 5 日均线", "mpDr001"),
             panelChart("辅图 · R001 − DR001", "分层利差 + 15 / 30 / 50bp 警戒线", "mpR001"),
             panelChart("负债成本 · 1Y AAA 同业存单", "日线 + 5 日均线 + 1.30 / 1.60% 中性带", "mpNcd")
         ], "高偏离且分层走阔 = 真紧；只高不阔 = 结构性问题；存单抬升 = 银行负债端吃紧、信用供给受抑")
@@ -824,14 +836,14 @@ function notesHtml() {
         + '<div class="mp-note">'
         + "<h3>一、组合三原则</h3>"
         + "<ol>"
-        + "<li><b>频率对齐</b>：日频（DR007 / R001 / 1Y 存单）一张图，月频（社融 / PMI / PPI / M1）一张图。混频率 = 看不清。</li>"
-        + "<li><b>量纲配对</b>：同量纲直接叠（DR007 vs 政策利率）；不同量纲先转成利差 / 偏离度 / 剪刀差再叠。</li>"
+        + "<li><b>频率对齐</b>：日频（DR001 / R001 / 1Y 存单）一张图，月频（社融 / PMI / PPI / M1）一张图。混频率 = 看不清。</li>"
+        + "<li><b>量纲配对</b>：同量纲直接叠（DR001 vs 政策利率）；不同量纲先转成利差 / 偏离度 / 剪刀差再叠。</li>"
         + "<li><b>领先验证</b>：信用（社融、M1−M2）领先实体 2-3 个季度，用于<b>预判</b>；PMI / PPI 是<b>同步确认</b>。两者背离时，以信用为方向、以景气验证。</li>"
         + "</ol></div>"
         + '<div class="mp-note">'
         + "<h3>二、四种呈现形态</h3>"
         + "<ol>"
-        + "<li><b>偏离度图</b>（资金面首选）：不裸画两条线让人自己算差，直接画 DR007 − 7天逆回购利率单线 + 0 轴 + ±20bp 色带 + 5 日均线。高于 0 越多越紧、低于 0 越多越松，一眼定生死。</li>"
+        + "<li><b>偏离度图</b>（资金面首选）：不裸画两条线让人自己算差，直接画 DR001 − 隔夜逆回购利率单线 + 0 轴 + −5~+10bp 色带 + 5 日均线。高于 0 越多越紧、低于 0 越多越松，一眼定生死。</li>"
         + "<li><b>阈值带图</b>（区间类指标首选）：给指标画「泳道」。社融背景分三段色带（&lt;8% 收缩 / 8~10% 中性 / &gt;12% 宽信用）；R001−DR001 画 15 / 30 / 50bp 三条横线；1Y 存单画 1.30 / 1.60% 中性带。泳道比裸线强在<b>阈值内置，不用记</b>。</li>"
         + "<li><b>双线 + 剪刀差填充</b>（配对指标首选）：M1、M2 两条线，中间差值用面积填充，M1&gt;M2 绿色、M1&lt;M2 红色。剪刀差的「转正 / 转负」比两条线的绝对值信息量大得多。</li>"
         + "</ol></div>"
@@ -853,9 +865,11 @@ function notesHtml() {
 function drawCharts(d) {
     const bag = Object.assign({}, d.daily || {}, d.monthly || {});
     const steps = d.anchor_steps || [];
+    const oSteps = d.overnight_steps || [];
+    const oOffset = d.overnight_offset_bp;
     // 绘制顺序与页面顺序一致：温度计总览在最上，然后是三组一定位
     drawThermometer(d.thermometer || []);
-    drawDr007(bag, steps);
+    drawDr001(bag, steps, oSteps, oOffset);
     drawR001(bag);
     drawNcd(bag);
     drawTsf(bag);
@@ -866,7 +880,7 @@ function drawCharts(d) {
 }
 
 /** 本页全部图表容器 id（兜底时统一提示）。 */
-const MP_CHART_IDS = ["mpThermo", "mpDr007", "mpR001", "mpNcd", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"];
+const MP_CHART_IDS = ["mpThermo", "mpDr001", "mpR001", "mpNcd", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"];
 
 /** 图表库（ECharts，本地 /static/js/echarts.min.js）是否可用。 */
 function echartsReady() {
@@ -954,7 +968,7 @@ function setTrendMeta(d, failed) {
           + "曲线会逐日变长；如需立刻写入一批数据，可到「宏观指标」页点「刷新数据」。</div>"
         : (s.total < 30
             ? '<div class="macro-alert">目前已积累 ' + s.total + ' 个数据点，曲线尚短。定时任务每天收盘会自动追加，'
-              + "无需手动操作。注意各指标频率不同：日度（DR007 / R001）逐日累积，月度（社融 / M1-M2 / PMI / PPI）每月一点，"
+              + "无需手动操作。注意各指标频率不同：日度（DR001 / R001）逐日累积，月度（社融 / M1-M2 / PMI / PPI）每月一点，"
               + "月频指标每月一点，需要等两三个月才有明显曲线。</div>"
             : "");
 }

@@ -163,7 +163,7 @@ def monthly_due(db: Session, today: Optional[date] = None) -> Tuple[bool, str]:
 
 
 def anchor_value(db: Session) -> float:
-    """当前 7 天逆回购利率锚（取库中已抓到的央行值，缺失时用兜底默认值）。"""
+    """当前隔夜逆回购利率锚（取库中已抓到的央行值，缺失时用兜底默认值）。"""
     row = crud.get_macro_indicator(db, mi.PARAM_REVERSE_REPO)
     if row is not None and row.value is not None:
         return float(row.value)

@@ -20,7 +20,7 @@
         ③ 信用 / 部门（钱在谁手里）。
         这些读数再由 <strong>宏观温度计</strong>归成三个子温度计加权合成 0-100 总分
         （资金面 × 25% + 实体热度 × 45% + 信用/部门 × 30%），并给出「温差」看政策到实体的传导。
-        资金面看「价」（DR007 偏离、分层利差）与「银行负债成本」（1Y AAA 同业存单），三项均取 5 日均线；
+        资金面看「价」（DR001 偏离、分层利差）与「银行负债成本」（1Y AAA 同业存单），三项均取 5 日均线；
         实体热度看「先行」（PMI）、「价格」（PPI）、「信用水位」（社融）与「活化」（M1−M2）；
         信用/部门看企业扩产（中长贷）、居民杠杆（中长贷）与政府投放（财政存款），一律同比多增或环比变动。
         数据取自 akshare、<strong>中国货币网</strong>与<strong>央行官网</strong>（《金融统计数据报告》/《公开市场业务交易公告》），
@@ -68,7 +68,7 @@ function fmtValue(item) {
     return v > 0 && item.unit === "bp" ? "+" + text : text;
 }
 
-// detail 里的分量（如 DR007 与逆回购利率、M1/M2 同比）
+// detail 里的分量（如 DR001 与政策利率锚、M1/M2 同比）
 function fmtDetail(detail, unit) {
     const parts = [];
     Object.keys(detail || {}).forEach(function (k) {
@@ -200,7 +200,7 @@ function anchorHtml(data) {
     const meta = [anchor.source_detail, anchor.as_of].filter(Boolean).join(" · ");
     const digits = anchor.digits === undefined ? 2 : anchor.digits;
     return `<section class="macro-anchor">
-        <div class="macro-anchor-label">政策利率锚 · DR007 偏离的基准</div>
+        <div class="macro-anchor-label">政策利率锚 · DR001 偏离的基准</div>
         <div class="macro-anchor-body">
             <span class="macro-anchor-name">${escapeHtml(anchor.name)}</span>
             <span class="macro-anchor-value">${Number(anchor.value).toFixed(digits)}</span>
@@ -214,7 +214,7 @@ function anchorHtml(data) {
 
 // 盯盘方法与取数口径说明（用户给定的方法论，随页面一起展示，勿删）
 const PLAYBOOK_CORE = [
-    { dim: "① 资金面", core: "DR007 对政策利率的偏离", freq: "每天", how: "偏离 ±10bp 内 = 平稳；持续 +50bp = 真紧；再叠加 1Y 存单抬升确认" },
+    { dim: "① 资金面", core: "DR001 对隔夜政策利率的偏离", freq: "每天", how: "偏离 0~+10bp = 平稳；持续 +30bp = 真紧；再叠加 1Y 存单抬升确认" },
     { dim: "② 实体热度", core: "PMI + 社融", freq: "每月", how: "PMI 上穿 50、社融回升到 8% 以上 = 回暖" },
     { dim: "③ 信用/部门", core: "企业中长贷同比多增", freq: "每月", how: "中长贷同比转多增 = 企业真扩产；只有财政发力 = 托底型弱复苏" }
 ];
@@ -273,7 +273,7 @@ function notesHtml() {
                 <p class="macro-note-tail">
                     本页所有读数都由后端定时任务自动抓取（akshare + 央行官网），
                     站内只做口径转换与阈值判定，不提供手工录入。
-                    <br><b>抓取节奏</b>：日频资金面（DR007 偏离 / 存单 / 分层利差 / 逆回购利率）每个交易日收盘轮抓一次；
+                    <br><b>抓取节奏</b>：日频资金面（DR001 偏离 / 存单 / 分层利差 / 隔夜逆回购利率）每个交易日收盘轮抓一次；
                     月频数据<b>只在各自发布日之后才抓</b>，没到发布日的项连请求都不发：
                     PMI <b>次月 1 号</b>（统计局当月最后一天就发布）、
                     PPI <b>次月 10 号</b>、

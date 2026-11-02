@@ -2,7 +2,7 @@
 
 三个维度、每维 3-4 项读数，共 10 项（2026-10-25 起按「NCD 版」方案重构）：
 
-- ① 资金面（松 ↔ 紧，日频）：DR007 − 7天逆回购利率、1Y AAA 同业存单收益率、R001 − DR001
+- ① 资金面（松 ↔ 紧，日频）：DR001 − 隔夜逆回购利率、1Y AAA 同业存单收益率、R001 − DR001
 - ② 实体热度（冷 ↔ 热，月度）：制造业 PMI、PPI 同比、社融存量同比、M1 − M2 剪刀差
 - ③ 信用 / 部门（钱的流向，月度）：企业中长贷同比多增、住户中长贷同比多增、财政存款当月环比
 
@@ -18,7 +18,7 @@ A股估值/情绪类读数（沪深300 PE/PB、ERP、成交额、两融）**不�
 - 中国货币网（source="chinamoney"，见 app/utils/ncd_rate.py）
           · 收盘收益率曲线 同业存单(AAA) 1Y → 银行中期负债成本
 - 央行官网（source="pbc"，见 app/utils/pbc_data.py）
-          · 《公开市场业务交易公告》      → 7天逆回购操作利率（每个交易日）
+          · 《公开市场业务交易公告》      → 隔夜期逆回购操作利率（每个工作日；2026-11-02 起为主要政策利率）
           · 《金融统计数据报告》          → 社融存量同比、分部门存贷款（含中长期贷款、财政存款）
 
 ⚠ 原「超储率」分项已于 2026-10-25 被 1Y AAA 同业存单替代：季频、要下载央行季报 PDF 解析，
@@ -71,7 +71,7 @@ GROUP_FREQS = {
 }
 
 GROUP_DESCS = {
-    GROUP_LIQUIDITY: "钱贵不贵：看「价」（DR007 偏离、分层利差）与「银行负债成本」（1Y AAA 存单）",
+    GROUP_LIQUIDITY: "钱贵不贵：看「价」（DR001 偏离、分层利差）与「银行负债成本」（1Y AAA 存单）",
     GROUP_HEAT: "经济跑不跑：看「先行」（PMI）、「价格」（PPI）、「信用水位」（社融）与「活化」（M1−M2）",
     GROUP_STRUCTURE: "钱在谁手里：企业扩产（中长贷）／居民杠杆（中长贷）／政府投放（财政存款），全用同比多增或环比变动",
 }
@@ -91,31 +91,32 @@ TONES = {
 
 INDICATORS: List[Dict[str, Any]] = [
     {
-        "key": "dr007_spread",
+        "key": "dr001_spread",
         "group": GROUP_LIQUIDITY,
-        "name": "DR007 − 7天逆回购利率",
-        "subtitle": "资金价格（5 日均）：银行资金价 vs 政策利率锚",
+        "name": "DR001 − 隔夜逆回购利率",
+        "subtitle": "资金价格（5 日均）：银行隔夜资金价 vs 政策利率锚",
         "unit": "bp",
         "digits": 0,
         "source": "auto",
         "meaning": (
-            "DR007 是存款类机构（银行）7 天期质押式回购加权利率，是央行重点观察的"
-            "\"政策利率 → 市场利率\"传导指标；7 天逆回购利率是央行公开市场操作的锚"
-            "（当前锚 1.40%）。两者之差即银行拿钱的成本相对央行合意水平偏离了多少。"
+            "DR001 是存款类机构（银行）隔夜质押式回购加权利率，隔夜交易已占货币市场"
+            "成交量九成以上，是央行直接盯的短端基准；隔夜期逆回购操作利率自 2026-11-02"
+            "起成为主要政策利率（当前锚 1.25%，7 天期退为税期 / 月末的补位工具）。"
+            "两者之差即银行隔夜拿钱的成本相对央行合意水平偏离了多少。"
         ),
         "guide": (
             "看\"价\"。负偏离=资金比政策利率还便宜，说明钱多；正偏离持续扩大=银行体系缺钱，"
-            "缴税、政府债缴款高峰时常出现；+100bp 以上属钱荒级别（2013 年 6 月、2020 年末）。"
+            "缴税、政府债缴款高峰时常出现。隔夜品种波动小于 7 天，±10bp 内属常态扰动，"
+            "+30bp 以上已是明显紧张，+60bp 以上属钱荒级别。"
         ),
         "bands": [
-            {"range": "低于 −20bp", "state": "松，钱富余", "tone": "blue"},
-            {"range": "−20 ~ −10bp", "state": "偏松", "tone": "cyan"},
-            {"range": "±10bp 内", "state": "央行合意区间，平稳", "tone": "green"},
+            {"range": "低于 −5bp", "state": "松，钱富余", "tone": "blue"},
+            {"range": "−5 ~ 0bp", "state": "偏松", "tone": "cyan"},
+            {"range": "0 ~ +10bp", "state": "央行合意区间，平稳", "tone": "green"},
             {"range": "+10 ~ +20bp", "state": "略偏紧", "tone": "amber"},
-            {"range": "+20 ~ +30bp", "state": "边际偏紧", "tone": "amber"},
-            {"range": "+30 ~ +50bp", "state": "偏紧", "tone": "orange"},
-            {"range": "+50bp 以上持续", "state": "明显紧张（缴税 / 政府债缴款高峰）", "tone": "orange"},
-            {"range": "+100bp 以上", "state": "钱荒级别（2013、2020 年末）", "tone": "red"},
+            {"range": "+20 ~ +35bp", "state": "偏紧", "tone": "orange"},
+            {"range": "+35 ~ +60bp", "state": "明显紧张（缴税 / 政府债缴款高峰）", "tone": "orange"},
+            {"range": "+60bp 以上", "state": "钱荒级别（2013 年 6 月、2025 年初）", "tone": "red"},
         ],
     },
     {
@@ -365,27 +366,29 @@ SERIES_EXTRA_KEYS = {
 
 # ------------------------------------------------------------ 参数与抓取键
 
-# 7 天逆回购利率：央行政策利率锚，用于计算 DR007 偏离
-# （自动抓取自央行《公开市场业务交易公告》）
+# 隔夜期逆回购利率：2026-11-02 起的主要政策利率锚，用于计算 DR001 偏离
+# （自动抓取自央行《公开市场业务交易公告》中「隔夜」那一行）
+# ⚠️ 键名沿用 reverse_repo_rate 以免动库，语义已由「7 天期」改为「隔夜期」。
 PARAM_REVERSE_REPO = "reverse_repo_rate"
 PARAM_META = {
     PARAM_REVERSE_REPO: {
-        "name": "7天逆回购利率（政策利率锚）",
+        "name": "隔夜逆回购利率（政策利率锚）",
         "unit": "%",
         "digits": 2,
-        "default": 1.40,
-        "hint": "央行 7 天期公开市场逆回购操作利率，用于计算 DR007 偏离。自动抓取自《公开市场业务交易公告》。",
+        "default": 1.25,
+        "hint": "央行隔夜期公开市场逆回购操作利率（2026-11-02 起为主要政策利率，"
+                "此前 7 天期为 1.40%），用于计算 DR001 偏离。自动抓取自《公开市场业务交易公告》。",
     },
 }
 
 # 抓取失败且库中无记录时的兜底读数（保证页面有数可展示，source 标记为 fallback）
 FALLBACK_DEFAULTS: Dict[str, Any] = {
     "tsf_yoy": {"value": 7.2, "as_of": "兜底默认值"},
-    PARAM_REVERSE_REPO: {"value": 1.40, "as_of": "兜底默认值"},
+    PARAM_REVERSE_REPO: {"value": 1.25, "as_of": "兜底默认值"},
 }
 
 # 自动抓取键：akshare / 中国货币网 / 央行官网（无手工入口，全部自动）
-AK_KEYS = ["dr007_spread", "r001_dr001", "pmi", "m1_m2", "ppi_yoy"]
+AK_KEYS = ["dr001_spread", "r001_dr001", "pmi", "m1_m2", "ppi_yoy"]
 NCD_KEYS = ["ncd_1y_aaa"]
 PBC_KEYS = ["tsf_yoy", "corp_ml_loan_yoy", "household_ml_loan_yoy", "fiscal_deposit_mom",
             PARAM_REVERSE_REPO]
@@ -400,7 +403,7 @@ AUTO_KEYS = AK_KEYS + NCD_KEYS + PBC_KEYS
 # 发布日期与重试逻辑在 app/utils/macro_refresh.py（monthly_plan / refresh_snapshot）。
 #
 # 日频：资金面三项 + 政策利率锚（逆回购利率随公开市场操作公告发布）
-DAILY_KEYS = ["dr007_spread", "ncd_1y_aaa", "r001_dr001", PARAM_REVERSE_REPO]
+DAILY_KEYS = ["dr001_spread", "ncd_1y_aaa", "r001_dr001", PARAM_REVERSE_REPO]
 # 月频：报告期形如 "2026-09"，由各来源的月度发布节奏决定
 MONTHLY_KEYS = [
     "pmi",                  # 制造业 PMI（统计局，月末发布当月值）
@@ -458,8 +461,8 @@ NAME_OF_KEY.update(SERIES_EXTRA_KEYS)
 NAME_OF_KEY[THERMOMETER_KEY] = "宏观温度计"
 
 # 图表面板「三组一定位」用到的序列键（供 /api/macro/series 组装）
-# NCD（1Y AAA 存单）是日频，与 DR007 / R001 同属资金面日频组
-CHART_DAILY_KEYS = ["dr007_spread", "r001_dr001", "ncd_1y_aaa"]
+# NCD（1Y AAA 存单）是日频，与 DR001 / R001 同属资金面日频组
+CHART_DAILY_KEYS = ["dr001_spread", "r001_dr001", "ncd_1y_aaa"]
 CHART_MONTHLY_KEYS = ["pmi", "ppi_yoy", "tsf_yoy", "m1_yoy", "m2_yoy", "m1_m2"]
 CHART_KEYS = CHART_DAILY_KEYS + CHART_MONTHLY_KEYS
 
@@ -475,20 +478,18 @@ def _decide(key: str, value: Optional[float]):
         return None
     v = float(value)
 
-    if key == "dr007_spread":  # bp
-        if v < -20:
+    if key == "dr001_spread":  # bp
+        if v < -5:
             return ("松，钱富余", "blue", 0)
-        if v < -10:
+        if v < 0:
             return ("偏松", "cyan", 1)
         if v <= 10:
             return ("央行合意区间，平稳", "green", 2)
         if v < 20:
             return ("略偏紧", "amber", 3)
-        if v <= 30:
-            return ("边际偏紧", "amber", 3)
-        if v < 50:
+        if v < 35:
             return ("偏紧", "orange", 4)
-        if v < 100:
+        if v < 60:
             return ("明显紧张", "orange", 4)
         return ("钱荒级别", "red", 5)
 
@@ -787,7 +788,7 @@ def fetch_auto_values(
     """抓取自动指标，返回 {key: {value, as_of, source, detail, error}}。
 
     单个指标抓取失败只影响该指标（value=None + error），不影响其他指标。
-    anchor_fallback：库中已有的 7 天逆回购利率，抓取失败时兜底。
+    anchor_fallback：库中已有的隔夜逆回购利率（政策利率锚），抓取失败时兜底。
     hints           ：各指标已落库的 detail；现仅保留参数以兼容调用方
                       （原「超储率报告期未变则跳过下载 PDF」的逻辑已随分项下线）。
     only_keys       ：精确白名单，**优先级高于 scope**。定时任务用它只抓"这轮真该抓的"
@@ -851,7 +852,7 @@ def fetch_auto_values(
     else:
         if _want(PARAM_REVERSE_REPO):
             try:
-                item = pbc.fetch_reverse_repo_rate()
+                item = pbc.fetch_overnight_repo_rate()
                 result[PARAM_REVERSE_REPO] = _item(
                     item["value"], item.get("as_of"), "pbc", item.get("detail"))
             except Exception as exc:
@@ -898,13 +899,13 @@ def fetch_auto_values(
     if anchor is None:
         anchor = PARAM_META[PARAM_REVERSE_REPO]["default"]
 
-    # 日频资金面：DR007 / R001 定盘价（repo_rate_hist，一次请求供两项使用）
-    if _want("dr007_spread") or _want("r001_dr001"):
+    # 日频资金面：DR001 / DR007 / R001 定盘价（repo_rate_hist，一次请求供多项使用）
+    if _want("dr001_spread") or _want("r001_dr001"):
         repo = None
         try:
             repo = _fetch_repo_rates(ak)
         except Exception as exc:
-            for key in ("dr007_spread", "r001_dr001"):
+            for key in ("dr001_spread", "r001_dr001"):
                 if _want(key):
                     _fail(key, "akshare", exc)
 
@@ -915,14 +916,15 @@ def fetch_auto_values(
             fdr001 = avg.get("FDR001")
             fr001 = avg.get("FR001")
 
-            if _want("dr007_spread"):
-                if fdr007 is None:
-                    _fail("dr007_spread", "akshare", RuntimeError("缺少 FDR007 读数"))
+            if _want("dr001_spread"):
+                if fdr001 is None:
+                    _fail("dr001_spread", "akshare", RuntimeError("缺少 FDR001 读数"))
                 else:
-                    result["dr007_spread"] = _item(
-                        round((fdr007 - anchor) * 100, 1), repo["date"], "akshare",
-                        {"DR007 当日": last.get("FDR007"), "DR007 5日均": fdr007,
-                         "逆回购利率": anchor, "均线样本天数": repo.get("days")},
+                    result["dr001_spread"] = _item(
+                        round((fdr001 - anchor) * 100, 1), repo["date"], "akshare",
+                        {"DR001 当日": last.get("FDR001"), "DR001 5日均": fdr001,
+                         "DR007 5日均(参考)": fdr007,
+                         "政策利率锚（隔夜逆回购）": anchor, "均线样本天数": repo.get("days")},
                     )
 
             if _want("r001_dr001"):
@@ -960,7 +962,7 @@ QUADRANTS = [
         "brief": "宽货币没进实体",
         "desc": (
             "钱堆在银行间和债市，对应\"资产荒\"、长债利率低位。"
-            "DR007 平 ≠ 经济好，必须拿社融、PMI 证伪。"
+            "DR001 平 ≠ 经济好，必须拿社融、PMI 证伪。"
         ),
         "tone": "cyan",
     },
@@ -1008,7 +1010,7 @@ def compute_combination(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     # ① 资金面：价格偏离 + 银行负债成本 + 分层利差
     liq_avg = _avg([
         (items.get(k) or {}).get("level")
-        for k in ("dr007_spread", "ncd_1y_aaa", "r001_dr001")
+        for k in ("dr001_spread", "ncd_1y_aaa", "r001_dr001")
     ])
     # ② 实体热度：先行（PMI）+ 价格（PPI）+ 信用水位（社融）+ 活化（M1−M2）
     heat_avg = _avg([

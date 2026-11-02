@@ -5,7 +5,7 @@
 ======================  ==========================================  ==========
 指标                    官方发布渠道                                 频率
 ======================  ==========================================  ==========
-7天逆回购操作利率        《公开市场业务交易公告》                       每个交易日
+隔夜期逆回购操作利率      《公开市场业务交易公告》                       每个工作日（2026-11-02 起为主要政策利率）
 社融存量同比             《金融统计数据报告》（数据解读栏目）             每月
 分部门存贷款             《金融统计数据报告》第四、五节（累计口径）        每月
 （住户/企业/非银/财政，
@@ -119,7 +119,7 @@ def _cn_ym_to_iso(text: str) -> Optional[str]:
     return "%s-%02d" % (m.group(1), int(m.group(2)))
 
 
-# ---------------------------------------------------------------- 7天逆回购利率
+# --------------------------------------------------- 逆回购操作利率（隔夜 / 7天）
 
 
 def _parse_7d_repo_rate(text: str) -> Optional[float]:
@@ -138,15 +138,70 @@ def _parse_7d_repo_rate(text: str) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
+def _parse_overnight_repo_rate(text: str) -> Optional[float]:
+    """从《公开市场业务交易公告》正文里解析「隔夜期逆回购」操作利率。
+
+    2026-11-02 政策利率换锚后，公告表格变成
+    "…期限 操作利率 投标量 中标量 隔夜 1.25% 5410 亿元…"，7 天期改为
+    固定数量、利率招标、多重价位中标且不再披露利率，故只认「隔夜」这一行。
+    """
+    flat = re.sub(r"\s+", "", text).replace("．", ".").replace("％", "%")
+    flat = re.sub(r"(\d)\.(\d)", r"\1.\2", flat)
+    if "逆回购" not in flat:
+        return None
+    for m in re.finditer(r"隔夜(?:期)?[^0-9%]{0,12}?(\d+\.\d+)%", flat):
+        return float(m.group(1))
+    return None
+
+
 def _announce_date(text: str) -> Optional[str]:
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
     return "%s-%s-%s" % m.groups() if m else None
 
 
-def fetch_reverse_repo_rate() -> Dict[str, Any]:
-    """抓取 7 天期逆回购操作利率（取最近公告中最新一条含 7 天操作的）。
+def fetch_overnight_repo_rate() -> Dict[str, Any]:
+    """抓取「隔夜期逆回购」操作利率（现行主要政策利率，2026-11-02 起 1.25%）。
 
-    并非每个交易日的公告都含 7 天期操作（可能只做隔夜、买断式或国债买卖），
+    并非每个交易日的公告都含隔夜期操作（可能有只做买断式 / 国债买卖的日子），
+    因此向前回溯若干条公告，取最新一条能解析出隔夜期利率的。
+    找不到时抛错，由调用方回落到库中已有值。
+    """
+    html = _get(COL_OMO).text
+    candidates = _recent_links(html, "公开市场业务交易公告", limit=12)
+    if not candidates:
+        raise RuntimeError("《公开市场业务交易公告》栏目未解析到任何条目")
+
+    last_error: Optional[Exception] = None
+    for title, href in candidates:
+        try:
+            text = _page_text(href)
+        except Exception as exc:
+            last_error = exc
+            continue
+        rate = _parse_overnight_repo_rate(text)
+        if rate is None:
+            continue
+        return {
+            "value": rate,
+            "as_of": _announce_date(text) or "",
+            "detail": {
+                "公告": title,
+                "品种": "隔夜期逆回购",
+                "来源": "中国人民银行公开市场业务交易公告",
+                "链接": href if href.startswith("http") else (_working_base or _BASE_CANDIDATES[0]) + href,
+            },
+        }
+    raise RuntimeError("最近公告中未找到隔夜期逆回购操作利率（%s）" % (last_error or "均无隔夜期操作"))
+
+
+def fetch_reverse_repo_rate() -> Dict[str, Any]:
+    """抓取 7 天期逆回购操作利率（**旧政策利率口径，已退位**）。
+
+    ⚠️ 2026-11-02 起央行把主要政策利率换成隔夜逆回购利率，7 天期操作改为
+    「固定数量、利率招标、多重价位中标」且不再披露操作利率 —— 本函数只对
+    换锚前的公告有效，保留供回溯 / 校验使用，实时抓取请用 fetch_overnight_repo_rate()。
+
+    换锚前的公告里并非每个交易日都含 7 天期操作（可能只做隔夜、买断式或国债买卖），
     因此向前回溯若干条公告，取最新一条能解析出 7 天期利率的。
     """
     html = _get(COL_OMO).text

@@ -9,7 +9,7 @@
 ======================  ==========================================  ==================
 指标                    数据源                                       回溯范围
 ======================  ==========================================  ==================
-DR007 偏离              akshare repo_rate_hist（FDR007）             逐月回溯（默认 24 个月）
+DR001 偏离              akshare repo_rate_hist（FDR001）             逐月回溯（默认 24 个月）
 R001 − DR001            akshare repo_rate_hist（FR001/FDR001）      逐月回溯（默认 24 个月）
 制造业 PMI              akshare macro_china_pmi                      全量（默认取近 60 期）
 PPI 同比                akshare macro_china_ppi                      全量（默认取近 60 期）
@@ -20,9 +20,12 @@ M1 / M2 同比            akshare macro_china_money_supply             全量（
 
 两处需要注意的口径问题：
 
-1. **DR007 偏离的锚随时间变化**：7 天期逆回购操作利率是政策利率，历史上多次调整，
-   直接用当前 1.40% 去算几年前的数据会整体偏移。故按 POLICY_RATE_STEPS 取「当日
-   生效的政策利率」作为锚。
+1. **政策利率锚 2026-11-02 换锚**：央行公告（2026 第 13 号）自 2026-11-02 起把主要
+   政策利率由 7 天期逆回购操作利率（1.40%）切换为隔夜期逆回购操作利率（1.25%），
+   并改在隔夜利率上加/减点。故「DR001 偏离」的锚按日期取：
+     · 2026-11-02 及以后 → OVERNIGHT_POLICY_STEPS 里的隔夜政策利率
+     · 之前 → 当日 7 天期政策利率 − 15bp（央行本次换锚的期限差，折算成隔夜等价）
+   折算只为让序列跨换锚保持可比，明细里的 `锚口径` 会逐条标注。
 2. **repo_rate_hist 单次查询区间不能超过一个月**，因此按自然月逐段请求再拼接。
 
 本模块只负责「产出记录」，落库由 crud.bulk_upsert_macro_history 完成；
@@ -35,7 +38,17 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# 7 天期逆回购操作利率历史（政策利率锚，单位 %）。
+# 隔夜期逆回购操作利率历史（2026-11-02 起的**主要政策利率**，单位 %）。
+# 与下面的 7 天期档位分开维护：换锚后只看这张表。
+OVERNIGHT_POLICY_STEPS: List[Tuple[str, float]] = [
+    ("2026-11-02", 1.25),
+]
+
+# 换锚时 7 天期 → 隔夜期的期限差（bp）。央行公告里 1.40% → 1.25% 就是这个数，
+# 回溯 2026-11-02 之前的数据时用它把 7 天期政策利率折算成隔夜等价。
+OVERNIGHT_EQUIV_OFFSET_BP = 15
+
+# 7 天期逆回购操作利率历史（**换锚前的政策利率**，单位 %）。
 # 按「生效日」倒序排列，取第一个 start <= 查询日 的档位。
 POLICY_RATE_STEPS: List[Tuple[str, float]] = [
     ("2025-05-08", 1.40),   # 1.50% → 1.40%
@@ -64,6 +77,20 @@ def policy_rate_on(iso_date: str) -> float:
         if d >= start:
             return rate
     return POLICY_RATE_STEPS[-1][1]
+
+
+def overnight_policy_on(iso_date: str) -> Tuple[float, str]:
+    """返回某日的「隔夜政策利率锚」及口径说明。
+
+    · 换锚日（2026-11-02）及以后：直接用隔夜期逆回购操作利率；
+    · 之前：用当日 7 天期政策利率 − 15bp 折算成隔夜等价（只为序列可比）。
+    """
+    d = (iso_date or "")[:10]
+    for start, rate in OVERNIGHT_POLICY_STEPS:
+        if d >= start:
+            return rate, "隔夜期逆回购利率"
+    return round(policy_rate_on(d) - OVERNIGHT_EQUIV_OFFSET_BP / 100.0, 4), \
+        "7天期政策利率折算(减%dbp)" % OVERNIGHT_EQUIV_OFFSET_BP
 
 
 def _num(value: Any) -> Optional[float]:
@@ -123,16 +150,16 @@ def _rec(as_of: str, value: float, source: str, detail: Optional[dict] = None) -
 
 
 def series_repo_daily(months: int = 24) -> Dict[str, List[Dict[str, Any]]]:
-    """逐月回溯 DR007 偏离与 R001 − DR001（日度）。
+    """逐月回溯 DR001 偏离与 R001 − DR001（日度）。
 
-    返回 {"dr007_spread": [...], "r001_dr001": [...]}，按时间正序。
+    返回 {"dr001_spread": [...], "r001_dr001": [...]}，按时间正序。
     某个月请求失败只跳过该月。
     """
     ak = _import_akshare()
     if ak is None:
         raise RuntimeError("当前运行环境未安装 akshare，无法回溯历史")
 
-    out: Dict[str, List[Dict[str, Any]]] = {"dr007_spread": [], "r001_dr001": []}
+    out: Dict[str, List[Dict[str, Any]]] = {"dr001_spread": [], "r001_dr001": []}
     ok_months = 0
     for start, end in _month_windows(months):
         try:
@@ -145,16 +172,15 @@ def series_repo_daily(months: int = 24) -> Dict[str, List[Dict[str, Any]]]:
         ok_months += 1
         for _, row in df.dropna(subset=["date"]).iterrows():
             day = str(row["date"])[:10]
-            fdr007 = _num(row.get("FDR007"))
             fdr001 = _num(row.get("FDR001"))
             fr001 = _num(row.get("FR001"))
 
-            if fdr007 is not None:
-                anchor = policy_rate_on(day)
-                rec = _rec(day, round((fdr007 - anchor) * 100, 1), "akshare",
-                           {"DR007": fdr007, "逆回购利率": anchor})
-                rec["key"] = "dr007_spread"
-                out["dr007_spread"].append(rec)
+            if fdr001 is not None:
+                anchor, basis = overnight_policy_on(day)
+                rec = _rec(day, round((fdr001 - anchor) * 100, 1), "akshare",
+                           {"DR001": fdr001, "政策利率": anchor, "锚口径": basis})
+                rec["key"] = "dr001_spread"
+                out["dr001_spread"].append(rec)
 
             if fdr001 is not None and fr001 is not None:
                 rec = _rec(day, round((fr001 - fdr001) * 100, 1), "akshare",
@@ -162,8 +188,8 @@ def series_repo_daily(months: int = 24) -> Dict[str, List[Dict[str, Any]]]:
                 rec["key"] = "r001_dr001"
                 out["r001_dr001"].append(rec)
 
-    logger.info("回购利率回溯完成: %d/%d 个月有数据, DR007 偏离 %d 条, R001−DR001 %d 条",
-                ok_months, months, len(out["dr007_spread"]), len(out["r001_dr001"]))
+    logger.info("回购利率回溯完成: %d/%d 个月有数据, DR001 偏离 %d 条, R001−DR001 %d 条",
+                ok_months, months, len(out["dr001_spread"]), len(out["r001_dr001"]))
     return out
 
 

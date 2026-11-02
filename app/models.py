@@ -95,7 +95,7 @@ class MacroIndicator(Base):
     - key: 指标键，与 app/utils/macro_indicators.py 中的 INDICATORS / PARAM_META 对应
     - value / as_of: 当前读数与数据日期（数据发布日，如 2026-09-21 / 2026-08 / 2026-06）
     - source: 'akshare' 行情类自动抓取 / 'pbc' 央行官网自动抓取 / 'fallback' 抓取失败时的兜底默认值
-    - detail: 读数明细（JSON 字符串，如 DR007 与逆回购利率的分解、M1/M2 同比、公告号与链接）
+    - detail: 读数明细（JSON 字符串，如 DR001 与政策利率锚的分解、M1/M2 同比、公告号与链接）
 
     本表只保留每个指标的最新一行（覆盖式）。完整历史见 MacroIndicatorHistory。
     """
