@@ -565,7 +565,20 @@ def _build_tone(db, market_date: str, zt: Dict[str, Any], dt: Dict[str, Any],
 
     turnover = _reading(indicators, "turnover_amt")
     breadth = _reading(indicators, "breadth")
-    temperature = _reading(indicators, "temperature")
+
+    # 综合温度不在快照指标里（那里只有 11 项原始读数）：它是 stock_temp 刷新时
+    # 打到历史表的一行打卡（key="temperature"），所以要单独读最近一条。
+    # 带上 as_of，页面上若与日报日期不同就能提示「温度是前一个交易日的」。
+    temperature = None
+    temperature_date = ""
+    if with_db:
+        try:
+            rows = crud.get_stock_temp_history(db, key="temperature", limit=1, order="desc")
+            if rows:
+                temperature = _f(_get(rows[0], "value"))
+                temperature_date = str(_get(rows[0], "as_of") or "")[:10]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("热点：读综合温度失败 %s", exc)
 
     turnover_delta = None
     if with_db and turnover is not None:
@@ -598,6 +611,7 @@ def _build_tone(db, market_date: str, zt: Dict[str, Any], dt: Dict[str, Any],
         "turnover": {"value": turnover, "delta": turnover_delta},
         "breadth": breadth,
         "temperature": temperature,
+        "temperature_date": temperature_date,
         "limit": {
             "up": limit_up, "down": limit_down, "broken": broken,
             "seal_rate": seal_rate, "max_board": max_board,

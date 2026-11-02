@@ -121,6 +121,11 @@
         var tempTag = "—";
         if (typeof temp === "number") {
             tempTag = temp >= 65 ? "偏热" : temp >= 40 ? "中性" : "偏冷";
+            // 温度打卡与日报不同日（比如跨周末手动刷新）就标出实际日期，别当今日读
+            if (tone.temperature_date && payload.market_date
+                && tone.temperature_date !== payload.market_date) {
+                tempTag += " · " + tone.temperature_date.slice(5);
+            }
         }
         cards.push(metric("情绪温度", temp === null || temp === undefined ? "—" : num(temp, 0), tempTag));
 
