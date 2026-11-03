@@ -36,15 +36,6 @@
     flex-shrink: 0;
 }
 
-.today-toolbar select {
-    padding: 0.45rem 0.7rem;
-    border: 1px solid #dcdfe6;
-    border-radius: 8px;
-    background: #fff;
-    color: #333;
-    font-size: 0.9rem;
-}
-
 .th-updated {
     font-size: 0.82rem;
     color: #8a8f99;

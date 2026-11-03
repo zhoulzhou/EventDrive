@@ -12,8 +12,6 @@
     "use strict";
 
     var state = {
-        date: "",
-        dates: [],
         payload: null,
         busy: false
     };
@@ -357,7 +355,7 @@
 
     function renderEmpty(message) {
         $("thRoot").innerHTML = '<div class="th-empty">'
-            + "<h3>这一天还没有热点日报</h3>"
+            + "<h3>还没有热点日报</h3>"
             + "<p>" + esc(message || "收盘轮（21:34）跑完会自动生成。") + "</p>"
             + '<button class="btn btn-primary" id="thEmptyGen">立即生成</button>'
             + "</div>";
@@ -365,41 +363,21 @@
         if (btn) btn.addEventListener("click", doRefresh);
     }
 
-    function fillDates(dates, current) {
-        var select = $("thDate");
-        if (!select) return;
-        if (!dates || !dates.length) {
-            select.innerHTML = "<option>暂无日报</option>";
-            select.disabled = true;
-            return;
-        }
-        select.disabled = false;
-        select.innerHTML = dates.map(function (d) {
-            return '<option value="' + esc(d) + '"' + (d === current ? " selected" : "") + ">"
-                + esc(d) + "</option>";
-        }).join("");
-    }
-
     // ---------------------------------------------------------------- 取数
-    async function load(date) {
-        var url = "/api/hotspot/today" + (date ? "?date=" + encodeURIComponent(date) : "");
+    // 不带 date 参数：后端会返回库里最新的一份，页面永远只看最近交易日。
+    async function load() {
         try {
-            var resp = await fetchWithAuth(url);
+            var resp = await fetchWithAuth("/api/hotspot/today");
             var data = await resp.json();
             notice("", "");
 
             if (data.status !== "ok") {
-                state.dates = data.dates || [];
-                fillDates(state.dates, "");
                 $("thUpdated").textContent = "尚无数据";
                 renderEmpty(data.message);
                 return;
             }
 
-            state.dates = data.dates || [];
             state.payload = data.payload;
-            state.date = data.date;
-            fillDates(state.dates, data.date);
             $("thUpdated").textContent = "数据截至 " + data.date
                 + (data.generated_at ? " · 生成于 " + data.generated_at : "");
             render(data.payload);
@@ -424,7 +402,7 @@
                 var s = data.summary || {};
                 notice("ok", "已生成 " + (s.market_date || "") + " 的日报：涨停 " + (s.limit_up || 0)
                     + " 家，主线 " + ((s.themes || []).join("、") || "无"));
-                await load(s.market_date || state.date);
+                await load();
             } else if (data.status === "running") {
                 notice("error", data.message || "正在生成中，请稍候");
             } else {
@@ -443,14 +421,8 @@
 
     // ---------------------------------------------------------------- 启动
     document.addEventListener("DOMContentLoaded", function () {
-        var select = $("thDate");
-        if (select) {
-            select.addEventListener("change", function () {
-                load(select.value);
-            });
-        }
         var btn = $("thRefresh");
         if (btn) btn.addEventListener("click", doRefresh);
-        load("");
+        load();
     });
 })();

@@ -146,7 +146,8 @@ def _fetch_json(url: str, params: Dict[str, Any], *, what: str,
 SECTOR_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("半导体", ("半导体", "分立器件", "集成电路")),
     ("电子", ("元件", "光学光电子", "消费电子", "其他电子", "电子化学品")),
-    ("传媒", ("广告营销", "出版", "游戏", "影视院线", "数字媒体", "电视广播", "社交")),
+    ("传媒", ("广告营销", "出版", "游戏", "影视院线", "数字媒体", "文字媒体",
+             "电视广播", "社交")),
     ("计算机", ("软件开发", "IT服务", "计算机设备")),
     ("通信", ("通信设备", "通信服务")),
     ("医药", ("化学制药", "中药", "生物制品", "医疗器械", "医疗服务", "医药商业")),
@@ -160,7 +161,8 @@ SECTOR_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("钢铁", ("普钢", "特钢", "钢铁")),
     ("有色", ("工业金属", "小金属", "贵金属", "能源金属", "金属新材料")),
     ("煤炭石油", ("煤炭开采", "焦炭", "油气开采", "炼化及贸易", "油服工程")),
-    ("化工", ("化学原料", "化学制品", "化纤", "橡胶", "塑料", "非金属材料")),
+    ("化工", ("化学原料", "化学制品", "化纤", "橡胶", "塑料", "非金属材料", "胶黏剂",
+             "胶粘剂")),
     ("电力公用", ("电力", "燃气", "环境治理", "水务", "环保设备")),
     ("交运", ("航运港口", "航空机场", "物流", "铁路公路")),
     ("金融", ("银行", "证券", "保险", "多元金融")),
@@ -204,6 +206,8 @@ SINA_CONCEPT_NOISE = frozenset({
     "业绩预降", "分拆上市", "整体上市", "资产注入", "准ST股", "ST板块",
     "未股改", "摘帽概念", "送转潜力", "本月解禁", "三板精选", "出口退税",
     "股期概念", "科创50", "内贸规划",
+    # 风格 / 财务统计标签（说的是「这是什么样的公司」，不是「今天炒什么」）
+    "茅指数", "宁指数", "连续亏损", "预亏预减", "业绩预增", "高送转", "次新股", "破净股",
 })
 
 # 新闻标题里的题材命中：分组名之外的常见同义词（标题很少直接写"传媒"，
@@ -308,7 +312,7 @@ def _board_flow(kind: str) -> List[Dict[str, Any]]:
         name = row.get("f14")
         if not name:
             continue
-        if kind != "industry" and name.strip() in SINA_CONCEPT_NOISE:
+        if kind != "industry" and _is_noise_concept(name):
             continue
         out.append({
             "code": row.get("f12"),
@@ -384,7 +388,7 @@ def _board_flow_sina(kind: str) -> List[Dict[str, Any]]:
         name = row.get("name")
         if not name:
             continue
-        if kind != "industry" and name.strip() in SINA_CONCEPT_NOISE:
+        if kind != "industry" and _is_noise_concept(name):
             continue
         change = _f(row.get("avg_changeratio"))
         ratio = _f(row.get("ratioamount"))
@@ -479,6 +483,10 @@ def _sector_group(sector: str) -> str:
         return "其他"
     if sec in SINA_INDUSTRY_GROUPS:
         return SINA_INDUSTRY_GROUPS[sec]
+    # 「电力设备」是设备制造（新能源），不是公用事业。前缀匹配会先命中
+    # 电力公用组的「电力」，所以这一条必须在扫表之前拦掉。
+    if sec.startswith("电力设备"):
+        return "新能源"
     for group, keys in SECTOR_GROUPS:
         for key in keys:
             # 双向 startswith：涨停池的行业名被截断成 4 字，无法做等值匹配
@@ -702,6 +710,24 @@ def _stage(count: int, prev_days: int) -> Optional[str]:
     if count >= 5:
         return "延续"
     return "分歧"
+
+
+def _is_noise_concept(name: str) -> bool:
+    """概念板块里对「今日热点」无意义的全市场标签。
+
+    除了显式名单，还有两类必须用规则挡：
+      · 「昨日涨停」「昨日连板」「昨日高换手」——东财把**昨日行情统计**做成了概念板块，
+        它们天天吸金排前列，但说的是昨天，与「今天什么在涨」正相反。
+      · 「上证50_」「央视50_」——东财给指数类板块带下划线后缀，不是题材。
+    """
+    n = (name or "").strip()
+    if not n:
+        return True
+    if n in SINA_CONCEPT_NOISE:
+        return True
+    if n.startswith("昨日"):
+        return True
+    return n.endswith("_")
 
 
 def _norm_board_key(name: str) -> str:
