@@ -115,6 +115,146 @@ function asCardHtml(it) {
         + "</div>";
 }
 
+/* ---------------- 宽基 ETF 净流入 ---------------- */
+/* 净流入有正负，颜色按「正红负绿」而不是按涨跌 —— 净申购是买盘（红），净赎回是卖盘（绿）。 */
+function asFlowTone(v) {
+    if (v === null || v === undefined || isNaN(Number(v))) return "flat";
+    return Number(v) > 0 ? "up" : (Number(v) < 0 ? "down" : "flat");
+}
+function asYi(v) {
+    if (v === null || v === undefined || isNaN(Number(v))) return "—";
+    return (Number(v) > 0 ? "+" : "") + Number(v).toFixed(2);
+}
+
+function asFlowCardHtml(flow) {
+    if (!flow) return "";
+    const tone = asFlowTone(flow.value);
+    const head = '<div class="as-card-head">'
+        + '<span class="as-name">' + escapeHtml(flow.name || "宽基ETF净流入") + "</span>"
+        + '<span class="as-code">' + (flow.pool ? flow.pool.length : 0) + " 只主力宽基 · 估算口径</span>"
+        + '<span class="as-date">' + (flow.date ? escapeHtml(flow.date) : "暂无数据") + "</span>"
+        + "</div>";
+
+    if (flow.value === null || flow.value === undefined) {
+        return '<div class="as-card as-card-wide flat">' + head
+            + '<div class="as-value">--</div>'
+            + '<div class="as-metrics">还没有净流入数据，点右上「抓取最新」补齐最近交易日</div></div>';
+    }
+
+    const metrics = [
+        "近 5 日 <b>" + asYi(flow.sum5) + "</b>",
+        "近 20 日 <b>" + asYi(flow.sum20) + "</b>",
+        '年内累计 <b style="color:' + (Number(flow.ytd_sum) >= 0 ? AS.up : AS.down) + '">'
+            + asYi(flow.ytd_sum) + "</b>",
+        "年内最大流入 <b>" + asYi(flow.max_in && flow.max_in.value) + "</b>（"
+            + ((flow.max_in && flow.max_in.date) || "—") + "）",
+        "年内最大流出 <b>" + asYi(flow.max_out && flow.max_out.value) + "</b>（"
+            + ((flow.max_out && flow.max_out.date) || "—") + "）",
+        "净流入 " + (flow.inflow_days || 0) + " 天 / 净流出 " + (flow.outflow_days || 0) + " 天"
+    ];
+
+    return '<div class="as-card as-card-wide ' + tone + '" style="border-left-color:#7c3aed">'
+        + head
+        + '<div class="as-value" style="color:' + (Number(flow.value) >= 0 ? AS.up : AS.down) + '">'
+        + asYi(flow.value) + '<span class="as-unit">亿元</span></div>'
+        + '<div class="as-change ' + tone + '">'
+        + (Number(flow.value) >= 0 ? "净申购（资金流入）" : "净赎回（资金流出）") + "</div>"
+        + '<div class="as-metrics">' + metrics.map(function (m) { return "<span>" + m + "</span>"; }).join("") + "</div>"
+        + "</div>";
+}
+
+function asFlowOption(flow) {
+    const pts = (flow && flow.points) || [];
+    if (!pts.length) return null;
+    const dates = pts.map(function (p) { return p.date; });
+    const bars = pts.map(function (p) { return p.value; });
+    let acc = 0;
+    const cum = pts.map(function (p) { acc += p.value; return +acc.toFixed(2); });
+
+    return {
+        animationDuration: 260,
+        grid: { left: 66, right: 70, top: 40, bottom: 58 },
+        legend: {
+            top: 0, right: 0, icon: "roundRect", itemWidth: 10, itemHeight: 3,
+            textStyle: { color: AS.ink, fontSize: 11 }
+        },
+        tooltip: {
+            trigger: "axis", confine: true,
+            axisPointer: { type: "shadow", shadowStyle: { color: "rgba(148,163,184,0.10)" } },
+            backgroundColor: "rgba(255,255,255,0.97)",
+            borderColor: "#e2e8f0", borderWidth: 1, padding: [8, 11],
+            textStyle: { color: AS.ink, fontSize: 12, lineHeight: 18 },
+            formatter: function (params) {
+                if (!params || !params.length) return "";
+                const d = params[0].axisValue;
+                const idx = dates.indexOf(d);
+                const v = bars[idx];
+                if (v === null || v === undefined) return "<b>" + d + "</b>";
+                const color = v >= 0 ? AS.up : AS.down;
+                return "<b>" + d + "</b><br/>当日净流入：<b style=\"color:" + color + "\">"
+                    + asYi(v) + " 亿元</b><br/>年内累计：" + asYi(cum[idx]) + " 亿元";
+            }
+        },
+        xAxis: {
+            type: "category", data: dates, boundaryGap: true,
+            axisLine: { lineStyle: { color: AS.axis } }, axisTick: { show: false },
+            axisLabel: { color: AS.sub, fontSize: 10, hideOverlap: true, showMaxLabel: true },
+            splitLine: { show: false }
+        },
+        // 轴名不写在这里：单位（亿元）已在面板标题里，写上去会和右上角图例打架
+        yAxis: [
+            {
+                type: "value", scale: true,
+                axisLine: { show: false }, axisTick: { show: false },
+                axisLabel: { color: AS.sub, fontSize: 10 },
+                splitLine: { lineStyle: { color: AS.grid } }
+            },
+            {
+                type: "value", scale: true,
+                axisLine: { show: false }, axisTick: { show: false },
+                axisLabel: { color: AS.sub, fontSize: 10 },
+                splitLine: { show: false }
+            }
+        ],
+        dataZoom: [
+            { type: "inside", xAxisIndex: 0 },
+            {
+                type: "slider", xAxisIndex: 0,
+                bottom: 4, height: 22, left: 66, right: 70,
+                borderColor: "#e2e8f0", backgroundColor: "#f8fafc",
+                fillerColor: "rgba(124, 58, 237, 0.10)",
+                dataBackground: {
+                    lineStyle: { color: "#cbd5e1", width: 1 },
+                    areaStyle: { color: "rgba(203, 213, 225, 0.35)" }
+                },
+                handleStyle: { color: "#fff", borderColor: "#94a3b8", borderWidth: 1 },
+                textStyle: { color: AS.sub, fontSize: 10 }
+            }
+        ],
+        series: [
+            {
+                name: "当日净流入", type: "bar", data: bars,
+                barMaxWidth: 14,
+                itemStyle: {
+                    color: function (p) { return (p.value >= 0 ? AS.up : AS.down); }
+                },
+                markLine: {
+                    silent: true, symbol: "none",
+                    lineStyle: { color: AS.axis, width: 1 },
+                    label: { show: false },
+                    data: [{ yAxis: 0 }]
+                }
+            },
+            {
+                name: "年内累计", type: "line", yAxisIndex: 1,
+                data: cum, showSymbol: false, symbol: "circle", symbolSize: 6,
+                lineStyle: { width: 1.8, color: "#7c3aed" },
+                itemStyle: { color: "#7c3aed" }
+            }
+        ]
+    };
+}
+
 /* ---------------- 走势图（双面板） ---------------- */
 function asTrendOption(items) {
     const slices = items.map(function (it) {
@@ -270,8 +410,14 @@ function asTrendOption(items) {
 function asRender(data) {
     const items = data.items || [];
 
+    const flow = data.net_flow || null;
+
     const cards = document.getElementById("asCards");
-    cards.innerHTML = items.map(asCardHtml).join("");
+    cards.innerHTML = items.map(asCardHtml).join("") + asFlowCardHtml(flow);
+
+    // 净流入是金额（亿元、有正负），量纲与点位无关，单独一张图；指数双面板不受影响
+    const flowOpt = asFlowOption(flow);
+    if (flowOpt) asMount("asFlow", flowOpt); else asEmpty("asFlow", "还没有净流入数据：点右上「抓取最新」补齐");
 
     const withPoints = items.filter(function (it) { return it.points && it.points.length; });
     if (!withPoints.length) {
@@ -322,6 +468,7 @@ async function asLoad() {
         document.getElementById("asCards").innerHTML =
             '<div class="error-state"><h2>加载失败</h2><p>' + escapeHtml(error.message) + "</p></div>";
         asEmpty("asTrend", "加载失败");
+        asEmpty("asFlow", "加载失败");
     }
 }
 

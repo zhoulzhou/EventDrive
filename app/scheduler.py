@@ -14,6 +14,7 @@ from app.utils.anti_crawl import (
 from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
 from app.utils.index_daily import refresh_a_share_index as refresh_a_share_index_sync
+from app.utils.etf_flow import refresh_etf_flow as refresh_etf_flow_sync
 from app.utils import lhb_refresh as lhb_refresh_mod
 from app.utils import hotspot as hotspot_mod
 
@@ -180,14 +181,16 @@ async def crawl_market_data(session: str = "manual"):
 
 
 async def refresh_a_share_index(session: str = "manual"):
-    """抓取 A 股宽基指数（上证指数 / 科创50）日线，落 market_prices。
+    """抓取 A 股宽基指数（上证指数 / 科创50）日线 + 宽基 ETF 净流入，落 market_prices。
 
-    轻量域：两次 HTTP + 一次批量 upsert，实测 2~5 秒，与宏观 / 龙虎榜同批并发跑，
-    不会拖累收盘轮。**放在收盘轮（21:34）而不是早间 9:15**：A 股 15:00 才收盘，
+    指数本身很轻（两次 HTTP + 一次批量 upsert，2~5 秒）；净流入要取交易所份额，
+    增量重算最近 20 个交易日约 20~40 秒（沪市按日并发 + 深市当月段 + 11 只价格）。
+    两者同属「股市行情」页，合成一个域跑，与宏观 / 龙虎榜同批并发，不拖累收盘轮。
+    **放在收盘轮（21:34）而不是早间 9:15**：A 股 15:00 才收盘、交易所份额当晚才披露，
     早上那轮当天还没开盘，抓到的仍是上一交易日。
 
-    补漏由落库逻辑负责（见 app/utils/index_daily.py）：只写库里缺的日期 +
-    永远重写当天那一行，所以某天没跑成，下一轮会自动补上。
+    补漏由落库逻辑负责（见 app/utils/index_daily.py 与 etf_flow.py）：只写库里缺的
+    日期 + 永远重写当天那一行，所以某天没跑成，下一轮会自动补上。
     """
     log_crawl("=" * 50)
     log_crawl(f"开始更新股市行情（A股指数）... (轮次: {session})")
@@ -206,9 +209,24 @@ async def refresh_a_share_index(session: str = "manual"):
                 f"  - {it['name']}: {latest.get('value')} ({latest.get('date')}) "
                 f"来源={it.get('source_label')} 写入 {it.get('added')} 行 / 共 {it.get('fetched')} 个点"
             )
+        # 宽基 ETF 净流入：同一页的另一个指标，跟着这一域一起跑（增量 20 个交易日）
+        flow = await asyncio.to_thread(refresh_etf_flow_sync)
+        flow_ok = not flow.get("error")
+        if flow_ok:
+            latest_flow = flow.get("latest") or {}
+            log_crawl(
+                f"  - 宽基ETF净流入: {latest_flow.get('value')} 亿元 ({latest_flow.get('date')}) "
+                f"窗口 {flow.get('window')} 天 / 写入 {flow.get('added')} 行"
+            )
+            if flow.get("anomalies"):
+                log_crawl(f"    · 份额跳变已跳过（判为折算）: {flow['anomalies'][:3]}")
+        else:
+            log_crawl(f"  ! 宽基ETF净流入抓取失败: {flow.get('error')}")
+
         _write_crawl_log(
             task="a_share", session=session, source=data.get("source", "a_share"),
-            item_count=valid, status="ok" if valid else "empty",
+            item_count=valid + (1 if flow_ok else 0),
+            status="ok" if valid else "empty",
             duration=int((datetime.now() - t0).total_seconds()),
         )
     except Exception as e:

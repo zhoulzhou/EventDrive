@@ -20,9 +20,14 @@
         <strong>科创50</strong>看科技成长风格（科创板市值最大的 50 只）。
         点位量级差三倍，直接叠在一张图上会被压扁，所以走势<strong>分两栏各画各的 Y 轴</strong>；
         要比强弱看卡片里的<strong>年内涨跌幅</strong>（两者都是今年以来的累计涨跌，可直接对比）。
+        下面的<strong>宽基 ETF 净流入</strong>是另一回事：指数只说明价格涨跌，说明不了钱进还是出 ——
+        交易所每天披露 ETF 份额，<strong>份额增量 × 收盘价</strong>就是当天的净申购金额（正＝净流入）。
     </p>
     <p class="form-hint as-src-line">
-        数据源：腾讯日线（新浪指数日线 / 东财日线兜底，三源读数一致）。
+        数据源：指数用腾讯日线（新浪指数日线 / 东财日线兜底，三源读数一致）；
+        净流入用<strong>沪深交易所每日 ETF 份额</strong>（上交所按日披露 / 深交所按月），
+        样本为 11 只主力宽基（沪深300 / 上证50 / 中证500 / 中证1000 / 科创50 / 上证180 /
+        创业板 / 深证100），<strong>不是全市场所有 ETF</strong>。
         <strong>历史只回填今年以来</strong>，此后每个交易日收盘后由定时任务（北京时间 21:34）
         抓取落库，<strong>本页只读展示</strong>；缺口会在下一轮自动补齐。
     </p>
@@ -39,6 +44,14 @@
         <span class="as-tip">全部交易日；拖动下方滑块或滚轮缩放可放大局部</span>
     </div>
     <div id="asTrend" class="as-chart as-chart-trend"></div>
+</div>
+
+<div class="as-panel">
+    <div class="as-panel-head">
+        <h2>宽基 ETF 净流入（亿元）</h2>
+        <span class="as-tip">柱＝当日净申购 / 净赎回（正红负绿），线＝年内累计；悬停看单日明细</span>
+    </div>
+    <div id="asFlow" class="as-chart as-chart-flow"></div>
 </div>
 {% endblock %}
 

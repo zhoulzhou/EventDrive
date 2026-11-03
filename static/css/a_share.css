@@ -31,6 +31,8 @@
     transition: border-color 0.2s;
 }
 .as-card.up { border-left-color: #dc2626; }
+/* 净流入卡片横跨整行：它的指标（5/20 日累计、年内极值、天数）比指数卡片多 */
+.as-card-wide { grid-column: 1 / -1; }
 .as-card.down { border-left-color: #16a34a; }
 
 .as-card-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
@@ -79,6 +81,8 @@
 .as-chart { width: 100%; }
 /* 660 = grid 固定布局（40+232+84+232=588）+ 轴标签(~20) + 底部拖动条(26+边距)，改高度要同步改 JS 的 grids */
 .as-chart-trend { height: 660px; }
+/* 净流入图：单 grid（柱 + 累计线），高度按 plot 220 + 轴标签 + 拖动条留 */
+.as-chart-flow { height: 320px; }
 
 /* 图内空态（数据还没回填时） */
 .as-empty {
