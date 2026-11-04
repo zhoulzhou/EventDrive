@@ -421,6 +421,7 @@ async def lhb_page(request: Request):
 _PAGE_LINKS = [
     ("/home", "首页"),
     ("/today", "今日热点"),
+    ("/lhb", "龙虎榜"),
     ("/crawl", "抓取"),
     ("/market", "全球行情"),
     ("/a-share", "股市行情"),
@@ -431,7 +432,6 @@ _PAGE_LINKS = [
     ("/macro-trend", "宏观趋势"),
     ("/stock-temp", "股市热度"),
     ("/stock-trend", "热度趋势"),
-    ("/lhb", "龙虎榜"),
 ]
 
 
