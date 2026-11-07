@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}热点趋势 - 市场总览{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/css/hotspot_trend.css?v={{ static_ver or 0 }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header ht-header">
+    <div class="ht-header-top">
+        <h1>热点趋势 · 主线行业的上榜轨迹</h1>
+        <div class="ht-toolbar">
+            <span id="htUpdated" class="ht-updated">加载中…</span>
+            <label class="ht-select-label">区间
+                <select id="htDays" class="ht-select">
+                    <option value="15">近 15 日</option>
+                    <option value="30" selected>近 30 日</option>
+                    <option value="60">近 60 日</option>
+                </select>
+            </label>
+            <label class="ht-select-label">口径
+                <select id="htMode" class="ht-select">
+                    <option value="group" selected>主线方向</option>
+                    <option value="sector">细分行业</option>
+                </select>
+            </label>
+            <a class="ht-today-link" href="/today">看今日热点 →</a>
+        </div>
+    </div>
+    <p class="form-hint">
+        把<strong>今日热点 · 今日主线</strong>按交易日摊开：<strong>纵轴是热点行业，横轴是时间，
+        某天该行业进入主线就在交叉处打一个圆点</strong>。横着看一行，就是这个热点从启动到退潮的轨迹；
+        竖着看一列，就是当天同时有几条主线在并行。
+        圆点<strong>大小＝涨停家数</strong>，<strong>颜色＝所在行的位置</strong>（顶部红、越往下越蓝，
+        纵轴行业名同色），最新交易日的圆点描一圈白边。悬停可看当日第几主线、最高板、
+        阶段与该主线的细分行业。
+    </p>
+    <p class="form-hint">
+        口径：默认<strong>主线方向</strong>＝涨停股所属行业按 23 个大方向归并后的名字（如电子、传媒）；
+        切到<strong>细分行业</strong>看每条主线里贡献涨停最多的东财二级行业（如半导体，
+        名称沿用数据源截断到 4 字的写法）。<strong>半导体、计算机、人形机器人</strong>相关方向
+        <strong>固定在纵轴顶部</strong>（含电子、元件、IT服务、自动化设备等上下游），组内与其余行业
+        均按<strong>累计上榜次数</strong>排序，反复出现的老主线在上，一次性题材在下；颜色随行号
+        由上到下从红渐变到蓝，置顶的关注方向自然落在红端。
+        本页<strong>只读每日收盘轮生成的热点日报快照</strong>，不实时抓取；
+        横轴只列<strong>有日报的交易日</strong>，历史从该表启用之日算起，<strong>不回填更早日期</strong>。
+        上榜条件是代理指标，不构成投资建议。
+    </p>
+</div>
+
+<div id="htNotice"></div>
+
+<div id="htStats" class="ht-stats"></div>
+
+<div class="ht-panel">
+    <div class="ht-panel-head">
+        <h2>行业 × 交易日</h2>
+        <span class="ht-tip" id="htChartTip">加载中…</span>
+    </div>
+    <div id="htChart" class="ht-chart"><div class="ht-loading">正在加载热点轨迹…</div></div>
+    <div class="ht-legend">
+        <span class="ht-legend-item"><i class="ht-gradient"></i>颜色＝纵轴位置（顶部红 → 底部蓝）</span>
+        <span class="ht-legend-sep"></span>
+        <span class="ht-legend-item"><i class="ht-dot small"></i>涨停家数少</span>
+        <span class="ht-legend-item"><i class="ht-dot large"></i>涨停家数多</span>
+        <span class="ht-legend-item"><i class="ht-dot latest"></i>最新交易日</span>
+        <span class="ht-legend-note">半导体 / 计算机 / 人形机器人相关方向已置顶并加粗；当日主线排名见悬停提示；
+            空白列＝当天有日报但没有形成主线；日期多时可用下方滑块或滚轮缩放</span>
+    </div>
+</div>
+
+<div class="ht-panel ht-bottom-grid">
+    <div>
+        <div class="ht-panel-head"><h2>最新交易日主线</h2><span class="ht-tip" id="htLatestTip">—</span></div>
+        <div id="htLatest" class="ht-latest"></div>
+    </div>
+    <div>
+        <div class="ht-panel-head"><h2>持续热点</h2><span class="ht-tip">按最长连续上榜排序 · 主线方向口径</span></div>
+        <div id="htRanking" class="ht-ranking"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/echarts.min.js?v={{ vendor_ver }}"></script>
+<script src="/static/js/hotspot_trend_charts.js?v={{ static_ver or 0 }}"></script>
+{% endblock %}

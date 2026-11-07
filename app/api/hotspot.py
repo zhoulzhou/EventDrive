@@ -14,6 +14,7 @@ from app import crud
 from app.database import SessionLocal
 from app.api.login import require_auth
 from app.utils import hotspot as hotspot_mod
+from app.utils import hotspot_trend
 
 logger = logging.getLogger(__name__)
 
@@ -100,3 +101,26 @@ def hotspot_dates(auth: bool = Depends(require_auth)):
             db.close()
         except Exception:  # noqa: BLE001
             pass
+
+
+@router.get("/hotspot/trend")
+def get_hotspot_trend(days: int = Query(30, ge=1, le=60,
+                                        description="最近 N 份有日报的交易日"),
+                      auth: bool = Depends(require_auth)):
+    """热点趋势：把历次「今日主线」摊成「行业 × 交易日」点阵。
+
+    只读 daily_hotspots 快照（每交易日一行 JSON），不抓取、不建新表。
+    两种粒度（主线大方向 / 细分行业）在 ``views`` 里各给一份 industries + points，
+    前端切换粒度时不必再请求一次。历史从该表有数据的那天算起，不回填更早日期。
+    """
+    db = SessionLocal()
+    try:
+        reports = crud.list_hotspot_reports(db, limit=days)
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    data = hotspot_trend.build_trend(reports)
+    return {"status": "ok", "source": "daily_hotspots", **data}

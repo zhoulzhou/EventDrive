@@ -324,7 +324,8 @@
 
         html += '<div class="th-section">' + renderTone(payload) + "</div>";
         html += '<div class="th-section"><div class="th-section-title">今日主线'
-            + "<em>涨停股所属行业聚簇 × 当日新闻命中，家数 ≥3 才上榜</em></div>"
+            + "<em>涨停股所属行业聚簇 × 当日新闻命中，家数 ≥3 才上榜</em>"
+            + '<a class="th-trend-link" href="/hotspot-trend">看热点趋势 →</a></div>'
             + renderThemes(payload.themes) + "</div>";
         html += '<div class="th-section th-split">'
             + '<div><div class="th-section-title">热股三榜<em>资金 / 连板 / 题材</em></div>'

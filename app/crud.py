@@ -1941,3 +1941,68 @@ def list_hotspot_dates(db: Session, limit: int = 30) -> List[str]:
     rows = (db.query(models.DailyHotspot.market_date)
             .order_by(models.DailyHotspot.market_date.desc()).limit(limit).all())
     return [r[0] for r in rows]
+
+
+def list_hotspot_reports(db: Session, limit: int = 60) -> List[dict]:
+    """取最近 ``limit`` 份热点日报里的**今日主线**，按交易日升序返回。
+
+    给 /hotspot-trend 用：那里要画「行业 × 日期」点阵，只需要 payload.themes。
+    PostgREST 只能取整列 payload，所以在这里就地裁掉涨停股、资金榜、时间轴等
+    大块内容 —— 否则几十天 × 每天几十 KB 的整份日报会一路传到浏览器。
+    云库 GET 走 (path, params) 缓存（TTL 120s），同一区间重复打开不会反复回源。
+
+    返回 ``[{"market_date": "2026-11-06", "themes": [...]}]``。某天 payload 损坏
+    或当天没有主线时 themes 为空数组：**日期仍保留**（图上是一列空点，代表
+    「这天有日报但无主线」），不能因为没主线就把交易日从横轴上抹掉。
+    """
+    def _int(value) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    # 上限 60：payload 是整份日报（实测约 25~40KB/天），90 天会把单次 GET 顶到
+    # 接近 3MB，没必要为了看行业轮动冒 60s 网关超时的风险；60 个交易日≈一季度，够用。
+    limit = max(1, min(_int(limit) or 60, 60))
+    if _USE_CLOUD:
+        rows = _cdb.select(T_HOTSPOT, columns="market_date,payload",
+                           order="market_date.desc", limit=limit,
+                           context="list_hotspot_reports")
+        records = [(_field(r, "market_date"), _field(r, "payload")) for r in rows]
+    else:
+        rows = (db.query(models.DailyHotspot.market_date, models.DailyHotspot.payload)
+                .order_by(models.DailyHotspot.market_date.desc()).limit(limit).all())
+        records = [(r[0], r[1]) for r in rows]
+
+    reports: List[dict] = []
+    for date, raw in reversed(records):   # 查出来是新→旧，横轴要旧→新
+        try:
+            payload = json.loads(raw or "{}")
+        except (ValueError, TypeError):
+            logger.warning("热点趋势：%s 的日报 payload 解析失败", date)
+            payload = {}
+        themes = []
+        for item in payload.get("themes") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            sectors = []
+            for sec in (item.get("sectors") or [])[:3]:
+                if not isinstance(sec, dict):
+                    continue
+                sname = str(sec.get("name") or "").strip()
+                if sname:
+                    sectors.append({"name": sname, "count": _int(sec.get("count"))})
+            themes.append({
+                "name": name,
+                "limit_up": _int(item.get("limit_up")),
+                "max_board": _int(item.get("max_board")),
+                "stage": item.get("stage"),
+                "news_count": _int(item.get("news_count")),
+                "days_on_list": _int(item.get("days_on_list")),
+                "sectors": sectors,
+            })
+        reports.append({"market_date": str(date), "themes": themes})
+    return reports

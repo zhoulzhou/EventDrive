@@ -344,6 +344,18 @@ async def today_page(request: Request):
     return render_template("today.html", {"request": request})
 
 
+@app.get("/hotspot-trend")
+async def hotspot_trend_page(request: Request):
+    """热点趋势：把历次「今日主线」摊成行业 × 交易日的圆点点阵。
+
+    与 /today 共用 daily_hotspots 快照（收盘轮生成），页面只读
+    GET /api/hotspot/trend；图表见 static/js/hotspot_trend_charts.js。
+    """
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("hotspot_trend.html", {"request": request})
+
+
 @app.get("/a-share")
 async def a_share_page(request: Request):
     """股市行情：上证指数与科创50 今年以来的日线曲线（数据域 a_share）。
@@ -421,6 +433,7 @@ async def lhb_page(request: Request):
 _PAGE_LINKS = [
     ("/home", "首页"),
     ("/today", "今日热点"),
+    ("/hotspot-trend", "热点趋势"),
     ("/lhb", "龙虎榜"),
     ("/crawl", "抓取"),
     ("/market", "全球行情"),

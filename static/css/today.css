@@ -71,6 +71,19 @@
     color: #9aa0ab;
 }
 
+/* 今日主线 → 热点趋势：同一份日报的「按日摊开」视图，放在标题行右侧 */
+.th-trend-link {
+    margin-left: auto;
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--th-up);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.th-trend-link:hover { text-decoration: underline; }
+
 /* ------------------------------------------------------------ A 定调 */
 .th-tone {
     display: flex;
