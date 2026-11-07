@@ -104,14 +104,15 @@ def hotspot_dates(auth: bool = Depends(require_auth)):
 
 
 @router.get("/hotspot/trend")
-def get_hotspot_trend(days: int = Query(30, ge=1, le=60,
-                                        description="最近 N 份有日报的交易日"),
+def get_hotspot_trend(days: int = Query(60, ge=1, le=60,
+                                        description="最近 N 份有日报的交易日，默认全部（上限 60）"),
                       auth: bool = Depends(require_auth)):
     """热点趋势：把历次「今日主线」摊成「行业 × 交易日」点阵。
 
     只读 daily_hotspots 快照（每交易日一行 JSON），不抓取、不建新表。
-    两种粒度（主线大方向 / 细分行业）在 ``views`` 里各给一份 industries + points，
-    前端切换粒度时不必再请求一次。历史从该表有数据的那天算起，不回填更早日期。
+    两种粒度（主线大方向 / 细分行业）在 ``views`` 里各给一份 industries + points；
+    页面已删掉区间 / 口径选择器，固定用 views.group + 全部可用交易日（60 上限），
+    sector 仍保留供其它调用方复用。历史从该表有数据的那天算起，不回填更早日期。
     """
     db = SessionLocal()
     try:

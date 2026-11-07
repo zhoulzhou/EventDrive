@@ -1,9 +1,10 @@
 /* ==========================================================================
    热点趋势（/hotspot-trend）图表实现
    --------------------------------------------------------------------------
-   只有一次请求：GET /api/hotspot/trend?days=N，后端把历次「今日主线」摊成
-   两份点阵（views.group 主线方向 / views.sector 细分行业）。切换口径只重绘，
-   不重复请求；切换区间才重新取数。
+   只有一次请求：GET /api/hotspot/trend?days=60。页面不再提供「区间 / 口径」
+   选择器（同 /a-share 的做法）：默认看**全部可用交易日**（后端上限 60，约一季度），
+   看局部靠 dataZoom；口径固定为主线方向（views.group）。后端仍会一并返回
+   views.sector，但本页不展示，接口保持兼容。
 
    图是 ECharts scatter：
      x = 交易日（category，只列有日报的日期）
@@ -23,10 +24,14 @@
         axis: "#d9dee8"
     };
 
+    // 固定展示参数：页面已删掉「区间」「口径」两个下拉，改这里即可调整。
+    // 60 = 后端 list_hotspot_reports 的上限，等于「不截断地看全部历史」。
+    var FIXED_DAYS = 60;
+    var FIXED_MODE = "group";
+    var MODE_LABEL = "主线方向";
+
     var state = {
         data: null,
-        mode: "group",
-        days: 30,
         busy: false,
         chart: null
     };
@@ -92,13 +97,12 @@
     /* ---------------------------------------------------------------- 统计条 */
     function renderStats(data, view) {
         var s = data.summary || {};
-        // 行业数与圆点数要跟着口径走：切到细分行业后仍显示「12 个方向 / 18 个点」
-        // 会和图上 37 行 / 48 个点对不上，看起来像数据没刷新。
+        // 行业数与圆点数取当前实际绘制的那份点阵，避免与图上行数对不上
         var industries = view && view.industries ? view.industries.length : s.industry_count;
         var dots = view && view.points ? view.points.length : s.point_count;
         var cards = [
             ["有日报交易日", s.report_days, "天", "横轴上的日期数"],
-            ["出现过的行业", industries, "个", "纵轴行业数（当前口径）"],
+            ["出现过的行业", industries, "个", "纵轴行业数"],
             ["累计圆点", dots, "个", "一次上榜 = 一个圆点"],
             ["无主线交易日", s.no_theme_days, "天", "有日报但没凑够主线"]
         ];
@@ -170,7 +174,6 @@
         var points = view.points || [];
         var maxCount = view.max_count || 1;
         var latest = data.latest_date;
-        var modeLabel = state.mode === "sector" ? "细分行业" : "主线方向";
         var focus = view.focus || {};
 
         var dateIdx = {}, industryIdx = {};
@@ -236,7 +239,7 @@
                     if (m.sector_text) {
                         html += '<br/><span style="color:#8a8f99">细分：' + esc(m.sector_text) + "</span>";
                     }
-                    html += '<br/><span style="color:#9aa0ab">口径：' + modeLabel + "</span>";
+                    html += '<br/><span style="color:#9aa0ab">口径：' + MODE_LABEL + "</span>";
                     return html;
                 }
             },
@@ -320,9 +323,9 @@
             return;
         }
 
-        // 每行 34px：纵轴行业数会随历史增长（细分行业视角实测 30+ 行），
-        // 固定高度会把点压成一条缝；宁可让页面长一点，也不要挤到看不清。
-        var height = Math.max(320, Math.min(1600, 100 + view.industries.length * 34));
+        // 每行 34px：展示全部历史后行业数会随交易日累积，固定高度会把点压成
+        // 一条缝；宁可让页面长一点，也不要挤到看不清（上限放到 2400 ≈ 70 行）。
+        var height = Math.max(320, Math.min(2400, 100 + view.industries.length * 34));
         dom.style.height = height + "px";
         disposeChart();
         dom.innerHTML = "";
@@ -332,7 +335,7 @@
         var tip = $("htChartTip");
         if (tip) {
             var focusCount = view.focus ? Object.keys(view.focus).length : 0;
-            tip.textContent = (state.mode === "sector" ? "细分行业" : "主线方向") + " · "
+            tip.textContent = MODE_LABEL + " · "
                 + view.industries.length + " 个行业 · " + view.points.length + " 个圆点"
                 + (focusCount ? " · 已置顶 " + focusCount + " 个关注方向" : "")
                 + (view.industries.length > 24 ? " · 行业较多，向下滚动可看全" : "");
@@ -343,7 +346,7 @@
     function render() {
         var data = state.data;
         if (!data) return;
-        var view = (data.views || {})[state.mode] || data.views.group;
+        var view = (data.views || {})[FIXED_MODE] || data.views.group;
         renderStats(data, view);
         renderLatest(data);
         renderRanking(data);
@@ -376,10 +379,8 @@
     async function load() {
         if (state.busy) return;
         state.busy = true;
-        var select = $("htDays");
-        if (select) select.disabled = true;
         try {
-            var resp = await fetchWithAuth("/api/hotspot/trend?days=" + state.days);
+            var resp = await fetchWithAuth("/api/hotspot/trend?days=" + FIXED_DAYS);
             var data = await resp.json();
             if (data.status !== "ok") {
                 throw new Error(data.message || "加载失败");
@@ -392,26 +393,11 @@
             $("htChart").innerHTML = '<div class="ht-empty">加载失败，请稍后刷新页面重试。</div>';
         } finally {
             state.busy = false;
-            if (select) select.disabled = false;
         }
     }
 
     /* ---------------------------------------------------------------- 启动 */
     document.addEventListener("DOMContentLoaded", function () {
-        var days = $("htDays");
-        var mode = $("htMode");
-        if (days) {
-            days.addEventListener("change", function () {
-                state.days = Number(days.value) || 30;
-                load();
-            });
-        }
-        if (mode) {
-            mode.addEventListener("change", function () {
-                state.mode = mode.value === "sector" ? "sector" : "group";
-                render();   // 两份点阵都在同一份响应里，切口径不必再发请求
-            });
-        }
         window.addEventListener("resize", debounce(function () {
             if (state.chart) state.chart.resize();
         }, 180));

@@ -43,27 +43,6 @@
     white-space: nowrap;
 }
 
-.ht-select-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.8rem;
-    color: var(--ht-sub);
-    white-space: nowrap;
-}
-
-.ht-select {
-    padding: 6px 8px;
-    border: 1px solid #dcdfe7;
-    border-radius: 8px;
-    background: #fff;
-    color: #404654;
-    font-size: 0.84rem;
-    cursor: pointer;
-}
-
-.ht-select:focus { outline: 2px solid rgba(214, 69, 69, 0.25); }
-
 .ht-today-link {
     font-size: 0.82rem;
     color: var(--ht-up);

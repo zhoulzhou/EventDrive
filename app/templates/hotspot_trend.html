@@ -12,19 +12,6 @@
         <h1>热点趋势 · 主线行业的上榜轨迹</h1>
         <div class="ht-toolbar">
             <span id="htUpdated" class="ht-updated">加载中…</span>
-            <label class="ht-select-label">区间
-                <select id="htDays" class="ht-select">
-                    <option value="15">近 15 日</option>
-                    <option value="30" selected>近 30 日</option>
-                    <option value="60">近 60 日</option>
-                </select>
-            </label>
-            <label class="ht-select-label">口径
-                <select id="htMode" class="ht-select">
-                    <option value="group" selected>主线方向</option>
-                    <option value="sector">细分行业</option>
-                </select>
-            </label>
             <a class="ht-today-link" href="/today">看今日热点 →</a>
         </div>
     </div>
@@ -37,14 +24,16 @@
         阶段与该主线的细分行业。
     </p>
     <p class="form-hint">
-        口径：默认<strong>主线方向</strong>＝涨停股所属行业按 23 个大方向归并后的名字（如电子、传媒）；
-        切到<strong>细分行业</strong>看每条主线里贡献涨停最多的东财二级行业（如半导体，
-        名称沿用数据源截断到 4 字的写法）。<strong>半导体、计算机、人形机器人</strong>相关方向
+        <strong>纵轴口径固定为主线方向</strong>＝涨停股所属行业按 23 个大方向归并后的名字（如电子、传媒）；
+        每条主线贡献涨停最多的东财二级行业（如半导体）仍可在圆点悬停提示里看到。
+        <strong>半导体、计算机、人形机器人</strong>相关方向
         <strong>固定在纵轴顶部</strong>（含电子、元件、IT服务、自动化设备等上下游），组内与其余行业
         均按<strong>累计上榜次数</strong>排序，反复出现的老主线在上，一次性题材在下；颜色随行号
         由上到下从红渐变到蓝，置顶的关注方向自然落在红端。
         本页<strong>只读每日收盘轮生成的热点日报快照</strong>，不实时抓取；
-        横轴只列<strong>有日报的交易日</strong>，历史从该表启用之日算起，<strong>不回填更早日期</strong>。
+        横轴只列<strong>有日报的交易日</strong>，<strong>默认展示全部可用历史</strong>
+        （最多 60 个交易日 ≈ 一季度；日期多时可用图表下方滑块或滚轮缩放看局部），
+        历史从该表启用之日算起，<strong>不回填更早日期</strong>。
         上榜条件是代理指标，不构成投资建议。
     </p>
 </div>
