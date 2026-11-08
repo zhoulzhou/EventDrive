@@ -136,14 +136,21 @@
     // ---------------------------------------------------------------- B 主线
     var STAGE_CLASS = { "启动": "s-start", "加速": "s-accel", "延续": "s-cont", "分歧": "s-diverge" };
 
+    // 今日主线只展示排名前 3 的方向（后端已按涨停家数排序 + 相对阈值过滤）。
+    // 截断只发生在这一块卡片的渲染层：payload 里仍保留全部达标方向，
+    // 热点趋势点阵和「题材热度」榜要读全量，不能在生成日报时砍数据。
+    var THEME_LIMIT = 3;
+
     function renderThemes(themes) {
-        if (!themes || !themes.length) {
+        var all = themes || [];
+        if (!all.length) {
             return '<div class="th-card"><div class="th-empty" style="border:none;padding:18px;">'
                 + "<p>今天没有形成主线：没有任何方向凑齐 3 家以上涨停。"
                 + "这种日子通常是无主线混沌轮动，别硬找。</p></div></div>";
         }
+        var shown = all.slice(0, THEME_LIMIT);
 
-        var html = themes.map(function (theme) {
+        var html = shown.map(function (theme) {
             var stage = theme.stage
                 ? '<span class="th-stage ' + (STAGE_CLASS[theme.stage] || "s-cont") + '">' + esc(theme.stage) + "</span>"
                 : "";
@@ -324,7 +331,7 @@
 
         html += '<div class="th-section">' + renderTone(payload) + "</div>";
         html += '<div class="th-section"><div class="th-section-title">今日主线'
-            + "<em>涨停股所属行业聚簇 × 当日新闻命中，家数 ≥3 才上榜</em>"
+            + "<em>涨停股所属行业聚簇 × 当日新闻命中 · 家数 ≥3 取前 3</em>"
             + '<a class="th-trend-link" href="/hotspot-trend">看热点趋势 →</a></div>'
             + renderThemes(payload.themes) + "</div>";
         html += '<div class="th-section th-split">'
@@ -401,8 +408,9 @@
             var data = await resp.json();
             if (data.status === "ok") {
                 var s = data.summary || {};
+                var themeNames = (s.themes || []).slice(0, THEME_LIMIT);
                 notice("ok", "已生成 " + (s.market_date || "") + " 的日报：涨停 " + (s.limit_up || 0)
-                    + " 家，主线 " + ((s.themes || []).join("、") || "无"));
+                    + " 家，主线 " + (themeNames.join("、") || "无"));
                 await load();
             } else if (data.status === "running") {
                 notice("error", data.message || "正在生成中，请稍候");
