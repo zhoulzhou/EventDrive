@@ -13,6 +13,10 @@
      一个圆点 = 某天该行业进入今日主线
      圆点大小 = 涨停家数；圆点颜色与纵轴标签颜色 = 所在行位置（顶部红 → 底部蓝）
      当日主线排名仍在 tooltip 里；最新交易日描白边
+
+   与今日热点页的口径对齐：底部「最新交易日主线」只列前 3 条（LATEST_LIMIT）。
+   点阵图、纵轴行业与「持续热点」排行都不动 —— 它们读的是全部历史主线，
+   截断只发生在这一栏列表的渲染层，接口返回的 latest 仍是完整名单。
    ========================================================================== */
 (function () {
     "use strict";
@@ -29,6 +33,8 @@
     var FIXED_DAYS = 60;
     var FIXED_MODE = "group";
     var MODE_LABEL = "主线方向";
+    // 与 /today 的 THEME_LIMIT 保持一致：底部「最新交易日主线」只展示前三
+    var LATEST_LIMIT = 3;
 
     var state = {
         data: null,
@@ -121,9 +127,9 @@
         var tip = $("htLatestTip");
         if (tip) {
             tip.textContent = (data.latest_date ? "数据截至 " + data.latest_date : "—")
-                + " · 主线方向口径";
+                + " · 主线方向 · 仅展示前 " + LATEST_LIMIT + " 条";
         }
-        var rows = data.latest || [];
+        var rows = (data.latest || []).slice(0, LATEST_LIMIT);
         if (!rows.length) {
             box.innerHTML = '<div class="ht-empty" style="min-height:120px;">'
                 + (data.latest_date
