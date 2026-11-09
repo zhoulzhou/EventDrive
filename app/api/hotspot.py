@@ -159,10 +159,10 @@ def llm_set_config(body: _ApiKeyBody, auth: bool = Depends(require_auth)):
 def make_llm_summary(date: Optional[str] = Query(None, description="交易日，空取最新一份"),
                      force: bool = Query(False, description="已有总结时是否强制重算"),
                      auth: bool = Depends(require_auth)):
-    """把「今日定调 + 今日主线」发给 DeepSeek Flash，生成并落库一份解读。
+    """把全量盘面原始证据 + 近 5 日档案发给 DeepSeek Flash，两轮生成归因分析并落库。
 
-    同步执行：关掉 thinking 后通常 3~10 秒，服务端超时 40 秒，留足反代 60s
-    的余量；页面直接拿结果，比「点火 + 轮询」简单可靠。
+    同步执行：两轮各 20s 上限（关 thinking），最坏 40s + 连接开销，守住反代 60s；
+    审稿轮失败会降级用初稿，不会让整份解读变成「生成失败」。
     """
     if not llm_mod.is_configured():
         return {"status": "unconfigured",
@@ -176,16 +176,18 @@ def make_llm_summary(date: Optional[str] = Query(None, description="交易日，
         if not record:
             return {"status": "empty", "message": "还没有热点日报，先点「重新生成」"}
         payload = record["payload"]
-        if not force and payload.get("llm_summary"):
-            return {"status": "ok", "cached": True,
-                    "summary": payload["llm_summary"]}
+        cached = payload.get("llm_summary")
+        # 旧版（version<2）是「数字复述」，不再当缓存用 —— 引导重算成归因分析
+        if not force and cached and int(cached.get("version") or 1) >= llm_mod.SUMMARY_VERSION:
+            return {"status": "ok", "cached": True, "summary": cached}
         try:
-            summary = llm_mod.generate(payload)
+            history = llm_mod.load_history(db, record["market_date"])
+            summary = llm_mod.generate(payload, history=history)
         except llm_mod.LlmError as exc:
-            logger.warning("今日热点 AI 解读生成失败: %s", exc)
+            logger.warning("今日热点 AI 归因分析生成失败: %s", exc)
             return {"status": "error", "message": str(exc)}
         ok = crud.save_hotspot_llm_summary(db, record["market_date"], summary)
-        logger.info("今日热点 AI 解读已生成 %s（落库=%s）", record["market_date"], ok)
+        logger.info("今日热点 AI 归因分析已生成 %s（落库=%s）", record["market_date"], ok)
         return {"status": "ok", "cached": False, "saved": ok, "summary": summary}
     finally:
         try:

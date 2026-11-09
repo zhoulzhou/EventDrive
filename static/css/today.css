@@ -588,55 +588,156 @@
 
 .th-llm-body { margin-top: 12px; }
 
-.th-llm-headline {
-    border-left: 3px solid #6d5ce7;
-    padding: 2px 0 2px 12px;
-    font-size: 1.02rem;
+/* v2 归因分析：不再是「一句话 + 四列平铺要点」，而是矛盾 → 假设（证据链/反证）
+   → 补充信号 → 可证伪清单。层级靠底色和字号区分，不靠加粗堆一起。 */
+.th-llm-label {
+    display: inline-block;
+    font-size: 0.72rem;
     font-weight: 600;
+    letter-spacing: 0.03em;
+    color: #6d5ce7;
+    background: #eeebff;
+    border: 1px solid #e2dcff;
+    border-radius: 5px;
+    padding: 2px 8px;
+    margin-bottom: 8px;
+}
+
+.th-llm-anomaly {
+    border-left: 3px solid #6d5ce7;
+    background: #f6f4ff;
+    border-radius: 0 8px 8px 0;
+    padding: 10px 14px 11px;
+}
+
+.th-llm-anomaly-signal {
+    font-size: 0.94rem;
+    font-weight: 600;
+    line-height: 1.65;
+    color: #2b2f3c;
+}
+
+.th-llm-anomaly-why {
+    margin-top: 5px;
+    font-size: 0.82rem;
     line-height: 1.7;
-    color: #23272f;
+    color: #565c6b;
 }
 
-.th-llm-points {
-    list-style: none;
-    margin: 12px 0 0;
-    padding: 0;
+.th-llm-block { margin-top: 14px; }
+
+.th-llm-hyps {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 8px 22px;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 10px;
 }
 
-.th-llm-points li {
+.th-llm-hyp {
+    background: #fff;
+    border: 1px solid #eae7fa;
+    border-radius: 9px;
+    padding: 11px 13px;
+}
+
+.th-llm-hyp-claim {
+    font-size: 0.86rem;
+    font-weight: 600;
+    line-height: 1.65;
+    color: #2b2f3c;
+}
+
+.th-llm-hyp-no { color: #6d5ce7; margin-right: 6px; }
+
+.th-llm-conf {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: #8a80c9;
+    background: #f2efff;
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+.th-llm-evidence {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+}
+
+.th-llm-evidence li {
     position: relative;
-    padding-left: 17px;
-    font-size: 0.85rem;
-    line-height: 1.75;
-    color: #414755;
+    padding-left: 13px;
+    font-size: 0.77rem;
+    line-height: 1.65;
+    color: #666c7a;
 }
 
-.th-llm-points li::before {
+.th-llm-evidence li::before {
     content: "";
     position: absolute;
     left: 2px;
-    top: 0.7em;
-    width: 6px;
-    height: 6px;
+    top: 0.62em;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
-    background: #9a8cf2;
+    background: #c3baf5;
 }
 
-.th-llm-watch {
+.th-llm-counter {
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px dashed #e8e4f8;
+    font-size: 0.76rem;
+    line-height: 1.6;
+    color: #8a8f9b;
+}
+
+.th-llm-counter b { font-weight: 600; color: #9a8cf2; margin-right: 5px; }
+
+.th-llm-notes {
     margin-top: 12px;
-    background: #fff9ec;
-    border: 1px solid #f3e3bb;
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 0.83rem;
-    line-height: 1.65;
-    color: #7a5b16;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 10px;
 }
 
-.th-llm-watch b { font-weight: 600; margin-right: 6px; }
+.th-llm-note {
+    background: #faf9ff;
+    border: 1px solid #eeebfb;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 0.8rem;
+    line-height: 1.7;
+    color: #4a5060;
+}
+
+.th-llm-note span {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #6d5ce7;
+    margin-bottom: 3px;
+}
+
+.th-llm-checks {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 8px;
+}
+
+.th-llm-check {
+    background: #fff;
+    border: 1px solid #eeeaf9;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 0.79rem;
+    line-height: 1.7;
+    color: #4a5060;
+}
+
+.th-llm-check b { color: #6d5ce7; font-weight: 600; margin: 0 3px; }
 
 .th-llm-foot {
     margin-top: 10px;
@@ -723,5 +824,7 @@
 @media (max-width: 720px) {
     .th-llm-head { align-items: flex-start; }
     .th-llm-actions { width: 100%; }
-    .th-llm-points { grid-template-columns: minmax(0, 1fr); }
+    .th-llm-hyps,
+    .th-llm-notes,
+    .th-llm-checks { grid-template-columns: minmax(0, 1fr); }
 }

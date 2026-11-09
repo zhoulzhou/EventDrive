@@ -4,13 +4,14 @@
    数据只有一次请求：GET /api/hotspot/today（整份日报在 payload 里）。
    区块顺序与后端 payload 字段一一对应：
      tone / verdict  →  A 今日定调
-     llm_summary     →  A2 AI 盘面解读（另有一个 llm-config 请求）
+     llm_summary     →  A2 AI 盘面归因（另有一个 llm-config 请求）
      themes          →  B 今日主线
      stocks/boards   →  C 热股三榜、D 资金地图
      timeline        →  E 今日大事
 
-   AI 解读按交易日缓存在 payload.llm_summary 里，页面只读快照；
-   只有「生成 / 重新生成」才调模型，配置状态单独走 /api/hotspot/llm-config。
+   AI 归因按交易日缓存在 payload.llm_summary 里（version>=2 才是新版），
+   页面只读快照；只有「生成 / 重新生成」才调模型，配置状态单独走 llm-config。
+   新版读全量原始证据 + 近 5 日档案、两轮自检，输出反常信号/归因假设/验证清单。
    ========================================================================== */
 (function () {
     "use strict";
@@ -335,31 +336,90 @@
     // ------------------------------------------------------------ A2 AI 解读
     function llmConfig() { return state.llm.config || {}; }
 
+    function confText(v) {
+        var map = { high: "较高", medium: "中", low: "偏低" };
+        return map[String(v || "").toLowerCase()] || "中";
+    }
+
+    function isV2(s) { return !!s && Number(s.version || 1) >= 2; }
+
     function renderLlmBody() {
         var llm = state.llm;
         var cfg = llmConfig();
         if (llm.busy) {
             return '<div class="th-llm-loading"><span class="th-llm-dot"></span>'
-                + "正在把今日定调与主线发给 DeepSeek Flash，约需 5~15 秒…</div>";
+                + "正在读全量盘面证据与近 5 日档案，两轮归因自检约需 15~30 秒…</div>";
         }
         if (llm.error) {
             return '<div class="th-llm-error">' + esc(llm.error) + "</div>";
         }
         var s = (state.payload || {}).llm_summary;
-        if (s && (s.headline || (s.points || []).length)) {
+        if (s && !isV2(s)) {
+            return '<div class="th-llm-empty"><b>解读已升级为「归因分析」。</b>'
+                + "旧版只是把定调数字换成句子，与页面上的规则总结重复。"
+                + "点右上角「升级解读」重新生成：读新闻标题、连板梯队、首次封板时间、炸板次数、资金地图与近 5 日档案，"
+                + "经两轮自检输出反常信号、带证据链与反证的归因假设、可证伪的验证清单。</div>";
+        }
+        if (isV2(s)) {
             var html = "";
-            if (s.headline) html += '<div class="th-llm-headline">' + esc(s.headline) + "</div>";
-            var pts = (s.points || []).map(function (p) {
-                return "<li>" + esc(p) + "</li>";
-            }).join("");
-            if (pts) html += '<ol class="th-llm-points">' + pts + "</ol>";
-            if (s.watch) html += '<div class="th-llm-watch"><b>明日观察</b> ' + esc(s.watch) + "</div>";
+            var a = s.anomaly || {};
+            if (a.signal) {
+                html += '<div class="th-llm-anomaly"><span class="th-llm-label">最反常的信号</span>'
+                    + '<div class="th-llm-anomaly-signal">' + esc(a.signal) + "</div>"
+                    + (a.why ? '<div class="th-llm-anomaly-why">' + esc(a.why) + "</div>" : "")
+                    + "</div>";
+            }
+            var hyps = s.hypotheses || [];
+            if (hyps.length) {
+                html += '<div class="th-llm-block"><span class="th-llm-label">归因假设 · 证据链与反证</span>'
+                    + '<div class="th-llm-hyps">';
+                hyps.forEach(function (h, i) {
+                    html += '<div class="th-llm-hyp"><div class="th-llm-hyp-claim">'
+                        + '<span class="th-llm-hyp-no">' + ["①", "②", "③"][i] + "</span>"
+                        + esc(h.claim)
+                        + '<span class="th-llm-conf">置信 ' + esc(confText(h.confidence)) + "</span>"
+                        + "</div>";
+                    var ev = (h.evidence || []).map(function (e) {
+                        return "<li>" + esc(e) + "</li>";
+                    }).join("");
+                    if (ev) html += '<ul class="th-llm-evidence">' + ev + "</ul>";
+                    if (h.counter) {
+                        html += '<div class="th-llm-counter"><b>反证</b> ' + esc(h.counter) + "</div>";
+                    }
+                    html += "</div>";
+                });
+                html += "</div></div>";
+            }
+            if (s.overlooked || s.cycle) {
+                html += '<div class="th-llm-notes">';
+                if (s.overlooked) {
+                    html += '<div class="th-llm-note"><span>被忽略的信号</span>'
+                        + esc(s.overlooked) + "</div>";
+                }
+                if (s.cycle) {
+                    html += '<div class="th-llm-note"><span>周期定位</span>'
+                        + esc(s.cycle) + "</div>";
+                }
+                html += "</div>";
+            }
+            var checks = s.checks || [];
+            if (checks.length) {
+                html += '<div class="th-llm-block"><span class="th-llm-label">明日验证清单</span>'
+                    + '<div class="th-llm-checks">';
+                checks.forEach(function (c) {
+                    html += '<div class="th-llm-check"><b>若</b> ' + esc(c["if"])
+                        + ' <b>则</b> ' + esc(c.then) + "</div>";
+                });
+                html += "</div></div>";
+            }
             html += '<div class="th-llm-foot">由 '
                 + esc(s.model || cfg.model || "DeepSeek Flash")
-                + " 基于本页「今日定调 + 今日主线」生成"
+                + " 基于全量原始证据 + 近 " + esc(s.history_days || 0) + " 日档案"
+                + (s.reviewed === false ? "（审稿轮降级，仅首轮）" : "，经两轮自检")
+                + "生成"
                 + (s.generated_at ? " · " + esc(s.generated_at) : "")
                 + (s.total_tokens ? " · " + esc(String(s.total_tokens)) + " tokens" : "")
-                + " · 仅为数据解读，不构成投资建议</div>";
+                + " · 基于当日数据的推断，非事实陈述，不构成投资建议</div>";
             return html;
         }
         if (!llm.ready) return '<div class="th-llm-empty">正在检查模型配置…</div>';
@@ -367,10 +427,11 @@
             return '<div class="th-llm-empty"><b>还没有配置 DeepSeek API Key。</b>'
                 + "点右上角「设置 Key」填入 sk-… 后立即生效；"
                 + "也可以写进项目根目录 .env 的 DEEPSEEK_API_KEY 再重新发布。"
-                + "<br>配置好之后点「生成解读」，定调数字与今日主线会发给 deepseek-flash 出一份复盘。</div>";
+                + "<br>配置好之后点「生成解读」，模型会读全量盘面证据做归因分析，而不是复述数字。</div>";
         }
-        return '<div class="th-llm-empty">这一天的日报还没有 AI 解读。'
-            + "点「生成解读」把六个定调数字与今日主线发给 DeepSeek Flash；"
+        return '<div class="th-llm-empty">这一天的日报还没有 AI 归因分析。'
+            + "点「生成解读」：喂入新闻标题、连板梯队、首次封板时间、炸板次数、资金地图与近 5 日档案，"
+            + "经两轮自检输出反常信号、带证据链与反证的归因假设、可证伪的验证清单。"
             + "生成后按交易日缓存，收盘轮产出新日报时自动更新。</div>";
     }
 
@@ -381,7 +442,7 @@
         var cfg = llmConfig();
         var s = (state.payload || {}).llm_summary;
         var meta;
-        if (s && s.generated_at) meta = "解读于 " + esc(s.generated_at);
+        if (s && s.generated_at) meta = (isV2(s) ? "归因于 " : "旧版解读 · ") + esc(s.generated_at);
         else if (llm.ready && !cfg.configured) meta = "Key 未配置";
         else meta = esc(llm.note || "尚无解读");
 
@@ -397,13 +458,13 @@
             + "</div>";
 
         box.innerHTML = '<div class="th-llm-head">'
-            + '<div class="th-llm-title"><span class="th-llm-mark">✦</span> AI 盘面解读'
+            + '<div class="th-llm-title"><span class="th-llm-mark">✦</span> AI 盘面归因'
             + '<span class="th-llm-badge">' + esc(cfg.model || "DeepSeek Flash") + "</span></div>"
             + '<div class="th-llm-actions">'
             + '<span class="th-llm-meta">' + meta + "</span>"
             + '<button class="th-llm-btn" id="thLlmGen"'
             + (llm.busy || !llm.ready || !state.payload ? " disabled" : "") + ">"
-            + (s ? "重新生成" : "生成解读") + "</button>"
+            + (s && !isV2(s) ? "升级解读" : (s ? "重新生成" : "生成解读")) + "</button>"
             + '<button class="th-llm-link" id="thLlmCfg">设置 Key</button>'
             + "</div></div>"
             + cfgPanel

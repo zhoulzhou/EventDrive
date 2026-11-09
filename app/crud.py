@@ -2039,3 +2039,66 @@ def list_hotspot_reports(db: Session, limit: int = 60) -> List[dict]:
             })
         reports.append({"market_date": str(date), "themes": themes})
     return reports
+
+
+def list_hotspot_briefs(db: Session, limit: int = 6) -> List[dict]:
+    """取最近 ``limit`` 份日报的**精简档案**，按交易日升序，给 LLM 做跨日对比。
+
+    与 ``list_hotspot_reports`` 的区别：那份只裁 themes 给趋势图；这份还要量能、
+    涨跌停、封板率、最高板、情绪温度和主线名+家数，模型才能判断「今天处在
+    主线轮动 / 情绪周期的哪一段」。整份 payload 25~40KB/天，所以只取 6 份并在
+    Python 里就地裁完，不把原始材料传到调用方之外。
+
+    返回中文键的 dict 列表，可直接拼进模型输入（中文键比英文缩写更不易误读量纲）。
+    """
+    def _n(value):
+        try:
+            return round(float(value), 2) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _i(value):
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    limit = max(1, min(int(limit or 6), 10))
+    if _USE_CLOUD:
+        rows = _cdb.select(T_HOTSPOT, columns="market_date,payload",
+                           order="market_date.desc", limit=limit,
+                           context="list_hotspot_briefs")
+        records = [(_field(r, "market_date"), _field(r, "payload")) for r in rows]
+    else:
+        rows = (db.query(models.DailyHotspot.market_date, models.DailyHotspot.payload)
+                .order_by(models.DailyHotspot.market_date.desc()).limit(limit).all())
+        records = [(r[0], r[1]) for r in rows]
+
+    briefs: List[dict] = []
+    for date, raw in reversed(records):   # 新→旧查出来，档案要旧→新
+        try:
+            payload = json.loads(raw or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        tone = payload.get("tone") or {}
+        lim = tone.get("limit") or {}
+        turnover = tone.get("turnover") or {}
+        briefs.append({
+            "日期": str(date),
+            "规则定调": payload.get("verdict") or "",
+            "涨停家数": _i(lim.get("up")),
+            "跌停家数": _i(lim.get("down")),
+            "炸板家数": _i(lim.get("broken")),
+            "封板率": _n(lim.get("seal_rate")),
+            "最高连板": _i(lim.get("max_board")),
+            "晋级率": _n(lim.get("promotion")),
+            "两市成交额亿": _n(turnover.get("value")),
+            "成交额变化亿": _n(turnover.get("delta")),
+            "赚钱效应": _n(tone.get("breadth")),
+            "情绪温度": _n(tone.get("temperature")),
+            "主线": [{"方向": t.get("name"), "家数": _i(t.get("limit_up")),
+                      "阶段": t.get("stage")}
+                     for t in (payload.get("themes") or [])[:4] if isinstance(t, dict)],
+            "数据缺口数": len(payload.get("data_gaps") or []),
+        })
+    return briefs

@@ -112,7 +112,7 @@ class Settings:
     DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
     # 反代硬超时 60s，这里留 15s 余量；收盘轮自动调用用更短的 25s
     DEEPSEEK_TIMEOUT: int = _get_int("DEEPSEEK_TIMEOUT", 40)
-    DEEPSEEK_MAX_TOKENS: int = _get_int("DEEPSEEK_MAX_TOKENS", 900)
+    DEEPSEEK_MAX_TOKENS: int = _get_int("DEEPSEEK_MAX_TOKENS", 1800)
 
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
