@@ -31,9 +31,27 @@ print("=" * 60)
 print("🚀 市场总览应用正在启动...")
 print("=" * 60)
 
-ensure_schema_compatibility(engine)
-Base.metadata.create_all(bind=engine)
-print("✅ 数据库表初始化完成")
+# 云库模式（沙箱注入 PORT）根本不用本地 SQLite：此时若还去 init/create_all，
+# 只要沙箱里挂载的 data/db.sqlite3 不可写、或带着本地残留的 -wal/-shm，
+# 连接创建就会在 connect 监听器里抛异常，整个 uvicorn 进程直接起不来
+# （2026-11-09 发布实测：端口 3000 始终 NOT listening）。线上业务数据全在
+# 云库，本地库只是一层兼容壳，这里跳过最干净；本地开发仍照常建表。
+try:
+    from app.cloud_db import cloud_db_configured
+    _cloud_mode = cloud_db_configured()
+except Exception:  # noqa: BLE001 —— 判定失败就退回原来的建表流程
+    _cloud_mode = False
+
+if _cloud_mode:
+    print("ℹ️  云库模式：跳过本地 SQLite 建表")
+else:
+    try:
+        ensure_schema_compatibility(engine)
+        Base.metadata.create_all(bind=engine)
+        print("✅ 数据库表初始化完成")
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠ 本地 SQLite 初始化失败（不阻断服务启动）: {exc}")
+        logger.warning("本地 SQLite 初始化失败: %s", exc)
 
 # 指数预警:接口优先读 index/ CSV(按 mtime 缓存),CSV 可用时完全不碰数据库。
 # index_history 表退化为降级数据源,仅在 CSV 缺失时才检查/导入。

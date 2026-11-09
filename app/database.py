@@ -67,19 +67,30 @@ engine = create_engine(
 
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_conn, connection_record):
-    if "sqlite" in DATABASE_URL:
+    """连接创建时的 PRAGMA 全部容错。
+
+    这里是**启动链上最脆的一环**：监听器里任何一条语句抛异常，SQLAlchemy
+    会把整条连接判为创建失败（pool.checkout → __connect），进而让 import
+    阶段就崩掉、端口永远起不来。只读挂载 / 损坏的库文件都不该有这种杀伤力，
+    所以逐条吞掉异常，只留 warning。
+    """
+    if "sqlite" not in DATABASE_URL:
+        return
+    try:
         cursor = dbapi_conn.cursor()
-        # WAL 模式需要写权限；若所在文件系统不支持（如部分只读挂载），
-        # 降级为默认 journal 模式，避免整条连接失败。
-        try:
-            cursor.execute("PRAGMA journal_mode=WAL")
-        except Exception:
-            pass
-        cursor.execute("PRAGMA busy_timeout=5000")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA encoding='UTF-8'")
-        cursor.execute("PRAGMA foreign_keys=ON")
+        # WAL 模式需要写权限；若所在文件系统不支持，降级为默认 journal 模式。
+        # 其余 PRAGMA 同样逐条容错，任何一条失败都不影响连接本身可用。
+        for pragma in ("PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000",
+                       "PRAGMA synchronous=NORMAL", "PRAGMA encoding='UTF-8'",
+                       "PRAGMA foreign_keys=ON"):
+            try:
+                cursor.execute(pragma)
+            except Exception:  # noqa: BLE001
+                pass
         cursor.close()
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("SQLite PRAGMA 初始化失败（忽略）: %s", exc)
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
