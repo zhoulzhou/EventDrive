@@ -24,8 +24,6 @@ router = APIRouter()
 
 # 刷新是重活（7 次外部请求 + 若干库读），并发点两次没意义还可能触发东财限流
 _refresh_lock = threading.Lock()
-# 同一交易日重复点「生成解读」会重复烧 token，非阻塞挡住
-_llm_lock = threading.Lock()
 
 
 class _ApiKeyBody(BaseModel):
@@ -137,7 +135,8 @@ def get_hotspot_trend(days: int = Query(60, ge=1, le=60,
 
 # ================================================================ AI 盘面解读
 # 结论按交易日存在 daily_hotspots.payload.llm_summary 里，页面打开只读快照。
-# 这里只负责「手动生成」与「填 Key」；收盘轮另有一条静默自动补的链路。
+# 这里负责「手动生成」与「填 Key」；收盘轮由 scheduler.refresh_hotspot_llm
+# 在日报落库后串行生成，两条链路共用 llm_summary.generate_for_date 的锁与缓存。
 
 @router.get("/hotspot/llm-config")
 def llm_config(auth: bool = Depends(require_auth)):
@@ -164,34 +163,6 @@ def make_llm_summary(date: Optional[str] = Query(None, description="交易日，
     同步执行：两轮各 20s 上限（关 thinking），最坏 40s + 连接开销，守住反代 60s；
     审稿轮失败会降级用初稿，不会让整份解读变成「生成失败」。
     """
-    if not llm_mod.is_configured():
-        return {"status": "unconfigured",
-                "message": "尚未配置 DeepSeek API Key，请点「设置 Key」填写"}
-    if not _llm_lock.acquire(blocking=False):
-        return {"status": "running", "message": "正在生成解读，请稍候"}
-
-    db = SessionLocal()
-    try:
-        record = crud.get_daily_hotspot(db, date)
-        if not record:
-            return {"status": "empty", "message": "还没有热点日报，先点「重新生成」"}
-        payload = record["payload"]
-        cached = payload.get("llm_summary")
-        # 旧版（version<2）是「数字复述」，不再当缓存用 —— 引导重算成归因分析
-        if not force and cached and int(cached.get("version") or 1) >= llm_mod.SUMMARY_VERSION:
-            return {"status": "ok", "cached": True, "summary": cached}
-        try:
-            history = llm_mod.load_history(db, record["market_date"])
-            summary = llm_mod.generate(payload, history=history)
-        except llm_mod.LlmError as exc:
-            logger.warning("今日热点 AI 归因分析生成失败: %s", exc)
-            return {"status": "error", "message": str(exc)}
-        ok = crud.save_hotspot_llm_summary(db, record["market_date"], summary)
-        logger.info("今日热点 AI 归因分析已生成 %s（落库=%s）", record["market_date"], ok)
-        return {"status": "ok", "cached": False, "saved": ok, "summary": summary}
-    finally:
-        try:
-            db.close()
-        except Exception:  # noqa: BLE001
-            pass
-        _llm_lock.release()
+    # 与收盘轮定时任务共用同一入口：同一把非阻塞锁 + 同一套 v2 缓存判定，
+    # 页面连点、定时任务与守护线程并发时都不会重复烧 token。
+    return llm_mod.generate_for_date(date, force=force)

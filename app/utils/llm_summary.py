@@ -490,9 +490,65 @@ def generate(payload: Dict[str, Any], *, history: Optional[List[dict]] = None,
     }
 
 
-# ---------------------------------------------------------------- 收盘轮自动补一份
-# 日报重新生成会覆盖 payload，连带清掉旧总结；这里静默补一份。
-# 完全异步 + 全部异常吞掉：AI 分析是锦上添花，绝不能影响日报落库或收盘轮收尾。
+# ---------------------------------------------------------------- 统一生成入口
+# 三条链路共用这里：收盘轮定时任务（scheduler.refresh_hotspot_llm）、页面
+# 「生成解读」接口、手动重生成日报后的异步兜底。共用一把非阻塞锁 + 一次缓存判定，
+# 避免同一交易日重复烧 token、或两处并发写同一行 payload 互相覆盖。
+_gen_lock = threading.Lock()
+
+
+def generate_for_date(market_date: Optional[str] = None, *, force: bool = False,
+                      timeout: Optional[int] = None) -> Dict[str, Any]:
+    """取最新（或指定）日报 → 命中 v2 缓存直接返回 → 否则两轮生成并落库。
+
+    **不抛异常**：失败一律转成 ``{"status": "error", "message": ...}``，由调用方
+    决定写成 crawl_logs 还是回给页面。定时任务里 AI 失败绝不能影响日报与整轮收尾。
+    """
+    if not is_configured():
+        return {"status": "unconfigured",
+                "message": "尚未配置 DeepSeek API Key，请点「设置 Key」填写"}
+    if not _gen_lock.acquire(blocking=False):
+        return {"status": "running", "message": "正在生成解读，请稍候"}
+
+    from app import crud
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        record = crud.get_daily_hotspot(db, market_date)
+        if not record:
+            return {"status": "empty", "message": "还没有热点日报，先点「重新生成」"}
+        payload = record["payload"]
+        date = record["market_date"]
+        cached = payload.get("llm_summary")
+        # 旧版（version<2）是数字复述，不能当缓存用
+        if not force and cached and int(cached.get("version") or 1) >= SUMMARY_VERSION:
+            return {"status": "ok", "cached": True, "summary": cached,
+                    "market_date": date}
+        history = load_history(db, date)
+        summary = generate(payload, history=history, timeout=timeout)
+        saved = crud.save_hotspot_llm_summary(db, date, summary)
+        logger.info("今日热点 AI 归因分析已生成 %s（落库=%s）", date, saved)
+        return {"status": "ok", "cached": False, "saved": bool(saved),
+                "summary": summary, "market_date": date}
+    except LlmError as exc:
+        logger.warning("今日热点 AI 归因分析生成失败: %s", exc)
+        return {"status": "error", "message": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("今日热点 AI 归因分析生成异常: %s", exc, exc_info=True)
+        return {"status": "error", "message": f"生成失败：{str(exc)[:200]}"}
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _gen_lock.release()
+
+
+# ------------------------------------------------- 手动重生成日报后的异步兜底
+# 定时任务**不靠这条路**：scheduler 在日报落库后串行调用 generate_for_date，
+# 并把它排在 hotspot 的 crawl_logs 之前 —— 云函数等到 hotspot 落库，就等于
+# 等到了 AI 总结完成。这里只服务 /api/hotspot/refresh（同步 HTTP 不宜再挂
+# 13~20 秒模型调用），异常全吞，不影响日报返回。
 _auto_lock = threading.Lock()
 _auto_dates: set[str] = set()
 
@@ -513,25 +569,11 @@ def _auto_worker(market_date: str) -> None:
     try:
         # 等日报落库与云库读缓存失效彻底完成，再读回 payload
         time.sleep(2)
-        from app import crud
-        from app.database import SessionLocal
-        db = SessionLocal()
-        try:
-            record = crud.get_daily_hotspot(db, market_date)
-            if not record:
-                return
-            payload = record["payload"]
-            existing = payload.get("llm_summary") or {}
-            if int(existing.get("version") or 1) >= SUMMARY_VERSION:
-                return  # 手动已经生成过新版，别重复烧 token
-            history = load_history(db, market_date)
-            summary = generate(payload, history=history, timeout=36)
-            crud.save_hotspot_llm_summary(db, market_date, summary)
-            logger.info("今日热点 AI 归因分析已自动生成 %s", market_date)
-        finally:
-            try:
-                db.close()
-            except Exception:  # noqa: BLE001
-                pass
+        result = generate_for_date(market_date, timeout=36)
+        if result.get("status") == "ok" and not result.get("cached"):
+            logger.info("今日热点 AI 归因分析已自动补生成 %s", market_date)
+        elif result.get("status") == "error":
+            logger.warning("今日热点 AI 归因分析自动补生成失败（不影响日报）：%s",
+                           result.get("message"))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("今日热点 AI 归因分析自动生成失败（不影响日报）：%s", exc)
+        logger.warning("今日热点 AI 归因分析自动补生成异常（不影响日报）：%s", exc)

@@ -386,10 +386,14 @@ def _refresh_lhb_sync(days: int = 1) -> dict:
 
 
 def _refresh_hotspot_sync() -> dict:
-    """在线程里跑：自己开 session（云库模式下 SessionLocal 只是壳）。"""
+    """在线程里跑：自己开 session（云库模式下 SessionLocal 只是壳）。
+
+    ``auto_llm=False``：收盘轮的 AI 归因由 refresh_hotspot() 在拿到本函数结果后
+    串行调用，不再由日报函数自己起守护线程（见 refresh_hotspot_llm 注释）。
+    """
     db = SessionLocal()
     try:
-        return hotspot_mod.refresh_hotspot(db)
+        return hotspot_mod.refresh_hotspot(db, auto_llm=False)
     finally:
         try:
             db.close()
@@ -431,6 +435,15 @@ async def refresh_hotspot(session: str = "manual"):
         )
         for gap in summary.get("gaps") or []:
             log_crawl(f"  ! {gap}")
+        # AI 盘面归因紧跟日报，**串行**执行，且排在 hotspot 的落地日志之前：
+        # 云函数只认 crawl_logs 里 hotspot 的 ok 行，把这行推迟到总结落库后，
+        # 它等 hotspot 就等于等总结完成，不会再出现「云函数收工、daemon 线程
+        # 随沙箱一起被回收、第二天页面没有解读」的情况。
+        if summary.get("saved"):
+            try:
+                await refresh_hotspot_llm(session=session)
+            except Exception as e:  # noqa: BLE001 —— AI 失败不能影响日报
+                log_crawl(f"  ! AI 盘面归因异常（不影响日报）: {e}")
         _write_crawl_log(
             task="hotspot", session=session, source="hotspot",
             item_count=int(summary.get("limit_up", 0)),
@@ -447,6 +460,67 @@ async def refresh_hotspot(session: str = "manual"):
         mark_task_finished("hotspot")
 
     log_crawl("=" * 50)
+
+
+def _generate_llm_sync(force: bool = False) -> dict:
+    """在线程里跑：generate_for_date 自己开 db（云库模式下 SessionLocal 只是壳）。"""
+    from app.utils import llm_summary as llm_mod
+    return llm_mod.generate_for_date(None, force=force)
+
+
+async def refresh_hotspot_llm(session: str = "manual", force: bool = False) -> dict:
+    """生成一份今日热点 AI 盘面归因，并写 ``task=hotspot_llm`` 的抓取日志。
+
+    收盘轮里它被 ``refresh_hotspot()`` **串行**调用，排在 hotspot 的 ok 日志之前；
+    也可用 ``POST /api/crawl/daily-refresh?domains=hotspot_llm`` 单独补跑。
+
+    为什么不再用 daemon 线程：云函数 ``waitFor(NEED)`` 只认 crawl_logs 里 hotspot
+    的 ok 行。之前日报末尾另起线程静默补，云函数一看到 ok 就 return，沙箱空闲
+    被回收时那条线程可能还没跑完，总结就丢了且没有任何留痕。现在两步绑在同一段，
+    云函数等到 hotspot 落库 = 等到日报 + 归因都完成。
+
+    AI 失败只写自己的 failed 行，**绝不**把 hotspot 记成 failed —— 否则云函数
+    会误判整轮缺域，重复点火一次全量抓取。
+    """
+    log_crawl("开始生成今日热点 AI 盘面归因...")
+    t0 = datetime.now()
+    try:
+        result = await asyncio.to_thread(_generate_llm_sync, force)
+    except Exception as e:  # noqa: BLE001
+        result = {"status": "error", "message": str(e)[:300]}
+    dur = int((datetime.now() - t0).total_seconds())
+    status = result.get("status")
+
+    if status == "ok":
+        s = result.get("summary") or {}
+        log_crawl(
+            "AI 盘面归因完成: %s，%s，假设 %d 条，tokens %s"
+            % (result.get("market_date"),
+               "命中缓存" if result.get("cached") else "新生成",
+               len(s.get("hypotheses") or []), s.get("total_tokens") or "—")
+        )
+        _write_crawl_log(
+            task="hotspot_llm", session=session,
+            source=s.get("model") or "deepseek-flash",
+            item_count=len(s.get("hypotheses") or []) or 1,
+            status="ok", duration=dur,
+        )
+    elif status == "error":
+        msg = str(result.get("message") or "未知错误")
+        log_crawl(f"  ! AI 盘面归因失败（不影响日报）: {msg}")
+        _write_crawl_log(
+            task="hotspot_llm", session=session, source="deepseek-flash",
+            item_count=0, status="failed", error_message=msg[:500], duration=dur,
+        )
+    else:
+        # unconfigured / empty / running：按设计跳过，不算失败，也不触发整轮补跑
+        reason = str(result.get("message") or status)
+        log_crawl(f"  ! AI 盘面归因跳过（{status}）：{reason}")
+        _write_crawl_log(
+            task="hotspot_llm", session=session, source="deepseek-flash",
+            item_count=0, status="empty", error_message=reason[:300], duration=dur,
+        )
+    return result
 
 
 async def full_crawl(session: str = "manual"):
@@ -584,6 +658,8 @@ async def close_session():
     # 今日热点**最后跑**：它要读 stock_temp / a_share 的当日结果与当日新闻，
     # 抢在前面跑会拿到旧值（定调条写着昨天的成交额）。自身只 7 次 HTTP，
     # 8~15 秒，放在 stock_temp 之后不会拖累整轮。
+    # 日报落库后 refresh_hotspot() 内会再串行跑一次 AI 归因（两轮约 13~20 秒），
+    # 云函数等 hotspot 落库即代表两步都完成；AI 失败只写自己的日志不影响本轮。
     try:
         await refresh_hotspot(session=SESSION_CLOSE)
     except Exception as e:  # noqa: BLE001 —— 热点失败不能影响整轮收尾

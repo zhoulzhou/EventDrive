@@ -16,6 +16,7 @@ from app.scheduler import (
     refresh_lhb,
     refresh_a_share_index,
     refresh_hotspot,
+    refresh_hotspot_llm,
 )
 from app.api.login import require_auth
 
@@ -153,8 +154,11 @@ _daily_refresh_state = {
 # news 的当日结果，所以在 close_session 里排最后一步串行执行（见 scheduler.close_session），
 # 不要把它挪进并发的快域组，否则定调条会读到昨天的成交额与指数。
 CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp", "hotspot")
-# 可单独补跑的域集合（含 news / market —— 这两域由上午那轮负责，失败时手动补）
-ALL_DOMAINS = ("news", "market") + CLOSE_DOMAINS
+# 可单独补跑的域集合（含 news / market —— 这两域由上午那轮负责，失败时手动补；
+# hotspot_llm 是收盘轮里紧跟日报的串行步骤，整轮已包含，但也可以单独补一次解读）。
+# 故意**不放进 CLOSE_DOMAINS**：它不是与其它域并发的一格，而是 hotspot 内部的第二步。
+# 放进去会让「显式传全量 domains」的判断和云函数 NEED 的语义都变复杂，且无收益。
+ALL_DOMAINS = ("news", "market", "hotspot_llm") + CLOSE_DOMAINS
 
 # 单个数据域的补跑入口：key -> 协程工厂。
 # 为什么需要它：close_session 里各域并发，其中 legulegu 串行 6s 间隔，
@@ -169,6 +173,8 @@ _DOMAIN_TASKS = {
     "a_share": lambda: refresh_a_share_index(session="close"),
     "stock_temp": lambda: refresh_stock_temp(session="close"),
     "hotspot": lambda: refresh_hotspot(session="close"),
+    # 只补 AI 归因、不重抓日报：日报错了用 hotspot，解读失败/被清掉用这一格
+    "hotspot_llm": lambda: refresh_hotspot_llm(session="close"),
 }
 
 
@@ -183,7 +189,7 @@ def _kick_daily_refresh(session: str = "close", domains: Optional[List[str]] = N
     因此拿 `macro,lhb` 这个组合时总耗时取决于最慢的那一个，
     而不是两者相加 —— 云端等待窗口很紧，这个差别很关键。
 
-    例外：显式传入的域恰好等于收盘轮四域时仍走 close_session，
+    例外：显式传入的域恰好等于收盘轮各域时仍走 close_session，
     以保留「快域并发 → 慢域独占」的编排（慢域与快域并发会被拖垮，见 close_session 注释）。
 
     域之间互不重叠时允许并行点火（见 _running_domains 的注释）：
@@ -302,7 +308,8 @@ async def trigger_daily_refresh(
     同步执行必然 504。落库由后台线程完成，稍后查 `/crawl/daily-status` 看进度。
 
     可选 `domains` 参数（逗号分隔）只跑指定数据域，用于补跑被中断的部分：
-    `news,market,macro,lhb,a_share,stock_temp,hotspot`
+    `news,market,macro,lhb,a_share,stock_temp,hotspot,hotspot_llm`
+    （`hotspot` 会重抓日报并顺带串行生成 AI 归因；只补归因用 `hotspot_llm`）
 
     注意：**不含财务指标**，财务在页面手动抓取（`POST /api/finance/fetch`）。
     """
@@ -344,6 +351,10 @@ def get_daily_refresh_status(auth: bool = Depends(require_auth)):
 
     `close_domains` 顺带把「收盘轮整轮到底抓哪几个域」暴露出来 —— 定时任务的分工
     （新闻/行情在早上，其余在 21:34）改过几次，线上排查时直接看这个字段，
-    不用去翻源码猜某天那轮里有没有 market。
+    不用去翻源码猜某天那轮里有没有 market。`all_domains` 额外列出所有可单独
+    补跑的域；`hotspot_llm` 不在 close_domains 里，因为它是 hotspot 内部的
+    串行第二步，不是独立并发的一格。
     """
-    return {**_daily_refresh_state, "close_domains": list(CLOSE_DOMAINS)}
+    return {**_daily_refresh_state,
+            "close_domains": list(CLOSE_DOMAINS),
+            "all_domains": list(ALL_DOMAINS)}

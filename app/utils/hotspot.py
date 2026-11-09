@@ -1080,8 +1080,15 @@ def build_daily_payload(db, market_date: Optional[str] = None,
     return payload
 
 
-def refresh_hotspot(db, market_date: Optional[str] = None) -> Dict[str, Any]:
-    """抓取 + 聚合 + 落库，返回落库结果摘要（供 scheduler / API 打日志）。"""
+def refresh_hotspot(db, market_date: Optional[str] = None, *,
+                    auto_llm: bool = True) -> Dict[str, Any]:
+    """抓取 + 聚合 + 落库，返回落库结果摘要（供 scheduler / API 打日志）。
+
+    ``auto_llm=False`` 用于定时任务链路：收盘轮会在日报落库后**串行**调用
+    ``scheduler.refresh_hotspot_llm``，并把它的结果和 hotspot 的 crawl_logs
+    绑在同一步里，好让云函数真正等到总结生成完。此时不再另起守护线程，
+    避免两条链路抢同一份 payload、重复烧 token。
+    """
     payload = build_daily_payload(db, market_date)
     real_date = payload["market_date"]
     # source 写实际用的资金源，事后排查「这批数字是哪个口径」时不用猜
@@ -1109,11 +1116,12 @@ def refresh_hotspot(db, market_date: Optional[str] = None) -> Dict[str, Any]:
     }
     logger.info("今日热点已生成 %s：%s", real_date, json.dumps(summary, ensure_ascii=False))
 
-    # 日报重新生成会覆盖整份 payload，旧解读随之失效 —— 静默补一份。
-    # 只在配置了 Key 时点火；异步 + 短超时 + 异常全吞，绝不拖累收盘轮收尾。
-    try:
-        from app.utils import llm_summary as llm_mod
-        llm_mod.schedule_auto_summary(real_date)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("热点：AI 解读自动补跑未启动 %s", exc)
+    # 手动刷新日报也会覆盖整份 payload、让旧解读失效 —— 异步静默补一份。
+    # 定时任务传 auto_llm=False，改由 scheduler 串行生成（见函数注释）。
+    if auto_llm:
+        try:
+            from app.utils import llm_summary as llm_mod
+            llm_mod.schedule_auto_summary(real_date)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("热点：AI 解读自动补跑未启动 %s", exc)
     return summary
