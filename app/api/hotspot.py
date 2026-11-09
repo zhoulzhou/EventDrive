@@ -9,12 +9,14 @@ import threading
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 
 from app import crud
 from app.database import SessionLocal
 from app.api.login import require_auth
 from app.utils import hotspot as hotspot_mod
 from app.utils import hotspot_trend
+from app.utils import llm_summary as llm_mod
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,12 @@ router = APIRouter()
 
 # 刷新是重活（7 次外部请求 + 若干库读），并发点两次没意义还可能触发东财限流
 _refresh_lock = threading.Lock()
+# 同一交易日重复点「生成解读」会重复烧 token，非阻塞挡住
+_llm_lock = threading.Lock()
+
+
+class _ApiKeyBody(BaseModel):
+    api_key: str
 
 
 @router.get("/hotspot/today")
@@ -125,3 +133,63 @@ def get_hotspot_trend(days: int = Query(60, ge=1, le=60,
 
     data = hotspot_trend.build_trend(reports)
     return {"status": "ok", "source": "daily_hotspots", **data}
+
+
+# ================================================================ AI 盘面解读
+# 结论按交易日存在 daily_hotspots.payload.llm_summary 里，页面打开只读快照。
+# 这里只负责「手动生成」与「填 Key」；收盘轮另有一条静默自动补的链路。
+
+@router.get("/hotspot/llm-config")
+def llm_config(auth: bool = Depends(require_auth)):
+    """配置状态（只返回掩码，绝不回传完整 Key）。"""
+    return llm_mod.config_view()
+
+
+@router.post("/hotspot/llm-config")
+def llm_set_config(body: _ApiKeyBody, auth: bool = Depends(require_auth)):
+    """页面填写 DeepSeek API Key，立即在当前进程生效。"""
+    try:
+        view = llm_mod.set_api_key(body.api_key)
+    except llm_mod.LlmError as exc:
+        return {"status": "error", "message": str(exc)}
+    return {"status": "ok", **view}
+
+
+@router.post("/hotspot/llm-summary")
+def make_llm_summary(date: Optional[str] = Query(None, description="交易日，空取最新一份"),
+                     force: bool = Query(False, description="已有总结时是否强制重算"),
+                     auth: bool = Depends(require_auth)):
+    """把「今日定调 + 今日主线」发给 DeepSeek Flash，生成并落库一份解读。
+
+    同步执行：关掉 thinking 后通常 3~10 秒，服务端超时 40 秒，留足反代 60s
+    的余量；页面直接拿结果，比「点火 + 轮询」简单可靠。
+    """
+    if not llm_mod.is_configured():
+        return {"status": "unconfigured",
+                "message": "尚未配置 DeepSeek API Key，请点「设置 Key」填写"}
+    if not _llm_lock.acquire(blocking=False):
+        return {"status": "running", "message": "正在生成解读，请稍候"}
+
+    db = SessionLocal()
+    try:
+        record = crud.get_daily_hotspot(db, date)
+        if not record:
+            return {"status": "empty", "message": "还没有热点日报，先点「重新生成」"}
+        payload = record["payload"]
+        if not force and payload.get("llm_summary"):
+            return {"status": "ok", "cached": True,
+                    "summary": payload["llm_summary"]}
+        try:
+            summary = llm_mod.generate(payload)
+        except llm_mod.LlmError as exc:
+            logger.warning("今日热点 AI 解读生成失败: %s", exc)
+            return {"status": "error", "message": str(exc)}
+        ok = crud.save_hotspot_llm_summary(db, record["market_date"], summary)
+        logger.info("今日热点 AI 解读已生成 %s（落库=%s）", record["market_date"], ok)
+        return {"status": "ok", "cached": False, "saved": ok, "summary": summary}
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _llm_lock.release()

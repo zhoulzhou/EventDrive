@@ -1108,4 +1108,12 @@ def refresh_hotspot(db, market_date: Optional[str] = None) -> Dict[str, Any]:
         "saved": ok,
     }
     logger.info("今日热点已生成 %s：%s", real_date, json.dumps(summary, ensure_ascii=False))
+
+    # 日报重新生成会覆盖整份 payload，旧解读随之失效 —— 静默补一份。
+    # 只在配置了 Key 时点火；异步 + 短超时 + 异常全吞，绝不拖累收盘轮收尾。
+    try:
+        from app.utils import llm_summary as llm_mod
+        llm_mod.schedule_auto_summary(real_date)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("热点：AI 解读自动补跑未启动 %s", exc)
     return summary

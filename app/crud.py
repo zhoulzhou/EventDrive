@@ -1898,6 +1898,39 @@ def save_daily_hotspot(db: Session, market_date: str, payload: dict,
     return True
 
 
+def save_hotspot_llm_summary(db: Session, market_date: str, summary: dict) -> bool:
+    """把某交易日的 AI 盘面解读写回日报 payload，返回是否落库成功。
+
+    **只更新 payload 一列**：``generated_at`` 是日报本身的生成时间，不能因为
+    补一段解读就把它改成现在，否则页头「生成于」会变成假的。云库走
+    upsert(merge-duplicates) 且只传 market_date + payload，未传列保持原值；
+    SQLite 直接改 ORM 行的 payload。
+
+    为什么不单独建一张表：解读与日报是严格 1:1、每天只写一次，跟着快照走
+    最省一次往返；日报重新生成会覆盖整份 payload，旧解读自然失效，正好。
+    """
+    record = get_daily_hotspot(db, market_date)
+    if not record or not isinstance(record.get("payload"), dict):
+        return False
+    payload = record["payload"]
+    payload["llm_summary"] = summary
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if _USE_CLOUD:
+        rows = _cdb.upsert(T_HOTSPOT, [{
+            "market_date": market_date,
+            "payload": text,
+        }], on_conflict="market_date", context="save_hotspot_llm_summary")
+        return bool(rows)
+    row = db.query(models.DailyHotspot).filter(
+        models.DailyHotspot.market_date == market_date).first()
+    if row is None:
+        return False
+    row.payload = text
+    row.updated_at = datetime.now()
+    db.commit()
+    return True
+
+
 def get_daily_hotspot(db: Session, market_date: Optional[str] = None) -> Optional[dict]:
     """取某交易日的日报；market_date 为空则取**最新一份**。
 

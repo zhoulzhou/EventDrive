@@ -4,16 +4,29 @@
    数据只有一次请求：GET /api/hotspot/today（整份日报在 payload 里）。
    区块顺序与后端 payload 字段一一对应：
      tone / verdict  →  A 今日定调
+     llm_summary     →  A2 AI 盘面解读（另有一个 llm-config 请求）
      themes          →  B 今日主线
      stocks/boards   →  C 热股三榜、D 资金地图
      timeline        →  E 今日大事
+
+   AI 解读按交易日缓存在 payload.llm_summary 里，页面只读快照；
+   只有「生成 / 重新生成」才调模型，配置状态单独走 /api/hotspot/llm-config。
    ========================================================================== */
 (function () {
     "use strict";
 
     var state = {
         payload: null,
-        busy: false
+        busy: false,
+        llm: {
+            config: null,      // GET /api/hotspot/llm-config 的结果（不含完整 Key）
+            ready: false,
+            busy: false,
+            error: "",
+            note: "",
+            showCfg: false,
+            keyDraft: ""
+        }
     };
 
     function $(id) { return document.getElementById(id); }
@@ -319,6 +332,209 @@
             + "</div></div>";
     }
 
+    // ------------------------------------------------------------ A2 AI 解读
+    function llmConfig() { return state.llm.config || {}; }
+
+    function renderLlmBody() {
+        var llm = state.llm;
+        var cfg = llmConfig();
+        if (llm.busy) {
+            return '<div class="th-llm-loading"><span class="th-llm-dot"></span>'
+                + "正在把今日定调与主线发给 DeepSeek Flash，约需 5~15 秒…</div>";
+        }
+        if (llm.error) {
+            return '<div class="th-llm-error">' + esc(llm.error) + "</div>";
+        }
+        var s = (state.payload || {}).llm_summary;
+        if (s && (s.headline || (s.points || []).length)) {
+            var html = "";
+            if (s.headline) html += '<div class="th-llm-headline">' + esc(s.headline) + "</div>";
+            var pts = (s.points || []).map(function (p) {
+                return "<li>" + esc(p) + "</li>";
+            }).join("");
+            if (pts) html += '<ol class="th-llm-points">' + pts + "</ol>";
+            if (s.watch) html += '<div class="th-llm-watch"><b>明日观察</b> ' + esc(s.watch) + "</div>";
+            html += '<div class="th-llm-foot">由 '
+                + esc(s.model || cfg.model || "DeepSeek Flash")
+                + " 基于本页「今日定调 + 今日主线」生成"
+                + (s.generated_at ? " · " + esc(s.generated_at) : "")
+                + (s.total_tokens ? " · " + esc(String(s.total_tokens)) + " tokens" : "")
+                + " · 仅为数据解读，不构成投资建议</div>";
+            return html;
+        }
+        if (!llm.ready) return '<div class="th-llm-empty">正在检查模型配置…</div>';
+        if (!cfg.configured) {
+            return '<div class="th-llm-empty"><b>还没有配置 DeepSeek API Key。</b>'
+                + "点右上角「设置 Key」填入 sk-… 后立即生效；"
+                + "也可以写进项目根目录 .env 的 DEEPSEEK_API_KEY 再重新发布。"
+                + "<br>配置好之后点「生成解读」，定调数字与今日主线会发给 deepseek-flash 出一份复盘。</div>";
+        }
+        return '<div class="th-llm-empty">这一天的日报还没有 AI 解读。'
+            + "点「生成解读」把六个定调数字与今日主线发给 DeepSeek Flash；"
+            + "生成后按交易日缓存，收盘轮产出新日报时自动更新。</div>";
+    }
+
+    function renderLlmCard() {
+        var box = $("thLlm");
+        if (!box) return;
+        var llm = state.llm;
+        var cfg = llmConfig();
+        var s = (state.payload || {}).llm_summary;
+        var meta;
+        if (s && s.generated_at) meta = "解读于 " + esc(s.generated_at);
+        else if (llm.ready && !cfg.configured) meta = "Key 未配置";
+        else meta = esc(llm.note || "尚无解读");
+
+        var cfgPanel = '<div class="th-llm-cfg" id="thLlmCfgBox" style="display:'
+            + (llm.showCfg ? "flex" : "none") + '">'
+            + '<input id="thLlmKey" type="password" autocomplete="off" spellcheck="false"'
+            + ' placeholder="粘贴 DeepSeek API Key（sk-…）" value="' + esc(llm.keyDraft) + '">'
+            + '<button class="th-llm-btn" id="thLlmSave"' + (llm.busy ? " disabled" : "") + ">保存并生效</button>"
+            + '<button class="th-llm-link" id="thLlmCancel">取消</button>'
+            + '<p class="th-llm-cfg-hint">Key 只保存在服务端，页面不会回显完整值'
+            + (cfg.key_hint ? "（当前 " + esc(cfg.key_hint) + "）" : "")
+            + "。云沙箱是临时文件系统，重启后可能需重填；长期生效请写入 .env。</p>"
+            + "</div>";
+
+        box.innerHTML = '<div class="th-llm-head">'
+            + '<div class="th-llm-title"><span class="th-llm-mark">✦</span> AI 盘面解读'
+            + '<span class="th-llm-badge">' + esc(cfg.model || "DeepSeek Flash") + "</span></div>"
+            + '<div class="th-llm-actions">'
+            + '<span class="th-llm-meta">' + meta + "</span>"
+            + '<button class="th-llm-btn" id="thLlmGen"'
+            + (llm.busy || !llm.ready || !state.payload ? " disabled" : "") + ">"
+            + (s ? "重新生成" : "生成解读") + "</button>"
+            + '<button class="th-llm-link" id="thLlmCfg">设置 Key</button>'
+            + "</div></div>"
+            + cfgPanel
+            + '<div class="th-llm-body">' + renderLlmBody() + "</div>";
+        bindLlm();
+    }
+
+    function bindLlm() {
+        var gen = $("thLlmGen");
+        if (gen) gen.addEventListener("click", function () { doLlmGenerate(true); });
+        var cfgBtn = $("thLlmCfg");
+        if (cfgBtn) cfgBtn.addEventListener("click", function () {
+            state.llm.showCfg = !state.llm.showCfg;
+            state.llm.error = "";
+            renderLlmCard();
+            if (state.llm.showCfg) { var f = $("thLlmKey"); if (f) f.focus(); }
+        });
+        var input = $("thLlmKey");
+        if (input) {
+            input.addEventListener("input", function () { state.llm.keyDraft = input.value; });
+            input.addEventListener("keydown", function (e) {
+                if (e.key === "Enter") saveLlmKey();
+            });
+        }
+        var save = $("thLlmSave");
+        if (save) save.addEventListener("click", saveLlmKey);
+        var cancel = $("thLlmCancel");
+        if (cancel) cancel.addEventListener("click", function () {
+            state.llm.showCfg = false;
+            renderLlmCard();
+        });
+    }
+
+    async function loadLlmConfig() {
+        try {
+            var resp = await fetchWithAuth("/api/hotspot/llm-config");
+            state.llm.config = await resp.json();
+        } catch (err) {
+            state.llm.config = { configured: false, model: "deepseek-flash" };
+            state.llm.error = "配置状态读取失败：" + (err && err.message ? err.message : "网络异常");
+        }
+        state.llm.ready = true;
+        renderLlmCard();
+    }
+
+    async function doLlmGenerate(force) {
+        if (state.llm.busy) return;
+        state.llm.busy = true;
+        state.llm.error = "";
+        state.llm.note = "";
+        renderLlmCard();
+        try {
+            var resp = await fetchWithAuth(
+                "/api/hotspot/llm-summary?force=" + (force ? "true" : "false"),
+                { method: "POST" });
+            var data = await resp.json();
+            if (data.status === "ok") {
+                if (state.payload) state.payload.llm_summary = data.summary;
+                state.llm.note = data.cached ? "已显示缓存解读" : "解读已生成并缓存";
+            } else if (data.status === "unconfigured") {
+                state.llm.config = Object.assign({}, llmConfig(), { configured: false });
+                state.llm.showCfg = true;
+                state.llm.error = data.message || "尚未配置 API Key";
+            } else {
+                state.llm.error = data.message || "生成失败";
+            }
+        } catch (err) {
+            state.llm.error = err && err.message ? err.message : "生成失败";
+        } finally {
+            state.llm.busy = false;
+            renderLlmCard();
+        }
+    }
+
+    async function saveLlmKey() {
+        if (state.llm.busy) return;
+        var key = (state.llm.keyDraft || "").trim();
+        if (!key) {
+            state.llm.error = "请先粘贴 API Key（sk-…）";
+            renderLlmCard();
+            return;
+        }
+        state.llm.busy = true;
+        state.llm.error = "";
+        renderLlmCard();
+        var saved = false;
+        try {
+            var resp = await fetchWithAuth("/api/hotspot/llm-config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ api_key: key })
+            });
+            var data = await resp.json();
+            if (data.status === "ok") {
+                saved = true;
+                state.llm.config = data;
+                state.llm.showCfg = false;
+                state.llm.keyDraft = "";
+                state.llm.note = data.persisted
+                    ? "Key 已写入 .env，重启后仍有效"
+                    : "Key 已在当前进程生效（沙箱临时存储，重启后需重填）";
+            } else {
+                state.llm.error = data.message || "保存失败";
+            }
+        } catch (err) {
+            state.llm.error = err && err.message ? err.message : "保存失败";
+        } finally {
+            state.llm.busy = false;
+            renderLlmCard();
+        }
+        // 首次填完 Key 顺手出一份解读，省得再点一次
+        if (saved && !(state.payload || {}).llm_summary) await doLlmGenerate(false);
+    }
+
+    // 手动重跑日报后，后台会静默补一份解读；轻量轮询把结果贴回卡片（不整页重绘）
+    async function pollLlmSummary(tries) {
+        for (var i = 0; i < tries; i++) {
+            await new Promise(function (r) { setTimeout(r, 5000); });
+            try {
+                var resp = await fetchWithAuth("/api/hotspot/today");
+                var data = await resp.json();
+                if (data.status === "ok" && data.payload && data.payload.llm_summary) {
+                    if (state.payload) state.payload.llm_summary = data.payload.llm_summary;
+                    state.llm.note = "已自动补上 AI 解读";
+                    renderLlmCard();
+                    return;
+                }
+            } catch (e) { /* 轮询失败静默，下一轮再试 */ }
+        }
+    }
+
     // ---------------------------------------------------------------- 组装
     function render(payload) {
         var html = "";
@@ -330,6 +546,7 @@
         }
 
         html += '<div class="th-section">' + renderTone(payload) + "</div>";
+        html += '<div class="th-section"><div class="th-card th-llm" id="thLlm"></div></div>';
         html += '<div class="th-section"><div class="th-section-title">今日主线'
             + "<em>涨停股所属行业聚簇 × 当日新闻命中 · 家数 ≥3 取前 3</em>"
             + '<a class="th-trend-link" href="/hotspot-trend">看热点趋势 →</a></div>'
@@ -345,6 +562,7 @@
 
         $("thRoot").innerHTML = html;
         bindTabs();
+        renderLlmCard();
     }
 
     function bindTabs() {
@@ -410,8 +628,10 @@
                 var s = data.summary || {};
                 var themeNames = (s.themes || []).slice(0, THEME_LIMIT);
                 notice("ok", "已生成 " + (s.market_date || "") + " 的日报：涨停 " + (s.limit_up || 0)
-                    + " 家，主线 " + (themeNames.join("、") || "无"));
+                    + " 家，主线 " + (themeNames.join("、") || "无")
+                    + "；AI 解读稍后自动补上");
                 await load();
+                pollLlmSummary(6);
             } else if (data.status === "running") {
                 notice("error", data.message || "正在生成中，请稍候");
             } else {
@@ -433,5 +653,6 @@
         var btn = $("thRefresh");
         if (btn) btn.addEventListener("click", doRefresh);
         load();
+        loadLlmConfig();
     });
 })();

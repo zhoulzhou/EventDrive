@@ -500,3 +500,228 @@
     text-align: center;
     color: #8a8f99;
 }
+
+/* ------------------------------------------------------------ A2 AI 盘面解读
+   放在「今日定调」与「今日主线」之间：先给数字，再给解读，再给主线证据。
+   用一抹淡紫和页面其它卡片区分开（与 .th-verdict 的 #667eea 同源），
+   但不做成深色块 —— 这一页整体是浅色阅读面，突然压黑会打断节奏。 */
+.th-llm {
+    border-color: #ded9fa;
+    background: linear-gradient(180deg, #faf9ff 0%, #ffffff 46%);
+    padding: 15px 18px 14px;
+}
+
+.th-llm-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.th-llm-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #2c3140;
+}
+
+.th-llm-mark {
+    color: #6d5ce7;
+    font-size: 1.08rem;
+    line-height: 1;
+}
+
+.th-llm-badge {
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: #6d5ce7;
+    background: #eeebff;
+    border: 1px solid #ddd7ff;
+    border-radius: 999px;
+    padding: 2px 9px;
+    white-space: nowrap;
+}
+
+.th-llm-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.th-llm-meta {
+    font-size: 0.75rem;
+    color: #9aa0ab;
+    white-space: nowrap;
+}
+
+.th-llm-btn {
+    background: #6d5ce7;
+    color: #fff;
+    border: 1px solid #6d5ce7;
+    border-radius: 7px;
+    padding: 5px 12px;
+    font-size: 0.79rem;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.th-llm-btn:hover:not(:disabled) { background: #5c4bd4; }
+.th-llm-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.th-llm-link {
+    background: none;
+    border: none;
+    padding: 4px 2px;
+    color: #6d5ce7;
+    font-size: 0.79rem;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.th-llm-link:hover { text-decoration: underline; }
+
+.th-llm-body { margin-top: 12px; }
+
+.th-llm-headline {
+    border-left: 3px solid #6d5ce7;
+    padding: 2px 0 2px 12px;
+    font-size: 1.02rem;
+    font-weight: 600;
+    line-height: 1.7;
+    color: #23272f;
+}
+
+.th-llm-points {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 8px 22px;
+}
+
+.th-llm-points li {
+    position: relative;
+    padding-left: 17px;
+    font-size: 0.85rem;
+    line-height: 1.75;
+    color: #414755;
+}
+
+.th-llm-points li::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 0.7em;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #9a8cf2;
+}
+
+.th-llm-watch {
+    margin-top: 12px;
+    background: #fff9ec;
+    border: 1px solid #f3e3bb;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.83rem;
+    line-height: 1.65;
+    color: #7a5b16;
+}
+
+.th-llm-watch b { font-weight: 600; margin-right: 6px; }
+
+.th-llm-foot {
+    margin-top: 10px;
+    font-size: 0.72rem;
+    color: #a4a9b3;
+    line-height: 1.6;
+}
+
+.th-llm-empty {
+    background: var(--th-soft);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 0.85rem;
+    line-height: 1.75;
+    color: #5b6272;
+}
+
+.th-llm-empty b { color: #3a3f4b; }
+
+.th-llm-error {
+    background: #fdeaea;
+    border: 1px solid #f3c1c1;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.84rem;
+    color: #9b2c2c;
+    line-height: 1.65;
+}
+
+.th-llm-loading {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 0.85rem;
+    color: #6b6489;
+    padding: 8px 2px;
+}
+
+.th-llm-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #6d5ce7;
+    animation: th-llm-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes th-llm-pulse {
+    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.15); }
+}
+
+.th-llm-cfg {
+    margin-top: 12px;
+    padding: 12px;
+    background: #fff;
+    border: 1px solid var(--th-line);
+    border-radius: 8px;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.th-llm-cfg input {
+    flex: 1 1 260px;
+    min-width: 0;
+    padding: 7px 10px;
+    border: 1px solid #d9dce5;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.84rem;
+    color: #2c3140;
+}
+
+.th-llm-cfg input:focus { outline: none; border-color: #6d5ce7; }
+
+.th-llm-cfg-hint {
+    flex: 1 1 100%;
+    margin: 2px 0 0;
+    font-size: 0.74rem;
+    line-height: 1.6;
+    color: #9aa0ab;
+}
+
+@media (max-width: 720px) {
+    .th-llm-head { align-items: flex-start; }
+    .th-llm-actions { width: 100%; }
+    .th-llm-points { grid-template-columns: minmax(0, 1fr); }
+}

@@ -103,6 +103,17 @@ class Settings:
     # 市场指标自动抓取缓存有效期（小时）。超过则下次打开页面重新抓取
     MACRO_CACHE_TTL_HOURS: float = float(os.getenv("MACRO_CACHE_TTL_HOURS", "12"))
 
+    # ---- 今日热点 AI 解读（DeepSeek Flash）----
+    # Key 刻意留空：由用户在 .env 或 /today 页面「设置 Key」填写，不进源码。
+    # 注意 .env 会被发布工具打包进云沙箱（.gitignore 拦不住），但它本身不入库。
+    # get_api_key() 统一读 os.getenv —— 页面填写会同步写 os.environ，立即生效。
+    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
+    # 反代硬超时 60s，这里留 15s 余量；收盘轮自动调用用更短的 25s
+    DEEPSEEK_TIMEOUT: int = _get_int("DEEPSEEK_TIMEOUT", 40)
+    DEEPSEEK_MAX_TOKENS: int = _get_int("DEEPSEEK_MAX_TOKENS", 900)
+
     def __init__(self):
         self.DATA_DIR.mkdir(exist_ok=True)
         self.LOGS_DIR.mkdir(exist_ok=True)
