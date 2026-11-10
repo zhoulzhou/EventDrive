@@ -13,7 +13,7 @@
  *
  * ±阈值摆动（2026-11-10）：上证 ±10% / 科创50 ±20%。
  *   · 卡片：当前值相对整段区间高/低点的偏离达阈值 → 红底（danger），半程 → 琥珀（warn）。
- *   · 曲线：每次跨阈值的「基准高点/低点（▲▼）+ 触发点（●）+ 水平虚线」，
+ *   · 曲线：每次跨阈值的「基准高点/低点（▲▼）+ 触发点（●）」，不画基准→触发的连线；
  *     算法同「全球行情」纳斯达克100 的运行峰值/触发重置，只是双向、阈值按指数不同。
  *   数据由后端 /api/a-share 的 item.swing 提供，前端只负责画，不重算口径。
  *
@@ -407,16 +407,7 @@ function asTrendOption(items) {
                 }
             };
         });
-        // 水平虚线：从基准点画到触发日，标出「这一档从哪里跌/涨到哪里」
-        series[i].markLine = {
-            silent: true, symbol: "none",
-            lineStyle: { color: "#cbd5e1", width: 1, type: "dashed" },
-            label: { show: false },
-            data: evs.map(function (e) {
-                return [{ coord: [e.ref_date, e.ref_value] },
-                        { coord: [e.trigger_date, e.ref_value] }];
-            })
-        };
+        // 只画点、不画连线：基准点到触发日之间留白，避免多档事件叠成一堆横线
         swingSeries.push({
             name: s.it.name + "·基准点", type: "scatter",
             xAxisIndex: i, yAxisIndex: i, symbolSize: 9,
