@@ -1,8 +1,16 @@
-"""A 股宽基指数「±阈值摆动」识别（股市行情 /a-share）。
+"""指数「±阈值摆动」识别（/a-share 与 /market 共用同一份判读逻辑）。
 
 用户口径（2026-11-10）：上证指数 ±10%、科创50 ±20%，当前值相对运行高低点
 回撤或高出达到阈值就显著标识（卡片红底），曲线上把每次跨阈值也标出来，
 参照「全球行情」纳斯达克100 的「运行峰值 + 触发后重置」算法。
+同日追加：全球行情的纳斯达克100 卡片也改用这里的 ``current``（整段区间
+高低点、双向、**不重置**），避免峰值在触发后被重置、明明还在深度回撤却
+显示绿色。纳指100 的曲线事件仍走 market_strategy.compute_drawdown_events，
+不受本模块影响。
+
+两个页面都调用 ``compute_swing()``，靠 ``pct`` / ``warn_ratio`` / ``ref_labels``
+区分阈值与文案：/a-share 用 a_share_swing 配置 + 默认「年内最高/最低」；
+/market 用 NASDAQ100 策略的 red_pct、green_pct/red_pct 比例 + 「区间最高/最低」。
 
 这里刻意分成两件事，口径不同、互不混淆：
 
@@ -26,7 +34,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -110,12 +118,18 @@ def _empty(pct: float) -> Dict[str, Any]:
     }
 
 
-def compute_swing(points: List[Dict[str, Any]], pct: float) -> Dict[str, Any]:
-    """按日线序列计算阈值摆动。
+def compute_swing(points: List[Dict[str, Any]], pct: float,
+                  warn_ratio: Optional[float] = None,
+                  ref_labels: Optional[Tuple[str, str]] = None) -> Dict[str, Any]:
+    """按日线序列计算阈值摆动（两个行情页共用）。
 
     Args:
         points: 升序的 ``[{"date": "YYYY-MM-DD", "value": float}, ...]``。
         pct: 阈值百分数（10 表示 ±10%）。
+        warn_ratio: 偏离达到阈值的这个比例进入 warn；默认 ``WARN_RATIO``（0.5）。
+            /market 传 ``green_pct / red_pct``，让分级仍由策略配置驱动。
+        ref_labels: ``(高点标签, 低点标签)``，默认「年内最高 / 年内最低」；
+            /market 传「区间最高 / 区间最低」，因为那边口径是整段历史区间。
 
     Returns:
         ``{"threshold_pct", "events", "current", "high", "low"}``。
@@ -125,6 +139,8 @@ def compute_swing(points: List[Dict[str, Any]], pct: float) -> Dict[str, Any]:
     result = _empty(float(pct))
     if pct <= 0:
         return result
+    wr = WARN_RATIO if warn_ratio is None else max(0.0, float(warn_ratio))
+    hi_label, lo_label = ref_labels or ("年内最高", "年内最低")
 
     clean: List[tuple] = []
     for p in points or []:
@@ -191,15 +207,15 @@ def compute_swing(points: List[Dict[str, Any]], pct: float) -> Dict[str, Any]:
 
     if dd_progress >= up_progress:
         direction = "drawdown" if dd_progress > 0 else None
-        ref_type = "年内最高" if dd_progress > 0 else None
+        ref_type = hi_label if dd_progress > 0 else None
         ref_date, ref_value = (hi_date, hi_value) if dd_progress > 0 else (None, None)
         deviation, progress = dd_pct, dd_progress
     else:
-        direction, ref_type = "rally", "年内最低"
+        direction, ref_type = "rally", lo_label
         ref_date, ref_value = lo_date, lo_value
         deviation, progress = up_pct, up_progress
 
-    level = "danger" if progress >= 1.0 - EPS else ("warn" if progress >= WARN_RATIO else "ok")
+    level = "danger" if progress >= 1.0 - EPS else ("warn" if progress >= wr else "ok")
     result["current"] = {
         "level": level,
         "direction": direction,

@@ -7,6 +7,7 @@ from app.database import get_db, SessionLocal
 from app import crud
 from app.crawlers.market_data import refresh_market_data
 from app.market_strategy import compute_drawdown, compute_drawdown_events, compute_level, get_strategy
+from app.utils.index_swing import compute_swing
 from app.api.login import require_auth
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,14 @@ def _to_item(latest: dict) -> dict:
 
 @router.get("/market")
 async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    """返回纳斯达克指数、VIX、美债2年期/10年期收益率的当前值（从数据库读取）。"""
+    """返回纳斯达克指数、VIX、美债2年期/10年期收益率的当前值（从数据库读取）。
+
+    纳指100 卡片的着色口径（2026-11-10）：当前值相对**整段区间最高/最低点**
+    的双向偏离，达 red_pct 红底、达到 green_pct 琥珀，且**不随事件重置**——
+    与 /a-share 共用 index_swing.compute_swing()。旧的运行峰值
+    （market_strategy_state，回撤触发后会重置）仍作为 peak_* 字段返回供排障，
+    但不再决定卡片颜色；曲线上的每档回撤事件仍走 /market/history。
+    """
     try:
         latest = crud.get_latest_market_prices(db)
         # 首次部署尚未有定时数据时，兜底实时抓取一次并落库
@@ -65,6 +73,38 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         strategy_states = crud.get_market_strategy_states(
             db, [it["symbol"] for it in items if it["symbol"] != "VIXCLS"]
         )
+
+        # 纳指100 卡片：整段区间高低点、双向、不重置。
+        # 旧口径读的是 advance() 维护的运行峰值，回撤触发当天就被重置成低点，
+        # 于是「明明还在 -10% 回撤里、卡片却是绿色」。这里改为与 /a-share
+        # 同一份 compute_swing()，阈值仍由 NASDAQ100 策略的 red_pct / green_pct 驱动，
+        # 只是标签换成「区间最高/最低」（那边展示的是今年以来）。
+        # 曲线事件不动：/market/history 仍用 compute_drawdown_events 每档留痕。
+        nasdaq_swing = None
+        nd_strategy = get_strategy("NASDAQ100")
+        if nd_strategy and nd_strategy.get("red_pct") is not None:
+            red_pct = float(nd_strategy["red_pct"])
+            green_pct = float(nd_strategy.get("green_pct", red_pct / 2))
+            hist = crud.get_market_history(db, "NASDAQ100")
+            pts = []
+            for r in hist:
+                d = str(r.date)[:10] if r.date is not None else ""
+                # 库里存在一条 date 为空的残留行，不能参与区间高低点计算
+                if r.value is not None and len(d) == 10 and d[4:5] == "-":
+                    pts.append({"date": d, "value": float(r.value)})
+            if pts and red_pct > 0:
+                full = compute_swing(
+                    pts, red_pct,
+                    warn_ratio=green_pct / red_pct,
+                    ref_labels=("区间最高", "区间最低"),
+                )
+                nasdaq_swing = {
+                    "threshold_pct": full["threshold_pct"],
+                    "current": full["current"],
+                    "high": full["high"],
+                    "low": full["low"],
+                }
+
         for it in items:
             if it["value"] is None:
                 it["drawdown_level"] = "normal"
@@ -77,6 +117,9 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
                 state = strategy_states.get(it["symbol"])
                 info = compute_drawdown(it["symbol"], it["value"], state, current_date=it["date"])
             it.update(info)
+            if it["symbol"] == "NASDAQ100" and nasdaq_swing:
+                it["swing"] = nasdaq_swing
+                it["drawdown_level"] = nasdaq_swing["current"]["level"]
 
         return {
             "status": "ok",
