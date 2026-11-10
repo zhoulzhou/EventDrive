@@ -63,6 +63,33 @@
 }
 .as-metrics b { color: #334155; font-variant-numeric: tabular-nums; font-weight: 600; }
 
+/* ---------------- ±阈值摆动预警 ---------------- */
+/* 红色在这里是「警示」而非涨跌方向：回撤与高出达标都标红底。
+   卡片左边框由 JS 内联着色，danger 时统一压成红。 */
+.as-card.as-alert-danger {
+    background: #fff1f2;
+    border: 2px solid #dc2626;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.10), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.as-card.as-alert-danger .as-value { color: #b91c1c; }
+.as-card.as-alert-danger .as-metrics { border-top-color: #fecaca; }
+.as-card.as-alert-warn { background: #fffdf6; }
+.as-swing {
+    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+    margin-top: 0.65rem; padding: 0.42rem 0.6rem;
+    border-radius: 8px; font-size: 0.8rem; line-height: 1.5;
+}
+.as-swing.ok { background: #f1f5f9; color: #64748b; }
+.as-swing.warn { background: #fffbeb; color: #92400e; }
+.as-swing.danger { background: #fee2e2; color: #b91c1c; font-weight: 600; }
+.as-swing-tag {
+    flex: none; padding: 0.06rem 0.45rem; border-radius: 4px;
+    font-size: 0.72rem; font-weight: 700;
+}
+.as-swing.ok .as-swing-tag { background: rgba(100, 116, 139, 0.14); }
+.as-swing.warn .as-swing-tag { background: rgba(217, 119, 6, 0.16); }
+.as-swing.danger .as-swing-tag { background: rgba(220, 38, 38, 0.16); }
+
 /* ---------------- 图表面板 ---------------- */
 .as-panel {
     background: #fff;

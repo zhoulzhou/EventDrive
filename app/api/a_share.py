@@ -18,6 +18,7 @@ from app.api.login import require_auth
 from app.database import get_db
 from app.utils.etf_flow import BROAD_ETF_POOL, NAME as FLOW_NAME, SYMBOL as FLOW_SYMBOL, UNIT as FLOW_UNIT
 from app.utils.index_daily import INDEX_SERIES, SYMBOLS, UNIT, ytd_start
+from app.utils.index_swing import compute_swing, threshold_for
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,9 @@ def get_a_share(
 ):
     """返回上证指数与科创50 的最新点位、涨跌与今年以来的曲线点（按日期升序）。
 
+    每个指数另附 ``swing``：当前值相对运行高低点的 ±阈值分级（上证 10% /
+    科创50 20%，用于卡片红底）与历史每次跨阈值的事件（用于曲线标记）。
+
     一次批量读三个 symbol（两个指数 + 宽基 ETF 净流入，云库下省往返），
     缺数据时返回 points=[]，由页面提示「尚未回填」而不是报错。
     """
@@ -138,6 +142,12 @@ def get_a_share(
         rows_map = crud.get_market_history_multi(db, symbols, since=start)
         items = [_build_item(meta, rows_map.get(meta["symbol"]) or [])
                  for meta in INDEX_SERIES]
+        # 阈值摆动（上证 ±10% / 科创50 ±20%）：当前值相对运行高低点的偏离
+        # → 卡片红底分级；历史每次跨阈值的事件 → 曲线标记。阈值从配置读，
+        # 未启用或无数据时不挂字段，前端按无数据处理。
+        for it in items:
+            pct = threshold_for(it["symbol"])
+            it["swing"] = compute_swing(it["points"], pct) if pct and it["points"] else None
         net_flow = _build_net_flow(rows_map.get(FLOW_SYMBOL) or [])
         has_data = any(it["points"] for it in items)
         return {

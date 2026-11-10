@@ -9,5 +9,9 @@
   "VIXCLS": {
     "enabled": true,
     "thresholds": [20, 30]
+  },
+  "a_share_swing": {
+    "SH000001": { "pct": 10, "enabled": true },
+    "SH000688": { "pct": 20, "enabled": true }
   }
 }

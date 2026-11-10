@@ -11,6 +11,12 @@
  * 相对强弱不另画归一化曲线（曾有过「年初 = 100」一图，2026-11-02 按用户要求撤掉），
  * 改由卡片里的「年内涨跌幅」承担 —— 两者同为今年以来的累计涨跌，口径已可比。
  *
+ * ±阈值摆动（2026-11-10）：上证 ±10% / 科创50 ±20%。
+ *   · 卡片：当前值相对整段区间高/低点的偏离达阈值 → 红底（danger），半程 → 琥珀（warn）。
+ *   · 曲线：每次跨阈值的「基准高点/低点（▲▼）+ 触发点（●）+ 水平虚线」，
+ *     算法同「全球行情」纳斯达克100 的运行峰值/触发重置，只是双向、阈值按指数不同。
+ *   数据由后端 /api/a-share 的 item.swing 提供，前端只负责画，不重算口径。
+ *
  * 区间按钮也已删除（同日用户要求）：默认就是**全部交易日**，看局部靠 dataZoom ——
  * 底部拖动条 + 滚轮缩放（做法同 /index-alarm）。两个 grid 的 xAxisIndex 一起挂，
  * 缩放时上下两栏始终对齐同一天；拖动条本身只有一条，落在容器最底部。
@@ -80,6 +86,35 @@ function asDates(list) {
 }
 
 /* ---------------- 卡片 ---------------- */
+/* ±阈值摆动说明行：红底由卡片本身承担，这里给口径、参照点与离阈值还差多少 */
+function asSwingHtml(it) {
+    const sw = it.swing;
+    if (!sw || !sw.current) return "";
+    const c = sw.current;
+    const pct = sw.threshold_pct;
+    if (!c.direction) {
+        return '<div class="as-swing ok"><span class="as-swing-tag">阈值监测</span>'
+            + "<span>区间内点位无偏离，±" + pct + "% 阈值未接近</span></div>";
+    }
+    const sign = c.direction === "rally" ? "+" : "-";
+    const ref = c.ref_date && c.ref_value !== null
+        ? c.ref_type + " " + asNum(c.ref_value) + "（" + String(c.ref_date).slice(5) + "）"
+        : "—";
+    let tag, txt;
+    if (c.level === "danger") {
+        tag = "阈值触发";
+        txt = "当前较" + ref + (c.direction === "rally" ? " 高出 " : " 回撤 ")
+            + asSigned(c.deviation_percent) + "%，越过 " + sign + pct + "% 阈值 "
+            + asNum(Math.max(0, Math.abs(c.deviation_percent) - pct)) + " 个百分点";
+    } else {
+        tag = c.level === "warn" ? "接近阈值" : "阈值监测";
+        txt = "当前较" + ref + " " + asSigned(c.deviation_percent) + "%，距 "
+            + sign + pct + "% 阈值还有 " + asNum(c.remaining_percent) + " 个百分点";
+    }
+    return '<div class="as-swing ' + c.level + '"><span class="as-swing-tag">' + tag
+        + "</span><span>" + escapeHtml(txt) + "</span></div>";
+}
+
 function asCardHtml(it) {
     const meta = AS_META[it.symbol] || { color: AS.sub };
     const head = '<div class="as-card-head">'
@@ -107,11 +142,18 @@ function asCardHtml(it) {
         .concat(it.low ? ["年内最低 <b>" + asNum(it.low.value) + "</b>（" + it.low.date + "）"] : [])
         .concat([it.points.length + " 个交易日"]);
 
-    return '<div class="as-card ' + tone + '" style="border-left-color:' + meta.color + '">'
+    const cur = (it.swing && it.swing.current) || null;
+    const level = cur ? cur.level : "none";
+    const alertCls = level === "danger" ? " as-alert-danger"
+        : (level === "warn" ? " as-alert-warn" : "");
+    const borderColor = level === "danger" ? AS.up : meta.color;
+
+    return '<div class="as-card ' + tone + alertCls + '" style="border-left-color:' + borderColor + '">'
         + head
         + '<div class="as-value">' + asNum(it.value) + '<span class="as-unit">' + escapeHtml(it.unit || "") + "</span></div>"
         + '<div class="as-change ' + tone + '">' + changeText + "</div>"
         + '<div class="as-metrics">' + metrics.map(function (m) { return "<span>" + m + "</span>"; }).join("") + "</div>"
+        + asSwingHtml(it)
         + "</div>";
 }
 
@@ -333,6 +375,80 @@ function asTrendOption(items) {
         };
     });
 
+    // ---- ±阈值摆动标记（算法同纳指100，双向：▲▼ 基准高低点 / ● 跨阈值触发点） ----
+    // 新增的 scatter 一律 silent + tooltip:false：它们混进 axis tooltip 的
+    // params 会把「上证 / 科创50」的读数串台；formatter 另外按 seriesName 兜底。
+    const swingSeries = [];
+    slices.forEach(function (s, i) {
+        const sw = s.it.swing;
+        if (!sw || !sw.events || !sw.events.length) return;
+        const evs = sw.events;
+        const refData = evs.map(function (e) {
+            return {
+                value: [e.ref_date, e.ref_value],
+                symbol: "triangle",
+                symbolRotate: e.type === "drawdown" ? 0 : 180,
+                itemStyle: { color: "#94a3b8" },
+                label: {
+                    show: true, position: e.type === "drawdown" ? "top" : "bottom",
+                    formatter: String(e.ref_date).slice(5),
+                    color: "#94a3b8", fontSize: 9
+                }
+            };
+        });
+        const trigData = evs.map(function (e) {
+            return {
+                value: [e.trigger_date, e.trigger_value],
+                itemStyle: { color: AS.up, borderColor: "#fff", borderWidth: 1 },
+                label: {
+                    show: true, position: e.type === "drawdown" ? "bottom" : "top",
+                    formatter: asSigned(e.change_percent) + "%",
+                    color: "#b91c1c", fontSize: 9, fontWeight: 600
+                }
+            };
+        });
+        // 水平虚线：从基准点画到触发日，标出「这一档从哪里跌/涨到哪里」
+        series[i].markLine = {
+            silent: true, symbol: "none",
+            lineStyle: { color: "#cbd5e1", width: 1, type: "dashed" },
+            label: { show: false },
+            data: evs.map(function (e) {
+                return [{ coord: [e.ref_date, e.ref_value] },
+                        { coord: [e.trigger_date, e.ref_value] }];
+            })
+        };
+        swingSeries.push({
+            name: s.it.name + "·基准点", type: "scatter",
+            xAxisIndex: i, yAxisIndex: i, symbolSize: 9,
+            data: refData, silent: true, tooltip: { show: false }, z: 6
+        });
+        swingSeries.push({
+            name: s.it.name + "·阈值触发", type: "scatter",
+            xAxisIndex: i, yAxisIndex: i, symbol: "circle", symbolSize: 8,
+            data: trigData, silent: true, tooltip: { show: false }, z: 7
+        });
+        // 当前值本身已越过阈值：最新点压一个红环。若最新日恰好也是触发日，
+        // 上面那个红圆已经标过了，不重复叠。
+        const cur = sw.current || {};
+        const last = (s.it.points || []).slice(-1)[0];
+        if (cur.level === "danger" && last && !cur.triggered) {
+            swingSeries.push({
+                name: s.it.name + "·当前达标", type: "scatter",
+                xAxisIndex: i, yAxisIndex: i, symbol: "circle", symbolSize: 13,
+                data: [{
+                    value: [last.date, last.value],
+                    itemStyle: { color: "rgba(220,38,38,0.16)", borderColor: AS.up, borderWidth: 2 },
+                    label: {
+                        show: true, position: "top",
+                        formatter: asSigned(cur.deviation_percent) + "%",
+                        color: "#b91c1c", fontSize: 10, fontWeight: 700
+                    }
+                }],
+                silent: true, tooltip: { show: false }, z: 8
+            });
+        }
+    });
+
     // ⚠ 只能用**一个** tooltip，不能按 grid 配成数组：tooltip 没有 gridIndex 这个匹配项，
     // 数组写法在鼠标落进第二栏时仍会命中第一个（于是科创50 的悬停显示成了上证的读数）。
     // 多 grid 单 tooltip 时 ECharts 只会带上指针所在那一栏的系列，formatter 再用
@@ -346,7 +462,13 @@ function asTrendOption(items) {
         formatter: function (params) {
             if (!params || !params.length) return "";
             const p = params[0];
-            const s = slices[p.seriesIndex] || slices[0];
+            // 摆动标记的 scatter 都设了 tooltip:false；万一某个 ECharts 版本仍把它们
+            // 塞进 params[0]，按 seriesName 回溯主曲线，避免 seriesIndex 越界串台。
+            let s = null;
+            for (let k = 0; k < slices.length; k++) {
+                if (slices[k].it.name === p.seriesName) { s = slices[k]; break; }
+            }
+            if (!s) s = slices[p.seriesIndex] || slices[0];
             const m = valMap[s.it.symbol] || {};
             const d = p.axisValue;
             const v = m[d];
@@ -402,7 +524,7 @@ function asTrendOption(items) {
         tooltip: tooltip,
         xAxis: xAxes,
         yAxis: yAxes,
-        series: series
+        series: series.concat(swingSeries)
     };
 }
 
