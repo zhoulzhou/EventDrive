@@ -14,9 +14,10 @@
      圆点大小 = 涨停家数；圆点颜色与纵轴标签颜色 = 所在行位置（顶部红 → 底部蓝）
      当日主线排名仍在 tooltip 里；最新交易日描白边
 
-   与今日热点页的口径对齐：底部「最新交易日主线」只列前 3 条（LATEST_LIMIT）。
-   点阵图、纵轴行业与「持续热点」排行都不动 —— 它们读的是全部历史主线，
-   截断只发生在这一栏列表的渲染层，接口返回的 latest 仍是完整名单。
+   与今日热点页的口径对齐：**后端 build_trend 已把每个交易日的主线统一截成
+   前 3 条**（THEME_LIMIT），所以点阵、纵轴行业、持续热点排行、统计条与底部
+   「最新交易日主线」全部同源，最新一列正好是 /today 展示的那 3 个行业。
+   前端 LATEST_LIMIT 保留为渲染层对齐用的兜底，不要再调成 4。
    ========================================================================== */
 (function () {
     "use strict";
@@ -33,7 +34,8 @@
     var FIXED_DAYS = 60;
     var FIXED_MODE = "group";
     var MODE_LABEL = "主线方向";
-    // 与 /today 的 THEME_LIMIT 保持一致：底部「最新交易日主线」只展示前三
+    // 与 /today 的 THEME_LIMIT、后端 hotspot_trend.THEME_LIMIT 三处一致。
+    // 后端已统一截断，这里只是渲染层兜底；改动必须三处同步。
     var LATEST_LIMIT = 3;
 
     var state = {
@@ -127,7 +129,7 @@
         var tip = $("htLatestTip");
         if (tip) {
             tip.textContent = (data.latest_date ? "数据截至 " + data.latest_date : "—")
-                + " · 主线方向 · 仅展示前 " + LATEST_LIMIT + " 条";
+                + " · 主线方向 · 每日前 " + LATEST_LIMIT + " 条 · 与今日热点一致";
         }
         var rows = (data.latest || []).slice(0, LATEST_LIMIT);
         if (!rows.length) {

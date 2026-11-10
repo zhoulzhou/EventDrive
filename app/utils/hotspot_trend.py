@@ -14,12 +14,21 @@ ECharts 用的「行业 × 交易日」点阵。不碰数据库 —— 造几份
 
 与今日热点页的关系：**只读同一份 daily_hotspots 快照**，不重新抓取、不新建表，
 所以历史从该表开始有数据的那天算起，不会回填更早的交易日。
+
+⚠ 口径与 /today 的「今日主线」严格对齐：日报里最多有 4 条达标方向，但今日热点页
+只展示前 3 条（today.js 的 THEME_LIMIT）。本页**每个交易日也只取前 3 条**，
+点阵、纵轴行业、最新交易日主线、持续热点排行、统计条全部同源 —— 否则图上
+最新一列会多出一个 /today 根本看不到的行业。截断发生在整形层，不动日报快照，
+其它调用方拿到的仍是完整 payload。
 """
 
 from typing import Any, Dict, List
 
-# 一个交易日的日报最多返回 4 条主线（见 utils/hotspot.py 的 _build_themes），
-# 这里只保留每条主线里前 3 个细分行业（crud 已裁过），避免细分视角炸成几十行。
+# 每日主线展示上限，必须与 static/js/today.js 的 THEME_LIMIT 保持一致。
+# 后端日报最多产出 4 条（utils/hotspot.py 的 _build_themes），第 4 条不在两页展示。
+THEME_LIMIT = 3
+
+# 每条主线里前 3 个细分行业（crud 已裁过），避免细分视角炸成几十行。
 _TOP_RANKING = 8
 
 # 关注方向：用户指定固定在纵轴顶部，元组顺序即组间顺序。
@@ -132,7 +141,7 @@ def build_trend(reports: List[Dict[str, Any]]) -> Dict[str, Any]:
         if date not in date_index:
             continue
         idx = date_index[date]
-        themes = (report or {}).get("themes") or []
+        themes = ((report or {}).get("themes") or [])[:THEME_LIMIT]
         if not themes:
             no_theme_days += 1
         if date == latest_date:
