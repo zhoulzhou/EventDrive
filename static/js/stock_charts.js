@@ -1,6 +1,8 @@
-/* 股票趋势页图表实现（A 股冷热三层温度计 · 9 张 ECharts）
+/* 股票趋势页图表实现（A 股冷热三层温度计 · 6 张 ECharts）
  * 由 app/templates/stock_temp.html 拆出；当前读数在 stock_temp.html / 股票指标页。
  * 依赖 static/js/main.js 提供的 fetchWithAuth / escapeHtml / debounce。
+ * 2026-11-11 用户要求精简：综合温度图只留「综合温度 + 贪婪指数」两条线；
+ * 删「破净率」「产业资本净增持」两张图；PE 图删 PB、成交额图删全A换手率（都不再用双轴）。
  */
 const CH = {
     ink: "#334155", sub: "#94a3b8", grid: "#e8ebf0", axis: "#cbd5e1", slate: "#64748b",
@@ -110,30 +112,22 @@ function lastMark(name, data, color, digits, unit) {
         }]
     };
 }
-function thresholdLines(pairs, inside) {
+function thresholdLines(pairs) {
     return {
         silent: true, symbol: "none",
         lineStyle: { type: "dashed", width: 1 },
-        label: {
-            color: CH.sub, fontSize: 10, formatter: "{b}",
-            // 双轴图上右轴刻度也占右侧泳道，阈值文字改画在绘图区内侧避免压字
-            position: inside ? "insideEndTop" : "end"
-        },
+        // 2026-11-11 起本页已无双轴图，阈值文字统一画在绘图区右端外侧
+        label: { color: CH.sub, fontSize: 10, formatter: "{b}", position: "end" },
         data: pairs.map(function (p) {
             return { yAxis: p[0], name: p[1], lineStyle: { color: p[2] || CH.slate } };
         })
     };
 }
-// hints：图例文字后缀，用来标明该序列挂在哪根轴上（右轴不再重复画轴名）
-function legend(names, hints) {
-    const opt = {
+function legend(names) {
+    return {
         data: names, top: 2, right: 6, itemWidth: 12, itemHeight: 8,
         textStyle: { color: CH.slate, fontSize: 10.5 }
     };
-    if (hints) {
-        opt.formatter = function (name) { return hints[name] ? name + hints[name] : name; };
-    }
-    return opt;
 }
 function tipAxis(unit) {
     return {
@@ -145,21 +139,19 @@ function tipAxis(unit) {
 }
 
 /* ---------------- 各图 ---------------- */
+/* 沪深300 PE-TTM：2026-11-11 起按用户要求只画 PE，PB 与右轴一并删掉。 */
 function drawPE(bag) {
-    const pe = pts(bag.hs300_pe), pb = pts(bag.hs300_pb);
+    const pe = pts(bag.hs300_pe);
     if (!pe.length) return chartEmpty("stPE", "暂无 PE 历史数据，等待定时任务每日收盘写入（可点「刷新数据」立即抓一次）");
     const cats = pe.map(function (p) { return p[0]; });
     mount("stPE", {
-        grid: baseGrid(),
-        legend: legend(["PE-TTM", "PB"], { "PE-TTM": "（倍 · 左轴）", "PB": "（倍 · 右轴）" }),
-        tooltip: tipAxis(""),
+        grid: baseGrid(), tooltip: tipAxis(""),
         xAxis: xAxis(cats),
-        yAxis: [yAxis("PE-TTM（倍）"), yAxis("", null, "right")],
+        yAxis: [yAxis("PE-TTM（倍）")],
         series: [
             lineSeries("PE-TTM", pe, CH.blue, { markLine: thresholdLines([
                 [20, "PE 20 倍", CH.cyan], [13, "13 倍", CH.slate], [30, "30 倍", CH.orange]
-            ], true), markPoint: lastMark("PE-TTM", pe, CH.blue, 2) }),
-            lineSeries("PB", pb, CH.violet, { yAxisIndex: 1, lineStyle: { width: 1.6, color: CH.violet, type: "dotted" }, markPoint: lastMark("PB", pb, CH.violet, 2) })
+            ]), markPoint: lastMark("PE-TTM", pe, CH.blue, 2) })
         ]
     });
 }
@@ -186,50 +178,26 @@ function drawERP(bag) {
     });
 }
 
-function drawBelowNa(bag) {
-    const d = pts(bag.below_na);
-    if (!d.length) return chartEmpty("stBelowNa", "暂无破净率历史数据，等待定时任务每日收盘写入（可点「刷新数据」立即抓一次）");
-    const tail = d.length > 2600 ? d.slice(-2600) : d;
-    mount("stBelowNa", {
-        grid: baseGrid(), tooltip: tipAxis("%"),
-        xAxis: xAxis(tail.map(function (p) { return p[0]; })),
-        yAxis: [yAxis("破净率（%）")],
-        series: [lineSeries("破净率", tail, CH.cyan, {
-            areaStyle: { color: withAlpha(CH.cyan, 0.10) },
-            markLine: thresholdLines([
-                [10, "10% 底部区", CH.blue], [6, "6%", CH.cyan], [3, "3%", CH.lime], [1, "1% 无便宜货", CH.red]
-            ]),
-            markPoint: lastMark("破净率", tail, CH.cyan, 2, "%")
-        })]
-    });
-}
-
+/* 两市成交额：2026-11-11 起按用户要求只画成交额，全A换手率与右轴一并删掉。
+ * 「破净率」整张图也同批下线，历史表里的 below_na 数据保留、本页不再读取。 */
 function drawTurnover(bag) {
-    const amt = pts(bag.turnover_amt), rate = pts(bag.turnover_rate);
+    const amt = pts(bag.turnover_amt);
     if (!amt.length) return chartEmpty("stTurnover", "暂无成交额历史数据，等待定时任务每日收盘写入（可点「刷新数据」立即抓一次）");
     const cats = amt.map(function (p) { return p[0]; });
     // 下限压到 5000 亿（或更低），保证 7000 亿地量线也能画出来
     const lo = Math.min(5000, Math.floor(Math.min.apply(null, amt.map(function (p) { return p[1]; })) / 1000) * 1000);
     mount("stTurnover", {
-        grid: baseGrid(),
-        legend: legend(["两市成交额", "全A换手率"],
-            { "两市成交额": "（亿元 · 左轴）", "全A换手率": "（% · 右轴）" }),
-        tooltip: tipAxis(""),
+        grid: baseGrid(), tooltip: tipAxis(""),
         xAxis: xAxis(cats),
-        yAxis: [Object.assign(yAxis("成交额（亿元）"), { min: lo }), yAxis("", null, "right")],
+        yAxis: [Object.assign(yAxis("成交额（亿元）"), { min: lo })],
         series: [
             lineSeries("两市成交额", amt, CH.amber, {
                 areaStyle: { color: withAlpha(CH.amber, 0.12) },
                 markLine: thresholdLines([
                     [30000, "3 万亿 极端", CH.red], [20000, "2 万亿 亢奋", CH.orange],
                     [12000, "1.2 万亿", CH.lime], [7000, "7000 亿 地量", CH.blue]
-                ], true),
+                ]),
                 markPoint: lastMark("两市成交额", amt, CH.amber, 0, " 亿")
-            }),
-            lineSeries("全A换手率", rate, CH.red, {
-                yAxisIndex: 1, symbol: "circle", symbolSize: 5,
-                lineStyle: { width: 1.6, color: CH.red, type: "dashed" },
-                markPoint: lastMark("全A换手率", rate, CH.red, 2, "%")
             })
         ]
     });
@@ -277,22 +245,8 @@ function drawFund(bag) {
     });
 }
 
-function drawCapital(bag) {
-    const c = pts(bag.industry_capital);
-    if (!c.length) return chartEmpty("stCapital", "暂无产业资本历史数据，等待定时任务每日收盘写入（可点「刷新数据」立即抓一次）");
-    mount("stCapital", {
-        grid: baseGrid(), tooltip: tipAxis(" 亿"),
-        xAxis: Object.assign(xAxis(c.map(function (p) { return p[0]; })), { boundaryGap: true }),
-        yAxis: [yAxis("净增持（亿元）")],
-        series: [{
-            name: "产业资本净增持", type: "bar", data: c.map(function (p) {
-                return { value: p[1], itemStyle: { color: p[1] >= 0 ? withAlpha(CH.red, 0.75) : withAlpha(CH.green, 0.75) } };
-            }),
-            barMaxWidth: 18,
-            markLine: thresholdLines([[0, "0 轴（增减持分界）", CH.slate], [100, "增持潮 100 亿", CH.blue], [-400, "减持潮 −400 亿", CH.red]])
-        }]
-    });
-}
+/* 「产业资本净增持（滚动30日）」整张图 2026-11-11 下线，
+ * 历史表里的 industry_capital 数据保留，本页不再读取、不再渲染容器。 */
 function drawTemp(tp, greedSeries) {
     const rows = (tp || {}).daily || [];
     const greedPts = pts(greedSeries || []);
@@ -314,12 +268,13 @@ function drawTemp(tp, greedSeries) {
     const greedMap = {};
     greedPts.forEach(function (p) { greedMap[p[0]] = p[1]; });
 
-    const mk = function (key) {
+    // 2026-11-11 用户要求：本图只留「综合温度 + 贪婪指数」两条线，
+    // 估值/情绪/资金三层温度不再画（数据仍在 temperature.daily 里，见「股市热度」页）。
+    const mkTotal = function () {
         return cats.map(function (c) {
             const r = tempMap[c];
-            if (!r) return null;
-            const v = r[key];
-            return (v === null || v === undefined) ? null : v;
+            if (!r || r.total === null || r.total === undefined) return null;
+            return r.total;
         });
     };
     const mkGreed = function () {
@@ -333,11 +288,7 @@ function drawTemp(tp, greedSeries) {
     const greedBase = { connectNulls: false, symbol: "circle", symbolSize: 6 };
 
     const series = [
-        lineSeries("估值温度", mk("valuation"), CH.blue,
-            Object.assign({ areaStyle: { color: withAlpha(CH.blue, 0.08) } }, sparse ? base : {})),
-        lineSeries("情绪温度", mk("sentiment"), CH.amber, sparse ? base : { connectNulls: false }),
-        lineSeries("资金温度", mk("capital"), CH.green, sparse ? base : { connectNulls: false }),
-        lineSeries("综合温度", mk("total"), CH.ink,
+        lineSeries("综合温度", mkTotal(), CH.ink,
             Object.assign({}, sparse ? base : {}, { lineStyle: { width: 2.6, color: CH.ink } })),
         // 贪婪指数：同为 0-100、同为「越高越热」，故与温度同轴可直接比高低；
         // 但它是「分位合成」口径（综合温度是「热度分合成」），不是同一把尺子，
@@ -349,7 +300,7 @@ function drawTemp(tp, greedSeries) {
     ];
     mount("stTemp", {
         grid: baseGrid(),
-        legend: legend(["估值温度", "情绪温度", "资金温度", "综合温度", "贪婪指数"]),
+        legend: legend(["综合温度", "贪婪指数"]),
         tooltip: tipAxis(""),
         xAxis: xAxis(cats),
         yAxis: [yAxis("温度 / 贪婪 0-100")],
@@ -357,8 +308,9 @@ function drawTemp(tp, greedSeries) {
     });
     const el = document.getElementById("stTempNote");
     if (el) el.textContent = (tp.note || "")
-        + "（当前已积累 " + rows.length + " 个交易日）"
-        + "贪婪指数同为 0-100、同为越高越热，与综合温度同轴比高低；"
+        + "本图只画综合温度与贪婪指数两条线，三层温度明细见「股市热度」页。"
+        + "综合温度已积累 " + rows.length + " 个交易日；"
+        + "贪婪指数同为 0-100、同为越高越热，与综合温度同轴比高低，"
         + "但它是「分位合成」口径、综合温度是「热度分合成」口径，不是同一把尺子"
         + "（已积累 " + greedPts.length + " 个交易日）。";
 }
@@ -375,24 +327,22 @@ function panelHtml() {
         + "<h2 class=\"st-group-title\">趋势面板<span class=\"st-group-sub\">阈值线已内置，落在哪条泳道直接读；缺数据的图层自动断线</span></h2>"
         + "<div class=\"st-fig-block st-f-temp\">"
         + "<div class=\"st-fig-block-head\">综合温度 · 每日收盘打卡</div>"
-        + fig("三层温度、综合温度 与 贪婪指数", "每天收盘抓取时打卡一次；三层齐备才给综合温度；贪婪指数同为 0-100、越高越热", "stTemp")
+        + fig("综合温度 与 贪婪指数", "每天收盘抓取时打卡一次；两者同为 0-100、越高越热，但口径不同", "stTemp")
         + "<div class=\"st-temp-note\" id=\"stTempNote\"></div>"
         + "</div>"
         + "<div class=\"st-fig-block st-f-valuation\">"
         + "<div class=\"st-fig-block-head\">估值层 · 慢变量定方向</div>"
-        + fig("沪深300 PE-TTM 与 PB（双轴）", "月频；图中带十年分位带（样本积累后逐步显现）", "stPE")
+        + fig("沪深300 PE-TTM", "月频；13 / 20 / 30 倍三条阈值线", "stPE")
         + fig("ERP 股债性价比 = 1/PE − 10Y国债", "月频；样本积累后显示均值 ±1σ 带，越高越便宜", "stERP")
-        + fig("破净率（全部A股）", "日频；10 / 6 / 3 / 1% 四条阈值线", "stBelowNa")
         + "</div>"
         + "<div class=\"st-fig-block st-f-sentiment\">"
         + "<div class=\"st-fig-block-head\">情绪层 · 快变量定情绪</div>"
-        + fig("两市成交额 与 全A换手率（双轴）", "成交额阈值 7000 / 12000 / 20000 / 30000 亿", "stTurnover")
+        + fig("两市成交额", "阈值 7000 / 12000 / 20000 / 30000 亿", "stTurnover")
         + fig("两融占流通市值（%）", "杠杆水位；2.0 / 2.5 / 3.0 / 3.5% 四条阈值线，与指标卡同口径", "stMargin")
         + "</div>"
         + "<div class=\"st-fig-block st-f-capital\">"
         + "<div class=\"st-fig-block-head\">资金层 · 资金变量定底气</div>"
         + fig("新基金发行（权益类，亿元）", "月频；新成立股票型/混合型/指数型基金的募集份额合计", "stFund")
-        + fig("产业资本净增持（滚动30日，亿元）", "红柱=净增持 · 绿柱=净减持（A 股涨红跌绿惯例）", "stCapital")
         + "</div></section>";
 }
 
@@ -401,32 +351,32 @@ function trendNotesHtml() {
     return "<section class=\"st-notes\">"
         + "<h2 class=\"st-group-title\">走势图怎么看</h2>"
         + "<div class=\"st-notes-grid\">"
-        + "<div class=\"st-note\"><h3>一、图里的三层结构</h3>"
+        + "<div class=\"st-note\"><h3>一、先读总览图</h3>"
         + "<ul>"
         + "<li><b>最上面那张是总览</b>：<b>综合温度</b>（黑线）由估值 / 情绪 / 资金三层温度合成，"
-        + "先看它的走势与分档，再往下看是哪一层在拉动。</li>"
+        + "本图只画合成后的总温度与贪婪指数两条线，三层明细见「股市热度」页。</li>"
         + "<li><b>贪婪指数</b>（紫色虚线）与综合温度<b>同轴</b>：两者都是 0-100、都是越高越热，"
         + "可直接比高低。但口径不同——综合温度是「热度分合成」，贪婪指数是「分位合成」，"
         + "不是同一把尺子；它更贴近「贵不贵」，综合温度更贴近「热不热」。</li>"
-        + "<li><b>阈值线已内置</b>：成交额 7000 亿地量 / 2 万亿亢奋 / 3 万亿极端、两融占流通市值 2.0 / 2.5 / 3.0 / 3.5%、ERP 均值 ±1σ、破净率 10 / 6 / 3 / 1%、"
-        + "产业资本 ±100 / −400 亿。落在线哪一侧，直接读状态。</li>"
+        + "<li><b>阈值线已内置</b>：沪深300 PE-TTM 13 / 20 / 30 倍、成交额 7000 亿地量 / 1.2 万亿 / 2 万亿亢奋 / 3 万亿极端、"
+        + "两融占流通市值 2.0 / 2.5 / 3.0 / 3.5%、ERP 均值 ±1σ。落在线哪一侧，直接读状态。</li>"
         + "<li><b>末端数值标签</b>在每条线最右侧单独一列，是「最新一个数据点」的读数（不是当前快照，含日期差）。</li>"
-        + "<li><b>缺数据的图层自动断线</b>——某一层在早期没有数据，曲线就从有数据那天开始画，不做插补。</li>"
-        + "<li>红涨绿跌按 A 股惯例：温度计与状态热=红橙、冷=蓝绿；产业资本红柱=净增持、绿柱=净减持。</li>"
+        + "<li><b>缺数据自动断线</b>——两条线启用时间不同，各自从有数据那天开始画，不做插补。</li>"
+        + "<li>红涨绿跌按 A 股惯例：温度计与状态热=红橙、冷=蓝绿。</li>"
         + "</ul></div>"
         + "<div class=\"st-note\"><h3>二、先看背离，再看绝对水位</h3>"
         + "<ul>"
-        + "<li>估值在低位（PE / PB 分位低、ERP 高、破净率高位）而<b>资金层抬头</b>（ETF 份额增、产业资本净增持）= 底部特征。</li>"
-        + "<li>情绪层冲高（成交额 2 万亿+、换手率抬升）而<b>资金层不动</b>（ETF 份额不增、两融不涨）= 虚火。</li>"
+        + "<li>估值在低位（PE-TTM 低于 13 倍、ERP 高）而<b>资金层抬头</b>（新基金发行放量、两融抬升）= 底部特征。</li>"
+        + "<li>情绪层冲高（成交额 2 万亿+）而<b>资金层不动</b>（新基金发行、两融不涨）= 虚火。</li>"
         + "<li>两层打架时对照<b>情绪层与资金层的走势</b>：张口越大，越不该用单一维度下结论。</li>"
         + "</ul></div>"
         + "<div class=\"st-note\"><h3>三、数据口径</h3>"
         + "<ul>"
         + "<li><b>曲线从现在开始积累</b>：定时任务每天收盘抓一次各指标读数并写入历史表，本页只读库画图，"
         + "<b>不做历史回溯</b>。所以刚启用时曲线很短，越往后越完整。</li>"
-        + "<li><b>各指标频率不同</b>：估值层月频（PE / ERP）、新基金发行月频、成交额 / 换手率 / 两融 / 破净率日频，"
-        + "同一张图里日期轴按各自实际有数据的点绘制，不会强行对齐。</li>"
-        + "<li><b>缺数据的图层自动断线</b>——某指标当天没取到就断开，不做插补。</li>"
+        + "<li><b>各指标频率不同</b>：估值层月频（PE-TTM / ERP）、新基金发行月频、成交额 / 两融日频，"
+        + "每张图的日期轴按该指标实际有数据的点绘制，不会强行对齐。</li>"
+        + "<li><b>缺数据自动断线</b>——某指标当天没取到就断开，不做插补。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
         + "</ul></div>"
         + "</div></section>";
@@ -438,12 +388,13 @@ function drawCharts(d) {
     // 绘制顺序与页面顺序一致：综合温度在最上（总览），然后估值/情绪/资金分层
     // 贪婪指数与综合温度同图同轴（都是 0-100、越高越热），数据取自 series.greed_index
     drawTemp(d.temperature || {}, bag.greed_index || []);
-    drawPE(bag); drawERP(bag); drawBelowNa(bag); drawTurnover(bag);
-    drawMargin(bag); drawFund(bag); drawCapital(bag);
+    drawPE(bag); drawERP(bag); drawTurnover(bag);
+    drawMargin(bag); drawFund(bag);
     Object.keys(chartReg).forEach(function (k) { if (chartReg[k]) chartReg[k].resize(); });
 }
 
-const CHART_IDS = ["stPE", "stERP", "stBelowNa", "stTurnover", "stMargin", "stFund", "stCapital", "stTemp"];
+// 6 张图；破净率 / 产业资本净增持整图下线后，容器 id 同步移除
+const CHART_IDS = ["stPE", "stERP", "stTurnover", "stMargin", "stFund", "stTemp"];
 
 async function loadSeries(force) {
     // 前置兜底：库没加载出来就没必要再请求数据了，直接给提示（避免白跑一趟请求）
