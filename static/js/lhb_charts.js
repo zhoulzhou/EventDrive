@@ -761,7 +761,7 @@ function render() {
 async function loadList(date) {
     const root = document.getElementById("lbRoot");
     closeDrawer(true);  // 换日期 / 重新抓取后旧明细已失效
-    root.innerHTML = '<div class="loading">正在加载龙虎榜…</div>';
+    root.innerHTML = '<div class="loading">正在加载龙虎榜单…</div>';
     const url = "/api/lhb" + (date ? "?date=" + encodeURIComponent(date) : "");
     try {
         const resp = await fetchWithAuth(url, { headers: { Accept: "application/json" } });

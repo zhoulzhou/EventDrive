@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}龙虎榜 - 市场总览{% endblock %}
+{% block title %}龙虎榜单 - 市场总览{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="/static/css/lhb.css?v={{ static_ver or 0 }}">
@@ -9,7 +9,7 @@
 {% block content %}
 <div class="page-header lb-header">
     <div class="lb-header-top">
-        <h1>龙虎榜 · 资金痕迹复盘</h1>
+        <h1>龙虎榜单 · 资金痕迹复盘</h1>
         <div class="lb-toolbar">
             <span id="lbDate" class="lb-date-text">加载中…</span>
             <span id="lbUpdated" class="lb-updated">加载中…</span>
@@ -39,14 +39,14 @@
 
 <div id="lbNotice"></div>
 <div id="lbRoot">
-    <div class="loading">正在加载龙虎榜…</div>
+    <div class="loading">正在加载龙虎榜单…</div>
 </div>
 
 {# 席位明细走右侧抽屉：榜单是一张宽表，行内展开会把表格顶到很远的地方，
    而且展开高度参差不齐不好对比；侧栏保留列表上下文、宽度也够画买五卖五图。 #}
 <div id="lbDrawer" class="lb-drawer" aria-hidden="true">
     <div class="lb-drawer-mask" data-close="1"></div>
-    <div class="lb-drawer-panel" role="dialog" aria-modal="true" aria-label="龙虎榜席位明细">
+    <div class="lb-drawer-panel" role="dialog" aria-modal="true" aria-label="龙虎榜单席位明细">
         <div class="lb-drawer-bar">
             <span id="lbDrawerTitle" class="lb-drawer-title">席位明细</span>
             <button id="lbDrawerClose" class="lb-drawer-close" type="button" title="关闭（Esc）">✕</button>
