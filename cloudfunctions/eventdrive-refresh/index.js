@@ -49,6 +49,18 @@ const BASE = 'https://eventdrive-finance.app.workbuddy.host';
 const TOKEN = process.env.EVENTDRIVE_SESSION_TOKEN || '';
 const KEY = process.env.EVENTDRIVE_CLOUD_DB_KEY || '';
 
+// 2026-11-13：平台分享链接改为带 ?sharecode= 的完整链接，裸域名的 /api/ 请求会被
+// 网关 403「链接不完整」（11-12 21:34 与 11-13 09:15 两轮即因此整轮落空）。
+// 云库 REST 路径（/.cloud/database/rest/）不走该校验，且 PostgREST 会把多余查询
+// 参数当过滤器、带 sharecode 反而 400，所以**只对 /api/ 路径追加**。
+// 重新发布换 sharecode 时：改下面默认值，或在云函数环境变量设 EVENTDRIVE_SHARECODE。
+const SHARECODE = process.env.EVENTDRIVE_SHARECODE || 'X6GXVFI6UH';
+
+function urlFor(path) {
+  if (path.indexOf('/api/') !== 0) return BASE + path;
+  return BASE + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'sharecode=' + SHARECODE;
+}
+
 // 快域：几十秒内落库。慢域：股市热度单独跑，实测 260 秒（被限流时更久）。
 // **不含 news**（2026-10-24 起）：新闻只在上午 09:15 由 eventdrive-morning-news
 // 抓一轮，收盘轮不再重复抓。若仍把它列在 NEED 里，本函数会一直等一个永远
@@ -72,7 +84,7 @@ const START = Date.now();
 function request(path, headers, method) {
   return new Promise((resolve, reject) => {
     const req = https.request(
-      BASE + path,
+      urlFor(path),
       { method: method || 'GET', headers, timeout: 40000 },
       (res) => {
         let data = '';
