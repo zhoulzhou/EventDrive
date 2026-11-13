@@ -370,15 +370,18 @@ function greedFactorHtml(f) {
         + "</div></div>";
 }
 
-// 确认层卡：ERP / 破净率，权重 0，只在极端区做闸门
+// 0 权重卡：确认层（ERP / 破净率）+ 仅展示（科创50 PE-TTM）共用同一套结构。
+// 2026-11-13 用户要求三者并排一行、卡片内信息项完全一致；
+// weight_label / hit 只用来区分角色：确认层沿用「分位 < 20 → 贪婪确认」，
+// 仅展示项由后端固定 hit=false，不做闸门、不显示确认标签。
 function greedConfirmHtml(c) {
     const has = c.percentile !== null && c.percentile !== undefined;
-    // 两项确认层都是「与贪婪反向」：分位越低 = 越贪婪（赔率耗尽 / 找不到便宜货）
-    const extreme = has && Number(c.percentile) < 20;
+    const extreme = c.hit === undefined
+        ? (has && Number(c.percentile) < 20) : !!c.hit;
     const color = !has ? "#9ca3af" : (extreme ? tone("red") : tone("slate"));
     return "<div class=\"st-pc\" style=\"border-left-color:" + color + "\">"
         + "<div class=\"st-pc-head\"><span class=\"st-pc-name\">" + escapeHtml(c.name) + "</span>"
-        + "<span class=\"st-pc-weight\">确认层 · 权重 0</span></div>"
+        + "<span class=\"st-pc-weight\">" + escapeHtml(c.weight_label || "确认层 · 权重 0") + "</span></div>"
         + "<div class=\"st-pc-sub\">" + escapeHtml(c.subtitle || "") + "</div>"
         + "<div class=\"st-pc-row\"><span class=\"st-pc-pct\">分位 "
         + (has ? Number(c.percentile).toFixed(1) + "%" : "—") + "</span>"
@@ -394,30 +397,8 @@ function greedConfirmHtml(c) {
         + "</div></div>";
 }
 
-// 仅展示卡：权重 0，不参与任何计算（当前是科创50 PE-TTM）
-// 展示口径刻意与「沪深300 PE-TTM」那张主成分卡一致：读数 / 数据日期 / 分位 / 状态 +
-// 指标含义 / 怎么看，只是把权重换成「仅展示 · 权重 0」。
-function greedDisplayHtml(d) {
-    const has = d.percentile !== null && d.percentile !== undefined;
-    const color = tone(d.tone || "slate");
-    return "<div class=\"st-pc\" style=\"border-left-color:" + color + "\">"
-        + "<div class=\"st-pc-head\"><span class=\"st-pc-name\">" + escapeHtml(d.name) + "</span>"
-        + "<span class=\"st-pc-weight\">仅展示 · 权重 0</span></div>"
-        + "<div class=\"st-pc-sub\">" + escapeHtml(d.subtitle || "") + "</div>"
-        + "<div class=\"st-pc-row\"><span class=\"st-pc-pct\">读数 "
-        + (d.value === null || d.value === undefined ? "—"
-            : Number(d.value).toFixed(d.digits === undefined ? 2 : d.digits) + escapeHtml(d.unit || ""))
-        + "</span>"
-        + "<span class=\"st-pf-samples\">" + escapeHtml(d.as_of || "—") + "</span>"
-        + (has ? "<span class=\"st-pf-samples\">分位 " + Number(d.percentile).toFixed(1) + "%</span>" : "")
-        + "<span class=\"st-pc-hit\" style=\"color:" + color + "\">" + escapeHtml(d.state || "—") + "</span>"
-        + "</div>"
-        + "<div class=\"st-pc-hint\">" + escapeHtml(d.note || "") + "</div>"
-        + "<div class=\"st-explain st-pf-explain\">"
-        + "<p><span class=\"st-label\">指标含义</span>" + escapeHtml(d.meaning || "") + "</p>"
-        + "<p><span class=\"st-label\">怎么看</span>" + escapeHtml(d.guide || "") + "</p>"
-        + "</div></div>";
-}
+// 仅展示项（科创50 PE-TTM）不再单独渲染：与确认层共用 greedConfirmHtml，
+// 由后端给 weight_label / hit 区分角色，见下方 greedGaugeHtml。
 
 function greedSummaryHtml(p) {
     if (p.value === null || p.value === undefined) {
@@ -470,9 +451,9 @@ function greedGaugeHtml(p) {
     }).join("");
 
     const factors = (p.factors || []).map(greedFactorHtml).join("");
+    // 0 权重的 3 张卡（确认层 2 + 仅展示 1）并进同一个 grid，共用一套结构
     const confirms = (p.confirms || []).map(greedConfirmHtml).join("");
-    // 仅展示项（权重 0，如科创50 PE-TTM）：不参与合成，单独一张卡
-    const displays = (p.displays || []).map(greedDisplayHtml).join("");
+    const displays = (p.displays || []).map(greedConfirmHtml).join("");
     const deep = p.deep ? "<div class=\"st-pdeep " + (p.deep.hit ? "hit" : "weak")
         + "\" style=\"border-left-color:" + tone(p.deep.tone || "slate") + "\">"
         + "<div class=\"st-pdeep-title\">" + escapeHtml(p.deep.title) + "</div>"
@@ -497,16 +478,11 @@ function greedGaugeHtml(p) {
         + greedSummaryHtml(p)
         + deep
         + "<div class=\"st-pf-grid\">" + factors + "</div>"
-        + "<div class=\"st-pc-title\">确认层（0 权重，只在极端区做闸门）"
-        + "<span class=\"st-group-sub\">估值是慢变量，混进主指数会钝化日频灵敏度；"
-        + "只在极端区确认，正好弥补 88% 情绪占比下估值信号的稀释</span></div>"
-        + "<div class=\"st-pc-grid\">" + confirms + "</div>"
-        + (displays.length
-            ? "<div class=\"st-pc-title\">仅展示（权重 0，不参与任何计算）"
-              + "<span class=\"st-group-sub\">只作横向对照：读数照常抓取、照常更新，"
-              + "但不进加权合成、不做确认闸门</span></div>"
-              + "<div class=\"st-pc-grid\">" + displays + "</div>"
-            : "")
+        + "<div class=\"st-pc-title\">确认层与仅展示（0 权重，不参与加权合成）"
+        + "<span class=\"st-group-sub\">ERP / 破净率只在极端区做闸门；"
+        + "科创50 PE-TTM 仅作横向对照、不做闸门。估值是慢变量，"
+        + "混进主指数会钝化日频灵敏度，只在极端区确认正好弥补 88% 情绪占比下估值信号的稀释</span></div>"
+        + "<div class=\"st-pc-grid\">" + confirms + displays + "</div>"
         + "<div class=\"st-gauge-note\">分位口径为<b>「项目历史表逐日累计 + V3.6c 基准值兜底」</b>："
         + "历史表里该分项有 <b>2 期以上</b>可比读数就直接用实测分位；一期都没有时用规格基准值"
         + "（对应 10/19 读数）兜底，卡片上标为「基准分位」。"
@@ -650,7 +626,9 @@ function notesHtml() {
         + "<li><b>全A换手率用股数法</b>（两市成交量 ÷ 两市流通股本），与东方财富、同花顺等行情软件"
         + "同口径，也和综合温度计用的是同一个读数；旧的「成交额 ÷ 流通市值」金额法系统性高约 27%，"
         + "已不再使用、也不在页面上展示。</li>"
-        + "<li><b>科创50 PE-TTM 只展示、不计算</b>：和沪深300 PE-TTM 并排列出，"
+        + "<li><b>科创50 PE-TTM 只展示、不计算</b>：与确认层两项并排在同一行，"
+        + "卡片结构完全一致（历史分位 + 样本期数 + 两句提示 + 指标含义 / 怎么看），"
+        + "不再显示读数、数据日期与状态档位；"
         + "方便对照「成长股相对宽基贵多少」（科创50 是科创板 50 只大市值龙头的宽基）；"
         + "它的权重是 0，不进加权合成、不做确认闸门，"
         + "读数高低不会影响贪婪指数。</li>"
@@ -668,7 +646,8 @@ function notesHtml() {
         + "所以改为「基准值起步 + 自己每天抓的真实读数逐期替换」。</li>"
         + "<li><b>确认层不加权</b>：ERP 与破净率权重为 0，只在极端区做闸门。"
         + "估值是慢变量，混进主指数会钝化日频灵敏度；只在极端区确认，"
-        + "正好弥补 88% 情绪占比下估值信号的稀释。</li>"
+        + "正好弥补 88% 情绪占比下估值信号的稀释；"
+        + "科创50 PE-TTM 虽然与它们并排，但只作横向对照、不做闸门。</li>"
         + "<li><b>泡沫警示</b>：贪婪指数 &gt; 90 且 ERP 分位 &lt; 20 → 泡沫特征明显，"
         + "宜减仓、回避追高。确认层分位走低（赔率耗尽、找不到便宜货）才是贪婪到极致的证据。</li>"
         + "<li><b>分位样本越攒越准</b>：每个分项都标了实际样本期数。"

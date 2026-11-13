@@ -19,8 +19,10 @@
 展示项（权重 0，不参与计算）
 ---------------------------
 **科创50 PE-TTM**（stock_temp 的 kc50_pe，中证 000688）：用户 2026-10-31 要求，
-按沪深300 PE-TTM 同样的样式并列展示，**只展示、不参与任何计算** ——
-不进加权合成、不做确认闸门、不影响贪婪指数读数（2026-11-02 由科创100 换成科创50）。
+**只展示、不参与任何计算** —— 不进加权合成、不做确认闸门、不影响贪婪指数读数
+（2026-11-02 由科创100 换成科创50）。
+2026-11-13 起改为与确认层两项**并排同一行、共用同一套卡片结构**：
+大号分位 + 样本期数 + 两句提示 + 指标含义 / 怎么看，不再显示读数 / 日期 / 状态档位。
 见 GREED_DISPLAY。
 
 权重（2026-11-13 起：删掉融资余额占流通市值后）
@@ -67,6 +69,7 @@
 卡片读数一律走数据源官方接口，不受分位口径影响。
 """
 import math
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------- 基准分位
@@ -221,19 +224,21 @@ GREED_CONFIRM_MAP = {f["key"]: f for f in GREED_CONFIRM}
 
 # ---------------------------------------------------------------- 仅展示指标
 #
-# 权重 0、不进合成、不做闸门 —— 只是把读数按「和沪深300 PE-TTM 一样」的样式
-# 摆在贪婪指数区块里作对照。
+# 权重 0、不进合成、不做闸门。
 # 用户 2026-10-31 要求：加科创板 PE-TTM，明确「只用来展示不参与计算」；
 # 2026-11-02 指定标的由科创100 换成**科创50**（000688）。
-# ⚠️ 指标本身的规格（读数判定/档位/含义）在 stock_temp.DISPLAY_ONLY_INDICATORS，
-#    这里只登记「要在贪婪指数区块里露出的 key + 一句为什么要摆它」。
+# 用户 2026-11-13 要求：这张卡与确认层两项并排在同一行，且卡片内部信息项完全一致
+#   （大号分位 + 样本期数 + 两句提示 + 指标含义 / 怎么看），不再显示读数、
+#   数据日期、状态标签，也不再单独占一整行。故这里登记的是「两句提示」而非长 note。
+# ⚠️ 指标本身的规格（读数判定/档位/含义）在 stock_temp.DISPLAY_ONLY_INDICATORS；
+#    分位方向与确认层相反（分位高 = 成长股偏贵 = 更热），但本项不做闸门，
+#    由后端固定 hit=false，不参与 extreme 判定、不显示确认标签。
 GREED_DISPLAY: List[Dict[str, Any]] = [
     {
         "key": "kc50_pe",
         "title": "科创50 PE-TTM",
-        "note": ("与沪深300 PE-TTM 并排看：科创50 是科创板龙头宽基（50 只大市值硬科技），"
-                 "两者 PE 的比值走高说明风险偏好扩张、资金往成长股跑。"
-                 "本项权重 0，只展示、不参与贪婪指数与综合温度计的任何计算。"),
+        "higher_means": "分位高 = 成长股估值偏贵、风险偏好扩张（仅展示，权重 0）",
+        "deep_note": "分位 > 80：科创50 处于自身历史高位、成长风格偏热；本项不做确认闸门",
     },
 ]
 
@@ -461,38 +466,33 @@ def build_greed_index(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     erp = next((c for c in confirms if c["key"] == "erp"), None)
     erp_pct = erp["percentile"] if erp else None
 
-    # ---- 仅展示（权重 0）：读数照抄 stock_temp 的 item，展示口径与沪深300 PE 一致
+    # ---- 仅展示（权重 0）：2026-11-13 起与 confirms **共用同一套卡片字段**，
+    #      前端直接用同一个 greedConfirmHtml 渲染，三张卡并排一行。
+    #      分位仍取综合温度计口径的「分位 / 样本期数」（GREED_KEYS 不含 kc50_pe，
+    #      没有「贪婪分位」），不显示读数 / 数据日期 / 状态档位。
     displays: List[Dict[str, Any]] = []
     for spec in GREED_DISPLAY:
         item = items.get(spec["key"]) or {}
         detail = item.get("detail") or {}
-        pct = _finite(detail.get("分位"))
-        state = item.get("state") or "—"
-        # 刚上线时历史表还没样本 → 分位算不出来，档位判读自然是「—」。
-        # 与其在卡片上挂个破折号，不如说清楚「还在攒样本」（分位口径与沪深300 PE 同一条链路，
-        # 攒到 2 期就会自动出现）。
-        if pct is None and state in ("—", "", "数据缺失"):
-            state = "分位积累中"
+        # 展示项没有独立的「样本期数」字段，只有「分位窗口」文字
+        # （如「自 2026-10-30 起共 9 期」/「近 13 期」）；解析成整数才能
+        # 显示与确认层一致的「N 期样本」徽标。解析不到就留空，不编造数字。
+        win = str(detail.get("分位窗口") or item.get("percentile_window") or "")
+        m = re.search(r"(?:共|近)\s*(\d+)\s*期", win)
+        samples = int(m.group(1)) if m else None
         displays.append({
             "key": spec["key"],
             "name": item.get("name") or spec.get("title") or spec["key"],
             "subtitle": item.get("subtitle") or "",
-            "note": spec.get("note") or "",
-            "value": _finite(item.get("value")),
-            "unit": item.get("unit", ""),
-            "digits": item.get("digits", 2),
-            "as_of": item.get("as_of") or "—",
-            "state": state,
-            "tone": item.get("tone") or "slate",
-            "percentile": pct,
-            "percentile_window": detail.get("分位窗口"),
-            "samples": detail.get("样本期数"),
-            "detail_text": item.get("detail_text") or "",
+            "percentile": _finite(detail.get("分位")),
+            "samples": samples,
+            "higher_means": spec.get("higher_means") or "",
+            "deep_note": spec.get("deep_note") or "",
             "meaning": item.get("meaning") or "",
             "guide": item.get("guide") or "",
-            "error": item.get("error"),
-            "weight": 0.0,
-            "weight_pct": 0.0,
+            "weight_label": "仅展示 · 权重 0",
+            # 仅展示项不做闸门：分位即便走到极端也不显示「贪婪确认」标签
+            "hit": False,
         })
 
     # ---- 深度确认：泡沫警示（贪婪指数 > 90 且 ERP 分位 < 20）

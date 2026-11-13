@@ -172,9 +172,12 @@
 /* 贪婪指数 4 个主成分卡在桌面固定「一行 4 个」（2026-11-13 用户要求）。
    基础规则是 auto-fill + minmax(300px)，容器宽度 989~1161px（视口 1100~1280）
    时只会算出 3 列，第 4 张掉到第二行；故对 >=1100px 显式锁 4 列。
+   0 权重的 3 张卡（确认层 ERP / 破净率 + 仅展示 科创50 PE-TTM）同日改为并进
+   同一个 grid，桌面同样锁 3 列「一行 3 个」、三张等宽。
    更窄的屏幕沿用自适应 2 列、<=700px 沿用下方单列规则，其余区块一律不动。 */
 @media (min-width: 1100px) {
     .st-pf-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .st-greed-wrap .st-pc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {
