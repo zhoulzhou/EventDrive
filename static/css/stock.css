@@ -166,8 +166,10 @@
 .st-pc-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
 .st-pc-pct { font-size: 1.15rem; font-weight: 700; color: #1f2937; font-variant-numeric: tabular-nums; }
 .st-pc-hit { font-size: 0.68rem; font-weight: 600; color: #1d4ed8; background: rgba(59,130,246,0.14); border-radius: 10px; padding: 0.08rem 0.45rem; }
-.st-pc-hint { font-size: 0.73rem; color: #7c8797; margin-top: 0.25rem; }
-.st-pc-deep { font-size: 0.72rem; color: #94a3b8; margin-top: 0.3rem; line-height: 1.6; }
+/* 0 权重三卡（确认层 ERP / 破净率 + 仅展示 科创50）「分位」下方两行描述加粗显示：
+   2026-11-13 用户要求，higher_means 与 deep_note 两句都加粗，其余样式不动。 */
+.st-pc-hint { font-size: 0.73rem; color: #7c8797; font-weight: 600; margin-top: 0.25rem; }
+.st-pc-deep { font-size: 0.72rem; color: #94a3b8; font-weight: 600; margin-top: 0.3rem; line-height: 1.6; }
 
 /* 贪婪指数 4 个主成分卡在桌面固定「一行 4 个」（2026-11-13 用户要求）。
    基础规则是 auto-fill + minmax(300px)，容器宽度 989~1161px（视口 1100~1280）
