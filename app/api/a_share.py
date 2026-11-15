@@ -183,7 +183,7 @@ def get_a_share(
         result = dict(result)
         result["today"] = date.today().isoformat()
         result["updated_at"] = date.today().isoformat()
-    http_cache.apply(response, tag)
+    http_cache.apply_for(response, tag, result)
     return result
 
 

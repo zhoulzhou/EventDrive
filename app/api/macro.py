@@ -203,7 +203,7 @@ def get_macro(request: Request, response: Response,
             return {"status": "error", "message": str(e)}
 
     result = view_cache.get_or_build("macro", build)
-    http_cache.apply(response, tag)
+    http_cache.apply_for(response, tag, result)
     return result
 
 
@@ -326,6 +326,8 @@ def get_macro_history(
 
 @router.get("/macro/series")
 def get_macro_series(
+    request: Request,
+    response: Response,
     per_key: int = 3000,
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
@@ -341,53 +343,67 @@ def get_macro_series(
                减去 overnight_offset_bp 折算成隔夜等价，之后直接用隔夜期档位
 
     序列一律按时间正序返回，元素为 {as_of, value, source}。
+
+    与 /stock-temp/series 同理：按 key 批量读历史表是云库扫行大户，但数据只在
+    定时抓取时变，故整份响应走 view_cache 物化快照 + ETag，命中即一次点查返回。
     """
-    try:
-        per_key = max(10, min(int(per_key or 3000), 5000))
-        chart_keys = list(mi.CHART_KEYS) + [mi.THERMOMETER_KEY]
-        grouped = crud.get_macro_history_series(db, chart_keys, per_key_limit=per_key)
+    per_key = max(10, min(int(per_key or 3000), 5000))
+    key = f"macro_series:{per_key}"
+    tag = http_cache.etag(key)
+    early = http_cache.not_modified(request, tag)
+    if early is not None:
+        return early
 
-        def _pack(key: str):
-            return [
-                {"as_of": r.as_of, "value": r.value, "source": r.source}
-                for r in grouped.get(key) or []
-                if r.value is not None
-            ]
+    def build():
+        try:
+            chart_keys = list(mi.CHART_KEYS) + [mi.THERMOMETER_KEY]
+            grouped = crud.get_macro_history_series(db, chart_keys, per_key_limit=per_key)
 
-        daily = {k: _pack(k) for k in mi.CHART_DAILY_KEYS}
-        monthly = {k: _pack(k) for k in mi.CHART_MONTHLY_KEYS}
+            def _pack(k: str):
+                return [
+                    {"as_of": r.as_of, "value": r.value, "source": r.source}
+                    for r in grouped.get(k) or []
+                    if r.value is not None
+                ]
 
-        # 温度计：value = 总分，detail 里存三个子温度计的分数与价差
-        thermometer = []
-        for r in grouped.get(mi.THERMOMETER_KEY) or []:
-            if r.value is None:
-                continue
-            detail = mi.load_detail(r.detail) or {}
-            row = {"as_of": r.as_of, "total": r.value}
-            for sub in ("liquidity", "heat", "structure"):
-                v = detail.get(sub)
-                row[sub] = v if isinstance(v, (int, float)) else None
-            spread = detail.get("spread")
-            row["spread"] = spread if isinstance(spread, (int, float)) else None
-            row["reading"] = detail.get("reading")
-            thermometer.append(row)
+            daily = {k: _pack(k) for k in mi.CHART_DAILY_KEYS}
+            monthly = {k: _pack(k) for k in mi.CHART_MONTHLY_KEYS}
 
-        counts = {k: len(v) for k, v in list(daily.items()) + list(monthly.items())}
-        counts[mi.THERMOMETER_KEY] = len(thermometer)
-        return {
-            "status": "ok",
-            "daily": daily,
-            "monthly": monthly,
-            "thermometer": thermometer,
-            "anchor_steps": [{"from": d, "rate": r} for d, r in mbf.POLICY_RATE_STEPS],
-            "overnight_steps": [{"from": d, "rate": r} for d, r in mbf.OVERNIGHT_POLICY_STEPS],
-            "overnight_offset_bp": mbf.OVERNIGHT_EQUIV_OFFSET_BP,
-            "counts": counts,
-            "total": sum(counts.values()),
-        }
-    except Exception as e:
-        logger.error("获取市场指标序列失败: %s", e, exc_info=True)
-        return {"status": "error", "message": str(e)}
+            # 温度计：value = 总分，detail 里存三个子温度计的分数与价差
+            thermometer = []
+            for r in grouped.get(mi.THERMOMETER_KEY) or []:
+                if r.value is None:
+                    continue
+                detail = mi.load_detail(r.detail) or {}
+                row = {"as_of": r.as_of, "total": r.value}
+                for sub in ("liquidity", "heat", "structure"):
+                    v = detail.get(sub)
+                    row[sub] = v if isinstance(v, (int, float)) else None
+                spread = detail.get("spread")
+                row["spread"] = spread if isinstance(spread, (int, float)) else None
+                row["reading"] = detail.get("reading")
+                thermometer.append(row)
+
+            counts = {k: len(v) for k, v in list(daily.items()) + list(monthly.items())}
+            counts[mi.THERMOMETER_KEY] = len(thermometer)
+            return {
+                "status": "ok",
+                "daily": daily,
+                "monthly": monthly,
+                "thermometer": thermometer,
+                "anchor_steps": [{"from": d, "rate": r} for d, r in mbf.POLICY_RATE_STEPS],
+                "overnight_steps": [{"from": d, "rate": r} for d, r in mbf.OVERNIGHT_POLICY_STEPS],
+                "overnight_offset_bp": mbf.OVERNIGHT_EQUIV_OFFSET_BP,
+                "counts": counts,
+                "total": sum(counts.values()),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.error("获取市场指标序列失败: %s", e, exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    result = view_cache.get_or_build(key, build)
+    http_cache.apply_for(response, tag, result)
+    return result
 
 
 @router.post("/macro/backfill")

@@ -30,6 +30,7 @@ WorkBuddy 云数据库对外只暴露 PostgREST REST 接口（`/.cloud/database/
 """
 import logging
 import os
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -281,6 +282,16 @@ def clear_cache(table: Optional[str] = None) -> None:
             _cache.clear()
             _cache_bytes = 0
         _cache_stat["invalidate"] += 1
+
+    # 同步失效 view_cache 的 ETag 指纹短缓存（按依赖表精确清）。
+    # 只处理已加载的模块，避免 import 环：view_cache 顶部 import 了 cloud_db；
+    # 模块没加载说明还没有任何指纹缓存，无需处理。
+    _vc = sys.modules.get("app.utils.view_cache")
+    if _vc is not None:
+        try:
+            _vc.invalidate_stamp_cache(table)
+        except Exception as exc:  # noqa: BLE001 —— 缓存失效不能让写操作失败
+            logger.debug("[cache] 指纹短缓存失效失败: %s", exc)
 
 
 def cache_stats() -> Dict[str, Any]:

@@ -8,7 +8,7 @@ import logging
 import threading
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
 
 from app import crud
@@ -16,7 +16,9 @@ from app.database import SessionLocal
 from app.api.login import require_auth
 from app.utils import hotspot as hotspot_mod
 from app.utils import hotspot_trend
+from app.utils import http_cache
 from app.utils import llm_summary as llm_mod
+from app.utils import view_cache
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +112,8 @@ def hotspot_dates(auth: bool = Depends(require_auth)):
 
 
 @router.get("/hotspot/trend")
-def get_hotspot_trend(days: int = Query(60, ge=1, le=60,
+def get_hotspot_trend(request: Request, response: Response,
+                      days: int = Query(60, ge=1, le=60,
                                         description="最近 N 份有日报的交易日，默认全部（上限 60）"),
                       auth: bool = Depends(require_auth)):
     """热点趋势：把历次「今日主线」摊成「行业 × 交易日」点阵。
@@ -119,18 +122,36 @@ def get_hotspot_trend(days: int = Query(60, ge=1, le=60,
     两种粒度（主线大方向 / 细分行业）在 ``views`` 里各给一份 industries + points；
     页面已删掉区间 / 口径选择器，固定用 views.group + 全部可用交易日（60 上限），
     sector 仍保留供其它调用方复用。历史从该表有数据的那天算起，不回填更早日期。
-    """
-    db = SessionLocal()
-    try:
-        reports = crud.list_hotspot_reports(db, limit=days)
-    finally:
-        try:
-            db.close()
-        except Exception:  # noqa: BLE001
-            pass
 
-    data = hotspot_trend.build_trend(reports)
-    return {"status": "ok", "source": "daily_hotspots", **data}
+    每开一次页都要把几十天的日报 payload 拉回来在 Python 里裁 themes，属于
+    「每天只变一次、却每次都重算」的典型；整份响应走 view_cache + ETag。
+    days 纳入 view_key，不同窗口不共用快照。
+    """
+    key = f"hotspot_trend:{days}"
+    tag = http_cache.etag(key)
+    early = http_cache.not_modified(request, tag)
+    if early is not None:
+        return early
+
+    def build():
+        try:
+            db = SessionLocal()
+            try:
+                reports = crud.list_hotspot_reports(db, limit=days)
+            finally:
+                try:
+                    db.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            data = hotspot_trend.build_trend(reports)
+            return {"status": "ok", "source": "daily_hotspots", **data}
+        except Exception as e:  # noqa: BLE001
+            logger.error("获取热点趋势失败: %s", e, exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    result = view_cache.get_or_build(key, build)
+    http_cache.apply_for(response, tag, result)
+    return result
 
 
 # ================================================================ AI 盘面解读

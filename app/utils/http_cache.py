@@ -17,6 +17,7 @@ max-age，用户在窗口内会继续看到旧读数，还得解释「等一会�
 fetchWithAuth 的 `response.ok` 判断不用改。
 """
 import hashlib
+from typing import Any
 
 from fastapi import Request, Response
 
@@ -44,3 +45,16 @@ def not_modified(request: Request, tag: str):
 def apply(response: Response, tag: str) -> None:
     response.headers["ETag"] = tag
     response.headers["Cache-Control"] = CACHE_CONTROL
+
+
+def apply_for(response: Response, tag: str, payload: Any) -> None:
+    """按响应内容决定要不要挂 ETag。
+
+    builder 失败时返回 status=error 且**不落快照**，但 ETag 只由指纹算出，
+    指纹没变 tag 就不变。若照常挂 ETag，浏览器下一次条件请求会拿到 304，
+    把这份 error 钉在缓存里，数据恢复后仍显示失败。错误响应一律 no-store。
+    """
+    if isinstance(payload, dict) and payload.get("status") == "error":
+        response.headers["Cache-Control"] = "no-store"
+        return
+    apply(response, tag)

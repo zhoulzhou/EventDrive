@@ -227,7 +227,7 @@ def get_stock_temp(request: Request, response: Response,
 
     # 物化快照：命中时只读两行（数据指纹 + 快照），不再每次重算全部分位/摆动
     result = view_cache.get_or_build("stock_temp", build)
-    http_cache.apply(response, tag)
+    http_cache.apply_for(response, tag, result)
     return result
 
 
@@ -312,6 +312,8 @@ def probe_sources(auth: bool = Depends(require_auth)):
 
 @router.get("/stock-temp/series")
 def get_stock_temp_series(
+    request: Request,
+    response: Response,
     per_key: int = 6000,
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
@@ -325,54 +327,69 @@ def get_stock_temp_series(
     「热度趋势」页只展示各指标曲线，数据**全部来自历史表**、从现在开始逐日积累
     （定时任务每天收盘抓一次写入），不再做历史回溯、不再实时重建。
     综合温度取每次刷新写入的打卡记录（key="temperature"），三层温度从其 detail 解析。
+
+    这段序列每次开页都要按 key 批量扫历史表，是云库扫行大户；数据只在收盘抓取
+    时变，所以整份响应走 view_cache 物化快照 + ETag 协商缓存，命中即一次点查返回。
+    per_key 纳入 view_key，避免不同窗口的快照串味。
     """
-    try:
-        per_key = max(10, min(int(per_key or 6000), 20000))
-        chart_keys = list(st.CHART_KEYS) + ["temperature"]
-        grouped = crud.get_stock_temp_history_series(db, chart_keys, per_key_limit=per_key)
+    per_key = max(10, min(int(per_key or 6000), 20000))
+    key = f"stock_temp_series:{per_key}"
+    tag = http_cache.etag(key)
+    early = http_cache.not_modified(request, tag)
+    if early is not None:
+        return early
 
-        series = {}
-        counts = {}
-        for key in st.CHART_KEYS:
-            rows = grouped.get(key) or []
-            pts = [
-                {"as_of": r.as_of, "value": r.value, "source": r.source}
-                for r in rows if r.value is not None and r.as_of
-            ]
-            series[key] = pts
-            counts[key] = len(pts)
+    def build():
+        try:
+            chart_keys = list(st.CHART_KEYS) + ["temperature"]
+            grouped = crud.get_stock_temp_history_series(db, chart_keys, per_key_limit=per_key)
 
-        daily = []
-        for r in grouped.get("temperature") or []:
-            if r.value is None or not r.as_of:
-                continue
-            d = st.load_detail(r.detail) or {}
-            row = {"as_of": r.as_of, "total": r.value}
-            for field in st.TEMP_TRACK_KEYS:
-                if field == "total":
+            series = {}
+            counts = {}
+            for k in st.CHART_KEYS:
+                rows = grouped.get(k) or []
+                pts = [
+                    {"as_of": r.as_of, "value": r.value, "source": r.source}
+                    for r in rows if r.value is not None and r.as_of
+                ]
+                series[k] = pts
+                counts[k] = len(pts)
+
+            daily = []
+            for r in grouped.get("temperature") or []:
+                if r.value is None or not r.as_of:
                     continue
-                v = d.get(st.TEMP_LAYER_NAMES.get(field, ""))
-                row[field] = v if isinstance(v, (int, float)) else None
-            spread = d.get("三层分离度(pp)")
-            row["spread"] = spread if isinstance(spread, (int, float)) else None
-            daily.append(row)
+                d = st.load_detail(r.detail) or {}
+                row = {"as_of": r.as_of, "total": r.value}
+                for field in st.TEMP_TRACK_KEYS:
+                    if field == "total":
+                        continue
+                    v = d.get(st.TEMP_LAYER_NAMES.get(field, ""))
+                    row[field] = v if isinstance(v, (int, float)) else None
+                spread = d.get("三层分离度(pp)")
+                row["spread"] = spread if isinstance(spread, (int, float)) else None
+                daily.append(row)
 
-        return {
-            "status": "ok",
-            "series": series,
-            "temperature": {
-                "daily": daily,
-                "note": (
-                    "综合温度为每次收盘刷新时写入的打卡记录，三层温度取自同一记录的明细。"
-                    "自启用起逐日积累，样本少时仅供参考。"
-                ),
-            },
-            "counts": counts,
-            "total": sum(counts.values()),
-        }
-    except Exception as e:
-        logger.error("获取股票指标序列失败: %s", e, exc_info=True)
-        return {"status": "error", "message": str(e)}
+            return {
+                "status": "ok",
+                "series": series,
+                "temperature": {
+                    "daily": daily,
+                    "note": (
+                        "综合温度为每次收盘刷新时写入的打卡记录，三层温度取自同一记录的明细。"
+                        "自启用起逐日积累，样本少时仅供参考。"
+                    ),
+                },
+                "counts": counts,
+                "total": sum(counts.values()),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.error("获取股票指标序列失败: %s", e, exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    result = view_cache.get_or_build(key, build)
+    http_cache.apply_for(response, tag, result)
+    return result
 
 
 @router.get("/stock-temp/history")
