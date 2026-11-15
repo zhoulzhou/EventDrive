@@ -214,10 +214,12 @@ def close_client() -> None:
 #   1. **请求内去重**：同一请求里多次查同一张表/同一条件，第二次起零往返；
 #   2. **跨请求缓存**：数据日更，重复打开页面不必反复取。
 #
-# 一致性
-# ------
-# **任何写操作（POST / PATCH / DELETE）成功后整体失效**。抓取任务写库之后，
-# 下一次读必然回源，不会出现「抓完还是旧数据」。默认 TTL 120 秒只作用于纯读。
+# 一致性（2026-11-15 阶段 B）
+# --------------------------
+# **写操作成功后按表失效**（只清该表的条目）。抓取时频繁写 crawl_logs 不再把
+# news / macro_indicators 等无关页一起打回源；写哪张表，下次读哪张表才回源。
+# TTL 自然过期后走 SWR：先返旧值、后台单线程刷新；这段窗口内没有任何写操作，
+# 数据不可能变，所以不会读到脏值。并发回源由 single-flight 合并成一次。
 #
 # 为什么不缓存到内存里的 Row 对象：Row 会被调用方原地修改（如补字段），
 # 缓存字节流、每次重新解析成新 Row，能避免调用方互相污染。
@@ -227,8 +229,14 @@ _CACHE_MAX_ITEM_BYTES = 2 * 1024 * 1024      # 单条上限：大响应不值得
 _CACHE_MAX_BYTES = 32 * 1024 * 1024          # 总量上限（沙箱内存有限，留足余量）
 _cache: "OrderedDict[str, Tuple[float, int, bytes, Dict[str, str]]]" = OrderedDict()
 _cache_bytes = 0
-_cache_stat = {"hit": 0, "miss": 0, "invalidate": 0}
+_cache_stat = {"hit": 0, "miss": 0, "invalidate": 0,
+               "stale": 0, "merged": 0, "refresh": 0}
 _cache_lock = threading.Lock()
+
+# single-flight：同一个缓存 key 只允许一个线程真正回源，其余等待结果。
+# 沙箱回收后冷启动会有多个页面同时打进来，没有这层就是 N 次重复查询。
+_inflight: Dict[str, threading.Event] = {}
+_inflight_lock = threading.Lock()
 
 
 def _cache_ttl() -> float:
@@ -246,47 +254,77 @@ def _cache_key(path: str, params: Optional[Dict[str, Any]]) -> str:
     return path + "?" + "&".join(f"{k}={v}" for k, v in items)
 
 
-def clear_cache() -> None:
-    """清空读缓存（写操作后自动调用；测试与「抓取完成后强刷」也可手动调）。"""
+def _path_table(path: str) -> str:
+    """从 REST 路径里取表名：'/news|count=exact' → 'news'。"""
+    return path.lstrip("/").split("?", 1)[0].split("|", 1)[0].split("/", 1)[0]
+
+
+def _entry_table(key: str) -> str:
+    return _path_table(key.split("?", 1)[0])
+
+
+def clear_cache(table: Optional[str] = None) -> None:
+    """写操作后失效缓存。
+
+    传 table 时**只清该表**的条目：抓取时频繁写 crawl_logs 不再把 news /
+    macro_indicators 等无关页的缓存一起打回源。不带参数仍是整体失效（手动强刷用）。
+    """
     global _cache_bytes
     with _cache_lock:
-        _cache.clear()
-        _cache_bytes = 0
+        if table:
+            victims = [k for k in _cache if _entry_table(k) == table]
+            for k in victims:
+                item = _cache.pop(k, None)
+                if item is not None:
+                    _cache_bytes -= len(item[2])
+        else:
+            _cache.clear()
+            _cache_bytes = 0
         _cache_stat["invalidate"] += 1
 
 
 def cache_stats() -> Dict[str, Any]:
     """缓存命中情况，用于排查「页面为什么还慢」。"""
-    with _cache_lock:
+    with _cache_lock, _inflight_lock:
         return {
             "ttl": _cache_ttl(),
             "entries": len(_cache),
             "bytes": _cache_bytes,
+            "inflight": len(_inflight),
             **_cache_stat,
         }
 
 
-def _cache_get(key: str) -> Optional[Tuple[int, bytes, Dict[str, str]]]:
+def _cache_get(key: str) -> Tuple[Optional[Tuple[int, bytes, Dict[str, str]]], bool]:
+    """返回 (缓存项, 是否为过期旧值)。
+
+    过期后不立刻删：在 SWR 窗口（再一个 TTL）内先把旧值给用户，后台异步刷新。
+    数据真变了会有写操作触发 clear_cache(table=...) 直接删条目，不会走 SWR，
+    所以「先返旧值」只发生在没有任何写操作、数据不可能变的场景。
+    """
     global _cache_bytes
     ttl = _cache_ttl()
     if ttl <= 0:
-        return None
+        return None, False
     now = time.time()
     with _cache_lock:
         item = _cache.get(key)
         if item is None:
             _cache_stat["miss"] += 1
-            return None
+            return None, False
         expire_at, status, body, headers = item
-        if expire_at <= now:
-            # 过期就地摘掉（顺带修正字节计数）
-            _cache.pop(key, None)
-            _cache_bytes -= len(body)
-            _cache_stat["miss"] += 1
-            return None
-        _cache.move_to_end(key)          # LRU：命中的挪到队尾
-        _cache_stat["hit"] += 1
-        return status, body, headers
+        cached = (status, body, headers)
+        if expire_at > now:
+            _cache.move_to_end(key)          # LRU：命中的挪到队尾
+            _cache_stat["hit"] += 1
+            return cached, False
+        if now - expire_at <= ttl:
+            _cache_stat["stale"] += 1
+            return cached, True
+        _cache.pop(key, None)
+        _cache_bytes -= len(body)
+        _cache_stat["miss"] += 1
+        return None, False
 
 
 def _cache_put(key: str, status: int, body: bytes, headers: Dict[str, str]) -> None:
@@ -312,44 +350,109 @@ def _cache_put(key: str, status: int, body: bytes, headers: Dict[str, str]) -> N
 
 # ================================================================ 请求封装
 
-def _request(method: str, path: str, *, params: Optional[Dict[str, Any]] = None,
-             json_body: Any = None, prefer: Optional[str] = None
-             ) -> httpx.Response:
-    """发一次请求（GET 走读缓存）；非 2xx 抛 CloudDBError（带状态码与响应片段便于定位）。"""
-    is_read = method.upper() == "GET"
-    # Prefer 会改变响应语义（如 count=exact 返回总数而非数据行），
-    # 必须参与缓存 key，否则计数请求会命中同参数普通查询的缓存。
-    key = _cache_key(f"{path}|{prefer}" if prefer else path, params) if is_read else ""
+def _keep_headers(resp: httpx.Response) -> Dict[str, str]:
+    """只留调用方用得上的头（content-type 决定 .json() 的解析方式）。"""
+    return {k: v for k, v in resp.headers.items()
+            if k.lower() in ("content-type", "content-range")}
 
-    if is_read:
-        cached = _cache_get(key)
-        if cached is not None:
-            status, body, headers = cached
-            return httpx.Response(status_code=status, content=body, headers=headers)
 
+def _from_cache(item: Tuple[int, bytes, Dict[str, str]]) -> httpx.Response:
+    status, body, headers = item
+    return httpx.Response(status_code=status, content=body, headers=headers)
+
+
+def _send(method: str, path: str, *, params=None, json_body=None,
+          prefer: Optional[str] = None) -> httpx.Response:
+    """真正发一次请求（不含缓存逻辑），供 _request 与 SWR 后台线程共用。"""
     headers = {"Prefer": prefer} if prefer else None
     try:
         resp = _client_instance().request(
-            method, f"{REST_PREFIX}{path}", params=params, json=json_body, headers=headers
+            method, f"{REST_PREFIX}{path}", params=params,
+            json=json_body, headers=headers,
         )
     except httpx.HTTPError as e:
         raise CloudDBError(f"云数据库请求失败: {method} {path}: {e}") from e
-
     if resp.status_code >= 400:
         raise CloudDBError(
             f"云数据库返回 {resp.status_code}: {method} {path}: {resp.text[:300]}"
         )
-
-    if is_read:
-        # 只留调用方用得上的头（content-type 决定 .json() 的解析方式）
-        keep = {k: v for k, v in resp.headers.items()
-                if k.lower() in ("content-type", "content-range")}
-        _cache_put(key, resp.status_code, resp.content, keep)
-    else:
-        # 写成功 → 整体失效：宁可多回源，也不能让页面看到写之前的旧值
-        clear_cache()
-
     return resp
+
+
+def _spawn_refresh(key: str, path: str, params, prefer) -> None:
+    """SWR：同 key 只起一个后台刷新线程，用户不等回源。"""
+    with _inflight_lock:
+        if key in _inflight:
+            return
+        event = threading.Event()
+        _inflight[key] = event
+
+    def worker():
+        try:
+            resp = _send("GET", path, params=params, prefer=prefer)
+            if resp.status_code == 200:
+                _cache_put(key, 200, resp.content, _keep_headers(resp))
+            _cache_stat["refresh"] += 1
+        except Exception as exc:  # noqa: BLE001 —— 后台刷新失败不影响用户
+            logger.debug("[cloud_db] SWR 刷新失败 %s: %s", key, exc)
+        finally:
+            with _inflight_lock:
+                _inflight.pop(key, None)
+            event.set()
+
+    threading.Thread(target=worker, daemon=True, name="cdb-swr").start()
+
+
+def _single_flight(key: str, fetch) -> httpx.Response:
+    """未命中时合并并发回源：第一个线程执行，其余等结果后读缓存。"""
+    with _inflight_lock:
+        event = _inflight.get(key)
+        leader = event is None
+        if leader:
+            event = threading.Event()
+            _inflight[key] = event
+    if not leader:
+        _cache_stat["merged"] += 1
+        event.wait(timeout=10)
+        cached, _ = _cache_get(key)
+        if cached is not None:
+            return _from_cache(cached)
+        return fetch()
+    try:
+        return fetch()
+    finally:
+        with _inflight_lock:
+            _inflight.pop(key, None)
+        event.set()
+
+
+def _request(method: str, path: str, *, params: Optional[Dict[str, Any]] = None,
+             json_body: Any = None, prefer: Optional[str] = None
+             ) -> httpx.Response:
+    """发一次请求（GET 走读缓存）；非 2xx 抛 CloudDBError（带状态码与响应片段便于定位）。"""
+    # 写成功 → 只清这张表的缓存：宁可多回源，也不能让页面看到写之前的旧值
+    if method.upper() != "GET":
+        resp = _send(method, path, params=params, json_body=json_body, prefer=prefer)
+        clear_cache(table=_path_table(path))
+        return resp
+
+    # Prefer 会改变响应语义（如 count=exact 返回总数而非数据行），
+    # 必须参与缓存 key，否则计数请求会命中同参数普通查询的缓存。
+    key = _cache_key(f"{path}|{prefer}" if prefer else path, params)
+
+    cached, stale = _cache_get(key)
+    if cached is not None:
+        if stale:
+            _spawn_refresh(key, path, params, prefer)
+        return _from_cache(cached)
+
+    def fetch():
+        resp = _send("GET", path, params=params, prefer=prefer)
+        if resp.status_code == 200:
+            _cache_put(key, 200, resp.content, _keep_headers(resp))
+        return resp
+
+    return _single_flight(key, fetch)
 
 
 def _safe(method: str, path: str, *, default: Any = None,
