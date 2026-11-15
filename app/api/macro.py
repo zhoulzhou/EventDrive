@@ -46,6 +46,7 @@ from app.api.login import require_auth
 from app.utils import macro_backfill as mbf
 from app.utils import macro_indicators as mi
 from app.utils import macro_refresh as mrf
+from app.utils import view_cache
 
 logger = logging.getLogger(__name__)
 
@@ -185,13 +186,16 @@ def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth))
     春节错月 / 定位边界四条，定义见 macro_thermometer.MODEL_LIMITS），页面原样渲染；
     指标卡片的 `season_tag` 是上述 ②③ 两条的落地标记（不参与打分，仅提示别把季节性当趋势）。
     """
-    try:
-        crud.seed_macro_fallbacks(db, mi.FALLBACK_DEFAULTS)
-        crud.seed_macro_history_from_snapshot(db)
-        return _payload(db, 0, {})
-    except Exception as e:
-        logger.error("获取市场指标失败: %s", e, exc_info=True)
-        return {"status": "error", "message": str(e)}
+    def build():
+        try:
+            crud.seed_macro_fallbacks(db, mi.FALLBACK_DEFAULTS)
+            crud.seed_macro_history_from_snapshot(db)
+            return _payload(db, 0, {})
+        except Exception as e:
+            logger.error("获取市场指标失败: %s", e, exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    return view_cache.get_or_build("macro", build)
 
 
 @router.post("/macro/refresh")

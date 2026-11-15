@@ -41,6 +41,7 @@ from app.api.login import require_auth
 from app.utils import greed_index as greed_index_mod
 from app.utils import stock_temp as st
 from app.utils import stock_temp_refresh as srf
+from app.utils import view_cache
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +210,16 @@ def get_stock_temp(db: Session = Depends(get_db), auth: bool = Depends(require_a
     数据由 `./start.sh` 启动的定时任务在**北京时间每天 16:00** 抓取写入；需要立刻更新时
     走 POST /api/stock-temp/refresh（页面「刷新数据」按钮）。
     """
-    try:
-        crud.seed_stock_temp_history_from_snapshot(db)
-        return _payload(db, 0, {})
-    except Exception as e:
-        logger.error("获取股票指标失败: %s", e, exc_info=True)
-        return {"status": "error", "message": str(e)}
+    def build():
+        try:
+            crud.seed_stock_temp_history_from_snapshot(db)
+            return _payload(db, 0, {})
+        except Exception as e:
+            logger.error("获取股票指标失败: %s", e, exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    # 物化快照：命中时只读两行（数据指纹 + 快照），不再每次重算全部分位/摆动
+    return view_cache.get_or_build("stock_temp", build)
 
 
 @router.post("/stock-temp/refresh")

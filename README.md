@@ -202,6 +202,30 @@ cp .env.example .env
 > 关键词搜索仍走「整表拉取 + 内存过滤」的慢路径：关键词是「标题或正文」的多组 OR，
 > 下推给 PostgREST 易出错，且属于低频操作。
 
+### 3.2 页面物化快照（2026-11-15）
+
+3.1 的缓存住在**进程内**。实测 `crawl_logs(task=instance_boot)` 近 14 天 273 个间隔，
+中位数只有 **420 秒**：沙箱一回收缓存全空，TTL 再长也用不满；写操作的
+`clear_cache()` 还会整体失效。因此再拉长 TTL 没有意义，改为把「算好的整页 JSON」
+写进云库 `view_snapshots` 一行（`app/utils/view_cache.py`）：
+
+| 项 | 说明 |
+|---|---|
+| 读路径 | ① 轻量查询取数据指纹（业务表最新时间戳/日期，1 行）→ ② 主键点查快照（1 行）→ 命中直接返回；这两次查询本身还会命中 3.1 的进程内缓存 |
+| 原来 | 每次请求重算分位/摆动/温度计，约 5~10 次事务、每事务扫数百上千行 |
+| 重建 | 指纹变化、`schema_version` 变化、超过 `MAX_AGE_HOURS=30` 或快照缺失时，调原实时计算并回填 |
+| 覆盖 | `/api/stock-temp`、`/api/macro`、`/api/a-share`（`a_share` 的 view_key 带 `since`） |
+| 降级 | 表不存在 / 权限 / JSON / 网络异常一律回退原实时计算，页面不会 500；本地 SQLite 模式不启用 |
+| 错误响应 | `status=error` 不落快照，避免把错误页缓存起来 |
+
+**表由平台云服务迁移建**（`CREATE TABLE` + `ENABLE ROW LEVEL SECURITY` + `GRANT` 给
+`authenticated, anon` + 4 条 `USING(true)` 策略），不走 ORM `create_all`，也不会被发布覆盖。
+改指标口径时必须把 `view_cache.SCHEMA_VERSION` +1，否则旧快照会继续展示旧口径。
+
+不做「写操作后删快照」：`cloud_db` 每次写都会调 `clear_cache()`，若在其中再发 DELETE
+会经 `_request` 再次触发 `clear_cache()` 形成递归，抓取期还会产生大量删除。指纹比对
+是纯读、无副作用，也不怕后台线程被回收腰斩。
+
 
 ### 4. 初始化数据库
 

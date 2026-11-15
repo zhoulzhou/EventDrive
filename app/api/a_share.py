@@ -19,6 +19,7 @@ from app.database import get_db
 from app.utils.etf_flow import BROAD_ETF_POOL, NAME as FLOW_NAME, SYMBOL as FLOW_SYMBOL, UNIT as FLOW_UNIT
 from app.utils.index_daily import INDEX_SERIES, SYMBOLS, UNIT, ytd_start
 from app.utils.index_swing import compute_swing, threshold_for
+from app.utils import view_cache
 
 logger = logging.getLogger(__name__)
 
@@ -137,32 +138,42 @@ def get_a_share(
     缺数据时返回 points=[]，由页面提示「尚未回填」而不是报错。
     """
     start = since or ytd_start()
-    try:
-        symbols = list(SYMBOLS) + [FLOW_SYMBOL]
-        rows_map = crud.get_market_history_multi(db, symbols, since=start)
-        items = [_build_item(meta, rows_map.get(meta["symbol"]) or [])
-                 for meta in INDEX_SERIES]
-        # 阈值摆动（上证 ±10% / 科创50 ±20%）：当前值相对运行高低点的偏离
-        # → 卡片红底分级；历史每次跨阈值的事件 → 曲线标记。阈值从配置读，
-        # 未启用或无数据时不挂字段，前端按无数据处理。
-        for it in items:
-            pct = threshold_for(it["symbol"])
-            it["swing"] = compute_swing(it["points"], pct) if pct and it["points"] else None
-        net_flow = _build_net_flow(rows_map.get(FLOW_SYMBOL) or [])
-        has_data = any(it["points"] for it in items)
-        return {
-            "status": "ok",
-            "items": items,
-            "net_flow": net_flow,
-            "since": start,
-            "today": date.today().isoformat(),
-            "has_data": has_data,
-            "source": SOURCE_HINT,
-            "updated_at": date.today().isoformat(),
-        }
-    except Exception as e:  # noqa: BLE001
-        logger.error("获取 A 股指数行情失败: %s", e, exc_info=True)
-        return {"status": "error", "message": str(e)}
+
+    def build():
+        try:
+            symbols = list(SYMBOLS) + [FLOW_SYMBOL]
+            rows_map = crud.get_market_history_multi(db, symbols, since=start)
+            items = [_build_item(meta, rows_map.get(meta["symbol"]) or [])
+                     for meta in INDEX_SERIES]
+            # 阈值摆动（上证 ±10% / 科创50 ±20%）：当前值相对运行高低点的偏离
+            # → 卡片红底分级；历史每次跨阈值的事件 → 曲线标记。阈值从配置读，
+            # 未启用或无数据时不挂字段，前端按无数据处理。
+            for it in items:
+                pct = threshold_for(it["symbol"])
+                it["swing"] = compute_swing(it["points"], pct) if pct and it["points"] else None
+            net_flow = _build_net_flow(rows_map.get(FLOW_SYMBOL) or [])
+            has_data = any(it["points"] for it in items)
+            return {
+                "status": "ok",
+                "items": items,
+                "net_flow": net_flow,
+                "since": start,
+                "today": date.today().isoformat(),
+                "has_data": has_data,
+                "source": SOURCE_HINT,
+                "updated_at": date.today().isoformat(),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.error("获取 A 股指数行情失败: %s", e, exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    result = view_cache.get_or_build(f"a_share:{since or ''}", build)
+    # 这两个字段原本每次请求取当天，快照命中时也要保持同样语义
+    if isinstance(result, dict) and result.get("status") == "ok":
+        result = dict(result)
+        result["today"] = date.today().isoformat()
+        result["updated_at"] = date.today().isoformat()
+    return result
 
 
 @router.post("/a-share/refresh")
