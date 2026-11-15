@@ -805,7 +805,7 @@ body {
 /* main.js 自动把 .page-header 内的 .form-hint 包进 .page-intro，无需逐页改模板。
    只有超过两行才裁切并显示「显示全部」；短说明不裁切、不显示按钮。
    页面内 <details> 里、图表下方的 .form-hint 不在 .page-header 内，不受影响。 */
-.page-intro { margin-top: 0.35rem; }
+.page-intro { position: relative; margin-top: 0.35rem; }
 .page-intro .intro-body .form-hint {
     margin: 0 0 0.45rem;
     line-height: 1.7;
@@ -817,17 +817,36 @@ body {
     max-height: var(--intro-clamp, 3.4em);
 }
 .page-intro .intro-body.is-clamped .form-hint { margin: 0; }
+
+/* 按钮不单独占一行：由 main.js 量出「当前显示内容最后一行的文字末尾」，
+   把按钮绝对定位到那个 x 上（bottom 贴该行底），视觉上就是「……显示全部」。
+   行末放不下时才退回右端 + 渐隐区（.intro-fade）。
+   --intro-bg 由 main.js 读取最近的实色祖先背景写入，兼容白底卡片页。 */
 .page-intro .intro-toggle {
+    position: absolute;
+    bottom: 0;
+    z-index: 1;
     display: inline-block;
-    margin-top: 0.45rem;
-    padding: 0.12rem 0.65rem;
-    border: 1px solid #d8dee9;
+    margin: 0;
+    padding: 0.05rem 0.3rem;
+    border: 0;
     border-radius: 6px;
-    background: #f7f9fc;
+    background: transparent;
     color: #3f6ea8;
     font-size: 0.78rem;
     line-height: 1.7;
+    white-space: nowrap;
     cursor: pointer;
 }
-.page-intro .intro-toggle:hover { background: #eaf2fc; border-color: #b8cbe4; }
+/* 折叠态补省略号，接在第二行文字末尾；展开态只显示「收起」 */
+.page-intro .intro-toggle::before { content: '…'; margin-right: 0.15rem; color: #7c8797; }
+.page-intro.expanded .intro-toggle::before { content: ''; margin: 0; }
+.page-intro .intro-toggle:hover { color: #1d4f8c; text-decoration: underline; }
 .page-intro .intro-toggle[hidden] { display: none; }
+
+/* 行末剩余宽度不够：按钮贴右端，左侧渐隐盖住被截断的字 */
+.page-intro.intro-fade .intro-toggle {
+    padding-left: 2.9rem;
+    background: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, var(--intro-bg, #f5f5f5) 2.7rem);
+}
+.page-intro.intro-fade .intro-toggle:hover { text-decoration: none; }

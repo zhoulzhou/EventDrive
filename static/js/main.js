@@ -116,6 +116,68 @@ async function fetchWithAuth(url, options = {}) {
  * 只取 .page-header 的直接子元素，所以 <details> 内、图表下方的说明不受影响。
  */
 (function initPageIntro() {
+    /* 渐隐区要跟页面背景同色。部分页面把页头放在白色卡片里，
+       写死 #f5f5f5 会出现色块，所以往上找第一个不透明实色背景。 */
+    function detectBg(el) {
+        var node = el.parentElement;
+        while (node && node !== document.documentElement) {
+            var c = window.getComputedStyle(node).backgroundColor || '';
+            var m = c.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/);
+            if (m && (!m[4] || parseFloat(m[4]) >= 0.95)) return c;
+            node = node.parentElement;
+        }
+        return window.getComputedStyle(document.body).backgroundColor || '#f5f5f5';
+    }
+
+    /* 量出「当前可见内容最后一行」的文字右边界（相对 wrap 左边）。
+       Range 对跨行文本节点按行返回多个矩形，无需逐字符测量。
+       折叠态只认第二行；展开态认全文最后一行。 */
+    function lastLineRight(body, wrap, lineHeight, clamped) {
+        var wrapRect = wrap.getBoundingClientRect();
+        var bodyTop = body.getBoundingClientRect().top;
+        var minTop = clamped ? bodyTop + lineHeight - 3 : -Infinity;
+        var maxTop = clamped ? bodyTop + 2 * lineHeight - 3 : Infinity;
+        var bestTop = -Infinity;
+        var maxRight = wrapRect.left;
+        var walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+        var node;
+        while ((node = walker.nextNode())) {
+            if (!node.nodeValue || !node.nodeValue.trim()) continue;
+            var range = document.createRange();
+            range.selectNodeContents(node);
+            var rects = range.getClientRects();
+            for (var i = 0; i < rects.length; i++) {
+                var r = rects[i];
+                if (r.top < minTop || r.top >= maxTop) continue;
+                if (r.top > bestTop + 2) {
+                    bestTop = r.top;
+                    maxRight = r.right;
+                } else if (r.top >= bestTop - 2 && r.right > maxRight) {
+                    maxRight = r.right;
+                }
+            }
+        }
+        return Math.max(0, maxRight - wrapRect.left);
+    }
+
+    /* 把按钮放到该行文字末尾；剩余宽度不够时退回右端 + 渐隐遮罩。 */
+    function placeBtn(wrap, body, btn, lineHeight, clamped) {
+        if (btn.hidden) return;
+        wrap.classList.remove('intro-fade');
+        btn.style.left = '0';
+        btn.style.right = 'auto';
+        var wrapWidth = wrap.getBoundingClientRect().width;
+        var btnWidth = btn.offsetWidth;
+        var x = lastLineRight(body, wrap, lineHeight, clamped);
+        if (x + btnWidth + 6 <= wrapWidth) {
+            btn.style.left = (x + 6) + 'px';
+        } else {
+            wrap.classList.add('intro-fade');
+            btn.style.left = 'auto';
+            btn.style.right = '0';
+        }
+    }
+
     function setup() {
         document.querySelectorAll('.page-header').forEach(function (header) {
             var hints = Array.prototype.filter.call(header.children, function (el) {
@@ -128,6 +190,7 @@ async function fetchWithAuth(url, options = {}) {
             var body = document.createElement('div');
             body.className = 'intro-body';
             header.insertBefore(wrap, hints[0]);
+            wrap.style.setProperty('--intro-bg', detectBg(wrap));
             hints.forEach(function (h) { body.appendChild(h); });
             wrap.appendChild(body);
 
@@ -140,11 +203,12 @@ async function fetchWithAuth(url, options = {}) {
             wrap.appendChild(btn);
 
             var expanded = false;
+            var lineHeight = 0;
             function measure() {
                 body.classList.remove('is-clamped');
                 var cs = window.getComputedStyle(hints[0]);
                 var fontSize = parseFloat(cs.fontSize) || 14;
-                var lineHeight = parseFloat(cs.lineHeight) || fontSize * 1.7;
+                lineHeight = parseFloat(cs.lineHeight) || fontSize * 1.7;
                 var twoLines = lineHeight * 2;
                 body.style.setProperty('--intro-clamp', twoLines + 'px');
                 var need = body.scrollHeight > twoLines + 2;
@@ -152,16 +216,20 @@ async function fetchWithAuth(url, options = {}) {
                 if (need && !expanded) body.classList.add('is-clamped');
                 if (!need) {
                     expanded = false;
+                    wrap.classList.remove('expanded');
                     btn.textContent = '显示全部';
                     btn.setAttribute('aria-expanded', 'false');
                 }
+                placeBtn(wrap, body, btn, lineHeight, body.classList.contains('is-clamped'));
             }
 
             btn.addEventListener('click', function () {
                 expanded = !expanded;
                 body.classList.toggle('is-clamped', !expanded);
+                wrap.classList.toggle('expanded', expanded);
                 btn.textContent = expanded ? '收起' : '显示全部';
                 btn.setAttribute('aria-expanded', String(expanded));
+                placeBtn(wrap, body, btn, lineHeight, !expanded);
             });
 
             measure();
