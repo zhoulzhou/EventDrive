@@ -96,9 +96,14 @@ class Settings:
     # 同一份数据被反复读，却每次都付一次完整往返。
     # 加读缓存后：命中时零往返，页面从 1~3 秒降到 0.2~0.4 秒（只剩反代开销）。
     #
-    # 一致性：**任何写操作成功后整体失效**（见 cloud_db._invalidate_cache），
-    # 所以「抓取完立刻刷新页面」不会读到旧值；120 秒只覆盖纯读场景。
-    CLOUD_DB_CACHE_TTL: float = float(os.getenv("CLOUD_DB_CACHE_TTL", "120"))
+    # 一致性：**任何写操作成功后整体失效**（见 cloud_db.clear_cache），
+    # 所以「抓取完立刻刷新页面」不会读到旧值；长 TTL 只作用于纯读场景。
+    #
+    # 为什么从 120s 提到 3600s：本应用数据是日更（9:15 / 21:34 两轮），
+    # 写后已整体失效，缓存久一点不会读到脏数据。云库按「数据库 CPU 用量 +
+    # 服务调用次数」计资源点，纯读回源同样要付费；实测一个计费周期里
+    # 大量消耗来自重复回源与全表扫描（而非 28MB 的存储容量）。
+    CLOUD_DB_CACHE_TTL: float = float(os.getenv("CLOUD_DB_CACHE_TTL", "3600"))
 
     # 市场指标自动抓取缓存有效期（小时）。超过则下次打开页面重新抓取
     MACRO_CACHE_TTL_HOURS: float = float(os.getenv("MACRO_CACHE_TTL_HOURS", "12"))

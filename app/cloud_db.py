@@ -317,7 +317,9 @@ def _request(method: str, path: str, *, params: Optional[Dict[str, Any]] = None,
              ) -> httpx.Response:
     """发一次请求（GET 走读缓存）；非 2xx 抛 CloudDBError（带状态码与响应片段便于定位）。"""
     is_read = method.upper() == "GET"
-    key = _cache_key(path, params) if is_read else ""
+    # Prefer 会改变响应语义（如 count=exact 返回总数而非数据行），
+    # 必须参与缓存 key，否则计数请求会命中同参数普通查询的缓存。
+    key = _cache_key(f"{path}|{prefer}" if prefer else path, params) if is_read else ""
 
     if is_read:
         cached = _cache_get(key)
@@ -446,7 +448,30 @@ def select_all(table: str, *, columns: str = "*",
 
 def count(table: str, *, filters: Optional[Dict[str, Any]] = None,
           context: str = "") -> int:
-    """统计行数（分页累计，规避网关 1000 行/次的硬限制与不可靠的 Content-Range）。"""
+    """统计行数：单次请求从 ``Content-Range`` 读总数，不再分页拉全表。
+
+    旧实现是 ``select_all(columns="id", max_rows=200000)``——把整表 id 分页
+    拉回内存再 ``len()``。刷新时判断「历史期数够不够」会反复调用，等于每次
+    都把表全扫一遍并付 N 次往返，是云数据库 CPU 用量的主要来源之一。
+
+    2026-11-15 实测本应用网关已支持 PostgREST 计数：
+      ``GET ?select=id&limit=0`` + ``Prefer: count=exact`` → 206
+      ``Content-Range: */2967``；带过滤 → ``0-0/163``。
+    旧注释「Content-Range 恒为 */* 不可靠」已过时，但保留降级路径：
+    万一平台变更拿不到总数，退回分页计数，绝不返回误导性的 0。
+    """
+    params: Dict[str, Any] = {"select": "id", "limit": 0}
+    for k, v in (filters or {}).items():
+        params[k] = "is.null" if v is None else v
+    resp = _safe("GET", f"/{table}", default=None, params=params,
+                 prefer="count=exact", context=context or f"count:{table}")
+    if resp is not None:
+        content_range = resp.headers.get("content-range", "") or ""
+        total = content_range.rsplit("/", 1)[-1].strip() if "/" in content_range else ""
+        if total.isdigit():
+            return int(total)
+        logger.warning("[cloud_db] %s 未返回可靠 Content-Range(%r)，降级分页计数",
+                       table, content_range)
     rows = select_all(table, columns="id", filters=filters, max_rows=200000,
                       context=context or f"count:{table}")
     return len(rows)
@@ -548,15 +573,21 @@ def upsert(table: str, rows: Sequence[Dict[str, Any]], *, on_conflict: str,
 
 
 def delete(table: str, *, filters: Optional[Dict[str, Any]] = None,
-           context: str = "") -> int:
-    """按条件删除，返回受影响行数。**filters 为空会拒绝执行**，防误删全表。"""
+           context: str = "", representation: bool = True) -> int:
+    """按条件删除，返回受影响行数。**filters 为空会拒绝执行**，防误删全表。
+
+    ``representation=False`` 用 ``return=minimal``：批量删除时不再把整批行
+    的 JSON 回传（龙虎榜单日席位可达数千行，回传本身要耗数据库 CPU 与流量），
+    此时返回值恒为 0；需要精确计数请先调用 ``count()``（单次 count=exact）。
+    """
     if not filters:
         logger.error("[cloud_db] 拒绝无条件的 DELETE: %s", table)
         return 0
     params = {k: ("is.null" if v is None else v) for k, v in filters.items()}
+    prefer = "return=representation" if representation else "return=minimal"
     resp = _safe("DELETE", f"/{table}", default=None, params=params,
-                 prefer="return=representation", context=context)
-    if resp is None:
+                 prefer=prefer, context=context)
+    if resp is None or not representation:
         return 0
     try:
         data = resp.json()
@@ -587,12 +618,18 @@ def fetch_history_series(table: str, keys: Iterable[str], per_key_limit: int = 3
         return result
 
     # 一次查全部（PostgREST 支持 in 过滤），避免每 key 一次往返
-    rows = select(
-        table,
-        filters={"key": "in.(" + ",".join(keys) + ")"},
-        order="key.asc,as_of.desc,id.desc",
-        context="fetch_history_series:" + table,
-    )
+    filters = {"key": "in.(" + ",".join(keys) + ")"}
+    order = "key.asc,as_of.desc,id.desc"
+    if fetch_all:
+        # 判重必须拿到完整序列：单次 GET 会被网关截断到 1000 行，而
+        # macro_indicator_history 已超过这个数，漏判会让同 (key, as_of)
+        # 被重复插入（多一次写远比多一次读贵）。页面读曲线仍走单次 select。
+        rows = select_all(table, filters=filters, order=order,
+                          max_rows=50000,
+                          context="fetch_history_series:" + table)
+    else:
+        rows = select(table, filters=filters, order=order,
+                      context="fetch_history_series:" + table)
     buckets: Dict[str, List[Row]] = {k: [] for k in keys}
     for row in rows:
         k = row["key"]

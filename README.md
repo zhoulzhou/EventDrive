@@ -178,7 +178,7 @@ cp .env.example .env
 | `TASK_DAILY_QUOTA` | `8` | akshare 类任务每日执行上限 |
 | `RELOAD_INDEX_DATA` | `false` | 置 1 强制重导 `index/*.csv` |
 | `MACRO_CACHE_TTL_HOURS` | `12` | 页面惰性抓取的缓存有效期 |
-| `CLOUD_DB_CACHE_TTL` | `120` | 云库读缓存有效期（秒），0 关闭。写操作后自动整体失效 |
+| `CLOUD_DB_CACHE_TTL` | `3600` | 云库读缓存有效期（秒），0 关闭。数据日更、写操作后自动整体失效，长 TTL 不影响一致性但能减少重复回源消耗资源点 |
 
 ### 3.1 云库读缓存（2026-10-24）
 

@@ -175,22 +175,33 @@ def get_news_list(
                 context="news:page",
             )
 
-        # ---- 慢路径：整表拉取后在内存里做关键词过滤与来源排序 ----
-        if all_history:
-            rows = _cdb.select_all(T_NEWS, order="publish_time.desc", max_rows=20000,
-                                   context="news:all_history")
-        else:
+        # ---- 慢路径：只在内存里做关键词过滤与来源优先级排序 ----
+        # 2026-11-15：时间窗与来源过滤下推给 PostgREST。原实现把整张 news 表
+        # （6000+ 行、8MB）分页拉回来再按时间裁，一次带关键词的页面加载要
+        # 6 次往返 + 全表扫描；下推后通常只剩几十行，语义完全不变。
+        # 「全部历史」是用户显式请求，仍拉全量。
+        filters: Dict[str, Any] = {}
+        since = None
+        if not all_history:
             if today_only:
                 since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             else:
                 since = datetime.now() - timedelta(hours=24)
-            rows = _cdb.select_all(
-                T_NEWS, order="publish_time.desc", max_rows=20000,
-                context="news:recent",
-            )
-            # 截断到秒再比：云库 TIMESTAMP 列只存到秒，写入时带的微秒会被丢弃，
-            # 若拿带微秒的 cutoff 去比，恰好落在边界上的那条会被误判为「超期」而丢掉。
+            # 截断到秒：云库 TIMESTAMP 只存到秒，带微秒的边界值会误判
             since = since.replace(microsecond=0)
+            filters["publish_time"] = f"gte.{since.isoformat(sep='T', timespec='seconds')}"
+        if source:
+            filters["source"] = f"eq.{source}"
+
+        rows = _cdb.select_all(
+            T_NEWS, filters=filters or None, order="publish_time.desc",
+            max_rows=20000,
+            context="news:all_history" if all_history else "news:recent",
+        )
+
+        if since is not None:
+            # 二次裁剪是防御性的：库里时间若为带时区字符串，服务端比较与
+            # Python 比较可能有边界差异，保留原行为确保不漏不重。
             rows = [r for r in rows
                     if (_as_utc(r["publish_time"]) or since) >= since]
 
@@ -1672,17 +1683,18 @@ def upsert_lhb_day(db: Session, records: List[dict], seats: List[dict]) -> Dict[
 def delete_lhb_day(db: Session, trade_date: str) -> int:
     """删除某个交易日的榜单与席位（重抓前清场）。返回删除行数。"""
     if _USE_CLOUD:
-        n = 0
-        n += len(_cdb.select(T_LHB_RECORD, columns="id",
-                             filters={"trade_date": f"eq.{trade_date}"},
-                             limit=_cdb.MAX_PAGE_ROWS, context="delete_lhb_record"))
-        n += len(_cdb.select(T_LHB_SEAT, columns="id",
-                             filters={"trade_date": f"eq.{trade_date}"},
-                             limit=_cdb.MAX_PAGE_ROWS, context="delete_lhb_seat"))
-        _cdb.delete(T_LHB_RECORD, filters={"trade_date": f"eq.{trade_date}"},
-                    context="delete_lhb_day")
-        _cdb.delete(T_LHB_SEAT, filters={"trade_date": f"eq.{trade_date}"},
-                    context="delete_lhb_day")
+        by_day = {"trade_date": f"eq.{trade_date}"}
+        # 旧实现先 SELECT 两遍（各最多 1000 行）只为数删除条数，再 DELETE 两遍
+        # 并把整批行 JSON 回传。改为：计数走单次 count=exact，删除走
+        # return=minimal，不再回传当日数千条席位，往返与回传量都降下来。
+        n = _cdb.count(T_LHB_RECORD, filters=by_day,
+                       context="delete_lhb_day:count")
+        n += _cdb.count(T_LHB_SEAT, filters=by_day,
+                        context="delete_lhb_day:count")
+        _cdb.delete(T_LHB_RECORD, filters=by_day,
+                    context="delete_lhb_day", representation=False)
+        _cdb.delete(T_LHB_SEAT, filters=by_day,
+                    context="delete_lhb_day", representation=False)
         return n
     n = db.query(models.LhbRecord).filter(
         models.LhbRecord.trade_date == trade_date).delete(synchronize_session=False)
