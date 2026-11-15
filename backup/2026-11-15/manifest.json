@@ -1,0 +1,121 @@
+{
+  "exported_at": "2026-11-15 14:20:25 (UTC+8)",
+  "source_host": "eventdrive-finance.app.workbuddy.host",
+  "method": "PostgREST GET，按主键排序分页（1000 行/页），全程只读",
+  "encoding": "UTF-8 with BOM（Excel 直接打开不乱码）",
+  "included_tables": 14,
+  "total_rows": 17128,
+  "total_csv_bytes": 6092606,
+  "excluded": [
+    {
+      "table": "news",
+      "reason": "用户要求不导出新闻（5581 行 / 8.3 MB）"
+    },
+    {
+      "table": "index_history",
+      "reason": "用户要求不导出指数预警；该表唯一来源是随发布进 git 的 index/ 4 个 CSV，可从代码库恢复"
+    }
+  ],
+  "tables": [
+    {
+      "table": "company_valuations",
+      "rows": 4,
+      "columns": 13,
+      "csv_bytes": 585,
+      "note": "两阶段 DCF 估值测算（用户录入，不可重建）"
+    },
+    {
+      "table": "crawl_logs",
+      "rows": 660,
+      "columns": 9,
+      "csv_bytes": 45152,
+      "note": "抓取日志与 instance_boot 重启记录（诊断依据）"
+    },
+    {
+      "table": "daily_hotspots",
+      "rows": 9,
+      "columns": 6,
+      "csv_bytes": 132765,
+      "note": "今日热点日报与 AI 归因载荷"
+    },
+    {
+      "table": "financial_reports",
+      "rows": 109,
+      "columns": 21,
+      "csv_bytes": 23166,
+      "note": "财报原始数据"
+    },
+    {
+      "table": "hot_sector_snapshots",
+      "rows": 15,
+      "columns": 20,
+      "csv_bytes": 18661,
+      "note": "热点板块快照"
+    },
+    {
+      "table": "lhb_records",
+      "rows": 1279,
+      "columns": 32,
+      "csv_bytes": 2236248,
+      "note": "龙虎榜个股记录"
+    },
+    {
+      "table": "lhb_seats",
+      "rows": 12788,
+      "columns": 15,
+      "csv_bytes": 3141792,
+      "note": "龙虎榜席位明细"
+    },
+    {
+      "table": "macro_indicator_history",
+      "rows": 1043,
+      "columns": 7,
+      "csv_bytes": 151032,
+      "note": "宏观指标历史（分位窗口依赖）"
+    },
+    {
+      "table": "macro_indicators",
+      "rows": 15,
+      "columns": 8,
+      "csv_bytes": 6884,
+      "note": "宏观指标当前值"
+    },
+    {
+      "table": "market_prices",
+      "rows": 872,
+      "columns": 8,
+      "csv_bytes": 91502,
+      "note": "市场行情 / A 股指数日线（/market 与 /a-share 共用）"
+    },
+    {
+      "table": "market_strategy_state",
+      "rows": 1,
+      "columns": 7,
+      "csv_bytes": 160,
+      "note": "峰值状态（曲线事件重放依赖）"
+    },
+    {
+      "table": "stock_temp_history",
+      "rows": 317,
+      "columns": 7,
+      "csv_bytes": 101440,
+      "note": "股市热度历史（分位窗口依赖）"
+    },
+    {
+      "table": "stock_temp_indicators",
+      "rows": 13,
+      "columns": 8,
+      "csv_bytes": 5631,
+      "note": "股市热度当前值"
+    },
+    {
+      "table": "view_snapshots",
+      "rows": 3,
+      "columns": 5,
+      "csv_bytes": 137588,
+      "note": "页面物化快照（可重建，顺带留存）"
+    }
+  ],
+  "errors": [],
+  "restore_hint": "CSV 为原始行快照；恢复时按主键 upsert 回同名表，时间戳列为 naive UTC。view_snapshots 为可重建缓存，可只恢复前 13 张。"
+}
