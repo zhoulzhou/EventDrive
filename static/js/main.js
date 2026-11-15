@@ -109,3 +109,78 @@ async function fetchWithAuth(url, options = {}) {
     throw new Error("服务暂时不可用（HTTP " + lastStatus + "）"
         + (attempts > 1 ? "，已自动重试仍失败，请稍后刷新页面" : "，请稍后重试"));
 }
+
+/* ==================== 页头长说明折叠 ====================
+ * 自动把 .page-header 内的 .form-hint 包进 .page-intro，默认只显示两行。
+ * 全局生效，新增页面无需改模板；内容不足两行时不裁切、不显示按钮。
+ * 只取 .page-header 的直接子元素，所以 <details> 内、图表下方的说明不受影响。
+ */
+(function initPageIntro() {
+    function setup() {
+        document.querySelectorAll('.page-header').forEach(function (header) {
+            var hints = Array.prototype.filter.call(header.children, function (el) {
+                return el.classList && el.classList.contains('form-hint');
+            });
+            if (!hints.length) return;
+
+            var wrap = document.createElement('div');
+            wrap.className = 'page-intro';
+            var body = document.createElement('div');
+            body.className = 'intro-body';
+            header.insertBefore(wrap, hints[0]);
+            hints.forEach(function (h) { body.appendChild(h); });
+            wrap.appendChild(body);
+
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'intro-toggle';
+            btn.textContent = '显示全部';
+            btn.setAttribute('aria-expanded', 'false');
+            btn.hidden = true;
+            wrap.appendChild(btn);
+
+            var expanded = false;
+            function measure() {
+                body.classList.remove('is-clamped');
+                var cs = window.getComputedStyle(hints[0]);
+                var fontSize = parseFloat(cs.fontSize) || 14;
+                var lineHeight = parseFloat(cs.lineHeight) || fontSize * 1.7;
+                var twoLines = lineHeight * 2;
+                body.style.setProperty('--intro-clamp', twoLines + 'px');
+                var need = body.scrollHeight > twoLines + 2;
+                btn.hidden = !need;
+                if (need && !expanded) body.classList.add('is-clamped');
+                if (!need) {
+                    expanded = false;
+                    btn.textContent = '显示全部';
+                    btn.setAttribute('aria-expanded', 'false');
+                }
+            }
+
+            btn.addEventListener('click', function () {
+                expanded = !expanded;
+                body.classList.toggle('is-clamped', !expanded);
+                btn.textContent = expanded ? '收起' : '显示全部';
+                btn.setAttribute('aria-expanded', String(expanded));
+            });
+
+            measure();
+            // 动态填充的说明（如 /market 的 #metaInfo）完成后重新测量
+            if (typeof MutationObserver !== 'undefined') {
+                var mo = new MutationObserver(function () {
+                    if (!expanded) measure();
+                });
+                mo.observe(body, { childList: true, subtree: true, characterData: true });
+            }
+            window.addEventListener('resize', function () {
+                if (!expanded) measure();
+            });
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setup);
+    } else {
+        setup();
+    }
+})();
