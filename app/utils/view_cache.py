@@ -131,6 +131,22 @@ def get_or_build(view_key: str, builder: Callable[[], Any],
         return builder()
 
 
+def peek_stamp(view_key: str) -> str:
+    """给 ETag 用的轻量指纹：数据指纹 + 快照构建时间。
+
+    只走 _stamp / _read 两次点查（多数会被 cloud_db 的进程内缓存命中），
+    不跑 builder。异常返回空串，让 ETag 退化为「每次 200」而不是报错。
+    """
+    if not _cdb.cloud_db_configured():
+        return ""
+    try:
+        row = _read(view_key)
+        built = row.get("built_at") if row else None
+        return "%s|%s" % (_stamp(view_key), _parse_dt(built) or built or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def invalidate(view_key: Optional[str] = None) -> int:
     """手动失效（可选）。view_key 为空则清空全部快照，用于口径变更后强制重建。"""
     if not _cdb.cloud_db_configured():

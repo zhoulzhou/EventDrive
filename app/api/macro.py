@@ -37,12 +37,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import crud
 from app.api.login import require_auth
+from app.utils import http_cache
 from app.utils import macro_backfill as mbf
 from app.utils import macro_indicators as mi
 from app.utils import macro_refresh as mrf
@@ -176,7 +177,8 @@ def _payload(db: Session, refreshed: int, errors: Dict[str, str], history_added:
 
 
 @router.get("/macro")
-def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
+def get_macro(request: Request, response: Response,
+              db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     """读取库中已有的指标与组合解读（**只读**，不触发抓取）。
 
     数据由 CloudBase 云函数在**工作日北京 21:34** 点火抓取写入（日频每轮都抓、
@@ -186,6 +188,11 @@ def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth))
     春节错月 / 定位边界四条，定义见 macro_thermometer.MODEL_LIMITS），页面原样渲染；
     指标卡片的 `season_tag` 是上述 ②③ 两条的落地标记（不参与打分，仅提示别把季节性当趋势）。
     """
+    tag = http_cache.etag("macro")
+    early = http_cache.not_modified(request, tag)
+    if early is not None:
+        return early
+
     def build():
         try:
             crud.seed_macro_fallbacks(db, mi.FALLBACK_DEFAULTS)
@@ -195,7 +202,9 @@ def get_macro(db: Session = Depends(get_db), auth: bool = Depends(require_auth))
             logger.error("获取市场指标失败: %s", e, exc_info=True)
             return {"status": "error", "message": str(e)}
 
-    return view_cache.get_or_build("macro", build)
+    result = view_cache.get_or_build("macro", build)
+    http_cache.apply(response, tag)
+    return result
 
 
 @router.post("/macro/refresh")

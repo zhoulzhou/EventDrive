@@ -32,13 +32,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import crud
 from app.api.login import require_auth
 from app.utils import greed_index as greed_index_mod
+from app.utils import http_cache
 from app.utils import stock_temp as st
 from app.utils import stock_temp_refresh as srf
 from app.utils import view_cache
@@ -204,12 +205,18 @@ def _payload(db: Session, refreshed: int, errors: dict, history_added: int = 0) 
 
 
 @router.get("/stock-temp")
-def get_stock_temp(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
+def get_stock_temp(request: Request, response: Response,
+                   db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
     """读取库中已有的三层指标读数、阈值判读与综合市场温度计（**只读**）。
 
     数据由 `./start.sh` 启动的定时任务在**北京时间每天 16:00** 抓取写入；需要立刻更新时
     走 POST /api/stock-temp/refresh（页面「刷新数据」按钮）。
     """
+    tag = http_cache.etag("stock_temp")
+    early = http_cache.not_modified(request, tag)
+    if early is not None:
+        return early
+
     def build():
         try:
             crud.seed_stock_temp_history_from_snapshot(db)
@@ -219,7 +226,9 @@ def get_stock_temp(db: Session = Depends(get_db), auth: bool = Depends(require_a
             return {"status": "error", "message": str(e)}
 
     # 物化快照：命中时只读两行（数据指纹 + 快照），不再每次重算全部分位/摆动
-    return view_cache.get_or_build("stock_temp", build)
+    result = view_cache.get_or_build("stock_temp", build)
+    http_cache.apply(response, tag)
+    return result
 
 
 @router.post("/stock-temp/refresh")

@@ -239,6 +239,23 @@ cp .env.example .env
 写操作仍会**直接删除**该表缓存条目（不走 SWR），所以「抓完立刻刷新」的一致性与原来一致。
 `cache_stats()` 新增 `stale` / `merged` / `refresh` / `inflight` 计数便于观测。
 
+### 3.4 客户端协商缓存（2026-11-15）
+
+三个物化快照页的 GET 响应加 `ETag` + `Cache-Control: private, no-cache, must-revalidate`
+（`app/utils/http_cache.py`）：浏览器每次发条件请求，数据没变时服务端直接 **304**，
+跳过整页重算；数据变了才返回 200 全新响应。
+
+- **不用 `max-age`**：页面「刷新数据」按钮在后台抓取完成后会重新拉同一个 URL，
+  浏览器本地缓存会让用户在窗口内继续看到旧读数。协商缓存零陈旧风险。
+- ETag = `view_key` + `SCHEMA_VERSION` +（a_share 的当天日期）+ 数据指纹/快照构建时间；
+  口径变更或抓取落库必然变化。a_share 带日期是因为它的 `today` 字段每次请求取当天。
+- `private` 是登录态数据的硬要求，禁止共享代理缓存。
+- 304 路径只做 2 次点查（多数命中 3.3 的进程内缓存），不跑 builder。
+- 浏览器 fetch 会透明地把 304 还原成缓存的 200 响应，前端 `fetchWithAuth` 无需改动。
+
+> 若平台反代剥离 `ETag` 或不转发 `If-None-Match`，这一层会退化为「每次 200」，
+> 不影响正确性；3.2 / 3.3 的收益仍在。上线后用 `curl -H 'If-None-Match: ...'` 实测。
+
 
 ### 4. 初始化数据库
 

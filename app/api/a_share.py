@@ -10,7 +10,7 @@ import logging
 from datetime import date
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -19,6 +19,7 @@ from app.database import get_db
 from app.utils.etf_flow import BROAD_ETF_POOL, NAME as FLOW_NAME, SYMBOL as FLOW_SYMBOL, UNIT as FLOW_UNIT
 from app.utils.index_daily import INDEX_SERIES, SYMBOLS, UNIT, ytd_start
 from app.utils.index_swing import compute_swing, threshold_for
+from app.utils import http_cache
 from app.utils import view_cache
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,8 @@ def _build_net_flow(rows: List[Any]) -> Dict[str, Any]:
 
 @router.get("/a-share")
 def get_a_share(
+    request: Request,
+    response: Response,
     since: Optional[str] = Query(None, description="起始日期，默认今年 1 月 1 日"),
     db: Session = Depends(get_db),
     auth: bool = Depends(require_auth),
@@ -137,6 +140,13 @@ def get_a_share(
     一次批量读三个 symbol（两个指数 + 宽基 ETF 净流入，云库下省往返），
     缺数据时返回 points=[]，由页面提示「尚未回填」而不是报错。
     """
+    key = f"a_share:{since or ''}"
+    # a_share 的 today / updated_at 是请求当天，跨天必须换 ETag，否则 304 会把昨天的日期钉住
+    tag = http_cache.etag(key, extra=date.today().isoformat())
+    early = http_cache.not_modified(request, tag)
+    if early is not None:
+        return early
+
     start = since or ytd_start()
 
     def build():
@@ -167,12 +177,13 @@ def get_a_share(
             logger.error("获取 A 股指数行情失败: %s", e, exc_info=True)
             return {"status": "error", "message": str(e)}
 
-    result = view_cache.get_or_build(f"a_share:{since or ''}", build)
+    result = view_cache.get_or_build(key, build)
     # 这两个字段原本每次请求取当天，快照命中时也要保持同样语义
     if isinstance(result, dict) and result.get("status") == "ok":
         result = dict(result)
         result["today"] = date.today().isoformat()
         result["updated_at"] = date.today().isoformat()
+    http_cache.apply(response, tag)
     return result
 
 
