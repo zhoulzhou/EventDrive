@@ -48,7 +48,6 @@
         fetchWithAuth(url).then(function (r) { return r.json(); }).then(function (data) {
             state.data = data;
             renderNotice(data);
-            renderDateSelect(data);
             if (data.status !== "ok") {
                 $("tcUpdated").textContent = "暂无数据";
                 $("tcOverview").innerHTML = "";
@@ -81,17 +80,6 @@
             html += '<div class="tc-notice warn">本次抓取有缺口：' + gaps.map(esc).join("；") + "</div>";
         }
         box.innerHTML = html;
-    }
-
-    function renderDateSelect(data) {
-        var sel = $("tcDate");
-        var dates = data.dates || [];
-        if (!dates.length) { sel.style.display = "none"; return; }
-        sel.style.display = "";
-        var cur = data.date || "";
-        sel.innerHTML = dates.map(function (d) {
-            return '<option value="' + esc(d) + '"' + (d === cur ? " selected" : "") + ">" + esc(d) + "</option>";
-        }).join("");
     }
 
     // ------------------------------------------------------------ 概览卡
@@ -474,7 +462,6 @@
     document.addEventListener("DOMContentLoaded", function () {
         load(null);
         loadLlmConfig();
-        $("tcDate").addEventListener("change", function (e) { load(e.target.value); });
         $("tcRefresh").addEventListener("click", startRefresh);
         $("tcGenLlm").addEventListener("click", genLlm);
         $("tcCfgBtn").addEventListener("click", function () { toggleCfg(true); });

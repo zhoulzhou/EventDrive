@@ -38,10 +38,6 @@
     flex-wrap: wrap;
 }
 .tc-updated { font-size: 0.82rem; color: var(--tc-sub); white-space: nowrap; }
-.tc-select {
-    font-size: 0.84rem; padding: 5px 8px; border: 1px solid var(--tc-line);
-    border-radius: 6px; background: #fff; color: var(--tc-ink);
-}
 .tc-btn {
     font-size: 0.84rem; padding: 6px 12px; border: 1px solid var(--tc-line);
     border-radius: 6px; background: #fff; color: var(--tc-ink); cursor: pointer;
