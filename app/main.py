@@ -17,7 +17,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
 from app.api import (news, crawl, login, market, index_alarm, finance, valuation,
-                     macro, stock_temp, lhb, a_share, hotspot)
+                     macro, stock_temp, lhb, a_share, hotspot, theme_capital)
 from app.api.login import is_logged_in
 
 logger = logging.getLogger(__name__)
@@ -267,6 +267,7 @@ app.include_router(stock_temp.router, prefix="/api", tags=["stock-temp"])
 app.include_router(lhb.router, prefix="/api", tags=["lhb"])
 app.include_router(a_share.router, prefix="/api", tags=["a-share"])
 app.include_router(hotspot.router, prefix="/api", tags=["hotspot"])
+app.include_router(theme_capital.router, prefix="/api", tags=["theme-capital"])
 # 数据源探测（诊断用；验证候选源在沙箱网络里是否可用，验证完可删）
 
 
@@ -374,6 +375,18 @@ async def hotspot_trend_page(request: Request):
     return render_template("hotspot_trend.html", {"request": request})
 
 
+@app.get("/theme-capital")
+async def theme_capital_page(request: Request):
+    """主题资金：算力产业链与人形机器人产业链发生了什么、为什么。
+
+    数据在收盘轮（21:34）生成并存 theme_capital_snapshots，页面只读 GET
+    /api/theme-capital/snapshot；手动刷新走后台线程 POST /api/theme-capital/refresh。
+    """
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login")
+    return render_template("theme_capital.html", {"request": request})
+
+
 @app.get("/a-share")
 async def a_share_page(request: Request):
     """股市行情：上证指数与科创50 今年以来的日线曲线（数据域 a_share）。
@@ -452,6 +465,7 @@ _PAGE_LINKS = [
     ("/home", "首页"),
     ("/today", "今日热点"),
     ("/hotspot-trend", "热点趋势"),
+    ("/theme-capital", "主题资金"),
     ("/lhb", "龙虎榜单"),
     ("/crawl", "抓取"),
     ("/market", "全球行情"),

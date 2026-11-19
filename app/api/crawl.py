@@ -17,6 +17,7 @@ from app.scheduler import (
     refresh_a_share_index,
     refresh_hotspot,
     refresh_hotspot_llm,
+    refresh_theme_capital,
 )
 from app.api.login import require_auth
 
@@ -153,7 +154,7 @@ _daily_refresh_state = {
 # **含 hotspot**（2026-11-02 新增）：今日热点日报。它**依赖** stock_temp / a_share /
 # news 的当日结果，所以在 close_session 里排最后一步串行执行（见 scheduler.close_session），
 # 不要把它挪进并发的快域组，否则定调条会读到昨天的成交额与指数。
-CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp", "hotspot")
+CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp", "hotspot", "theme_capital")
 # 可单独补跑的域集合（含 news / market —— 这两域由上午那轮负责，失败时手动补；
 # hotspot_llm 是收盘轮里紧跟日报的串行步骤，整轮已包含，但也可以单独补一次解读）。
 # 故意**不放进 CLOSE_DOMAINS**：它不是与其它域并发的一格，而是 hotspot 内部的第二步。
@@ -173,6 +174,8 @@ _DOMAIN_TASKS = {
     "a_share": lambda: refresh_a_share_index(session="close"),
     "stock_temp": lambda: refresh_stock_temp(session="close"),
     "hotspot": lambda: refresh_hotspot(session="close"),
+    # 主题资金：算力 / 人形机器人产业链快照 + AI 归因（慢域，单独补跑用）
+    "theme_capital": lambda: refresh_theme_capital(session="close"),
     # 只补 AI 归因、不重抓日报：日报错了用 hotspot，解读失败/被清掉用这一格
     "hotspot_llm": lambda: refresh_hotspot_llm(session="close"),
 }

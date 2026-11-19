@@ -31,6 +31,7 @@ T_CRAWL_LOG = "crawl_logs"
 T_LHB_RECORD = "lhb_records"
 T_LHB_SEAT = "lhb_seats"
 T_HOTSPOT = "daily_hotspots"
+T_THEME_CAPITAL = "theme_capital_snapshots"
 
 # ---- 大表（第二步迁移）----
 T_NEWS = "news"
@@ -2114,3 +2115,99 @@ def list_hotspot_briefs(db: Session, limit: int = 6) -> List[dict]:
             "数据缺口数": len(payload.get("data_gaps") or []),
         })
     return briefs
+
+
+# ================================================================ 主题资金快照
+# 算力 / 人形机器人产业链每日快照，整份 JSON 存一行（同 daily_hotspots 思路）。
+def save_theme_capital_snapshot(db: Session, market_date: str, payload: dict,
+                                source: str = "theme_capital", item_count: int = 0) -> bool:
+    """写入/覆盖某交易日的主题资金快照，返回是否落库成功。"""
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if _USE_CLOUD:
+        stamp = _cdb.utc_now_iso()
+        rows = _cdb.upsert(T_THEME_CAPITAL, [{
+            "market_date": market_date,
+            "payload": text,
+            "source": source,
+            "item_count": item_count or 0,
+            "generated_at": stamp,
+            "updated_at": stamp,
+        }], on_conflict="market_date", context="save_theme_capital_snapshot")
+        return bool(rows)
+    row = db.query(models.ThemeCapitalSnapshot).filter(
+        models.ThemeCapitalSnapshot.market_date == market_date).first()
+    if row is None:
+        row = models.ThemeCapitalSnapshot(market_date=market_date)
+        db.add(row)
+    row.payload = text
+    row.source = source
+    row.item_count = item_count or 0
+    row.generated_at = datetime.now()
+    row.updated_at = datetime.now()
+    db.commit()
+    return True
+
+
+def save_theme_capital_llm(db: Session, market_date: str, llm: dict) -> bool:
+    """把两条链的 AI 归因写回快照 payload（只改 payload 一列，不动 generated_at）。"""
+    record = get_theme_capital_snapshot(db, market_date)
+    if not record or not isinstance(record.get("payload"), dict):
+        return False
+    payload = record["payload"]
+    payload["llm_summary"] = llm
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if _USE_CLOUD:
+        rows = _cdb.upsert(T_THEME_CAPITAL, [{
+            "market_date": market_date,
+            "payload": text,
+        }], on_conflict="market_date", context="save_theme_capital_llm")
+        return bool(rows)
+    row = db.query(models.ThemeCapitalSnapshot).filter(
+        models.ThemeCapitalSnapshot.market_date == market_date).first()
+    if row is None:
+        return False
+    row.payload = text
+    row.updated_at = datetime.now()
+    db.commit()
+    return True
+
+
+def get_theme_capital_snapshot(db: Session, market_date: Optional[str] = None) -> Optional[dict]:
+    """取主题资金快照；market_date 为空取最新一份。返回结构同 get_daily_hotspot。"""
+    if _USE_CLOUD:
+        filters = {"market_date": f"eq.{market_date}"} if market_date else None
+        rows = _cdb.select(T_THEME_CAPITAL, filters=filters,
+                           order="market_date.desc", limit=1,
+                           context="get_theme_capital_snapshot")
+        row = rows[0] if rows else None
+    else:
+        query = db.query(models.ThemeCapitalSnapshot)
+        if market_date:
+            query = query.filter(models.ThemeCapitalSnapshot.market_date == market_date)
+        row = query.order_by(models.ThemeCapitalSnapshot.market_date.desc()).first()
+    if row is None:
+        return None
+    raw = _field(row, "payload")
+    try:
+        payload = json.loads(raw or "{}")
+    except (ValueError, TypeError):
+        logger.warning("主题资金快照 payload 解析失败: %s", _field(row, "market_date"))
+        return None
+    return {
+        "market_date": _field(row, "market_date"),
+        "payload": payload,
+        "source": _field(row, "source"),
+        "generated_at": _field(row, "generated_at"),
+    }
+
+
+def list_theme_capital_dates(db: Session, limit: int = 30) -> List[str]:
+    """已生成主题资金快照的交易日列表（新→旧）。"""
+    if _USE_CLOUD:
+        rows = _cdb.select(T_THEME_CAPITAL, columns="market_date",
+                           order="market_date.desc", limit=limit,
+                           context="list_theme_capital_dates")
+        return [r["market_date"] for r in rows]
+    rows = (db.query(models.ThemeCapitalSnapshot.market_date)
+            .order_by(models.ThemeCapitalSnapshot.market_date.desc()).limit(limit).all())
+    return [r[0] for r in rows]

@@ -310,6 +310,24 @@ class DailyHotspot(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class ThemeCapitalSnapshot(Base):
+    """主题资金快照：算力 / 人形机器人两条产业链，一个交易日一行。
+
+    与 DailyHotspot 同构：整份日更数据在收盘轮算一次存成 JSON，页面只读快照，
+    避免每次开页打十几个东财接口。云库侧表名见 crud.T_THEME_CAPITAL。
+    """
+
+    __tablename__ = "theme_capital_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    market_date = Column(Text, nullable=False, unique=True, index=True)
+    payload = Column(Text, nullable=False)
+    source = Column(Text, nullable=True)
+    item_count = Column(Integer, nullable=False, default=0)
+    generated_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class CrawlLog(Base):
     """抓取任务日志：每轮调度 / 手动触发写入一条，便于复盘与排查。"""
 

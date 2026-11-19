@@ -523,6 +523,82 @@ async def refresh_hotspot_llm(session: str = "manual", force: bool = False) -> d
     return result
 
 
+# ================================================================ 主题资金
+def _refresh_theme_capital_sync() -> dict:
+    """在线程里跑：自己开 session（云库模式下 SessionLocal 只是壳）。"""
+    from app.utils import theme_capital as tc_mod
+    db = SessionLocal()
+    try:
+        return tc_mod.refresh_theme_capital(db)
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _theme_capital_llm_sync(force: bool = False) -> dict:
+    from app.utils import theme_capital_llm as tc_llm
+    return tc_llm.generate_for_date(None, force=force)
+
+
+async def refresh_theme_capital(session: str = "manual"):
+    """生成主题资金快照（算力 / 人形机器人两条链），落 theme_capital_snapshots。
+
+    排在 close_session 热点之后：抓成分股历史约需 30~50s，是慢活，单独成域、
+    失败记 failed 不影响其它域。AI 归因同样串行紧跟快照，排在 ok 日志之前，
+    让云函数等到快照 + 归因都完成（同 refresh_hotspot_llm 的理由）。
+    """
+    if not check_task_allowed("theme_capital"):
+        log_crawl("主题资金：已达今日配额或正在运行，跳过")
+        _write_crawl_log(task="theme_capital", session=session, source="theme_capital",
+                         item_count=0, status="skipped", error_message="已达配额或正在运行")
+        return
+
+    log_crawl("=" * 50)
+    log_crawl(f"开始生成主题资金快照... (轮次: {session})")
+    log_crawl("=" * 50)
+    mark_task_started("theme_capital")
+    t0 = datetime.now()
+    try:
+        summary = await asyncio.to_thread(_refresh_theme_capital_sync)
+        saved = summary.get("status") == "ok"
+        chains = summary.get("chains") or {}
+        log_crawl(
+            "主题资金生成完成: %s，样本 %s 只，主力净额 算力 %s 亿 / 机器人 %s 亿，落库=%s"
+            % (summary.get("market_date"), summary.get("item_count"),
+               (chains.get("compute") or {}).get("net_inflow_yi"),
+               (chains.get("robot") or {}).get("net_inflow_yi"), saved)
+        )
+        for gap in summary.get("gaps") or []:
+            log_crawl(f"  ! {gap}")
+        if saved:
+            try:
+                llm_result = await asyncio.to_thread(_theme_capital_llm_sync)
+                if llm_result.get("status") == "ok":
+                    log_crawl("主题资金 AI 归因完成%s"
+                              % ("（命中缓存）" if llm_result.get("cached") else ""))
+                else:
+                    log_crawl(f"  ! 主题资金 AI 归因跳过/失败：{llm_result.get('message') or llm_result.get('status')}")
+            except Exception as e:  # noqa: BLE001 —— AI 失败不影响快照
+                log_crawl(f"  ! 主题资金 AI 归因异常（不影响快照）: {e}")
+        _write_crawl_log(
+            task="theme_capital", session=session, source="eastmoney:theme_capital",
+            item_count=int(summary.get("item_count") or 0),
+            status="ok" if saved else "empty",
+            duration=int((datetime.now() - t0).total_seconds()),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.error("主题资金生成出错: %s", e, exc_info=True)
+        log_crawl(f"主题资金生成出错: {str(e)}")
+        _write_crawl_log(task="theme_capital", session=session, source="theme_capital",
+                         item_count=0, status="failed", error_message=str(e)[:500],
+                         duration=int((datetime.now() - t0).total_seconds()))
+    finally:
+        mark_task_finished("theme_capital")
+    log_crawl("=" * 50)
+
+
 async def full_crawl(session: str = "manual"):
     """抓取新闻。
 
@@ -665,6 +741,16 @@ async def close_session():
     except Exception as e:  # noqa: BLE001 —— 热点失败不能影响整轮收尾
         log_crawl(f"  ! 今日热点 生成异常: {e}")
         _write_crawl_log(task="hotspot", session=SESSION_CLOSE, source="hotspot",
+                         item_count=0, status="failed", error_message=str(e)[:500])
+
+    # 主题资金（算力 / 人形机器人产业链）：排在热点之后独占跑。它要抓成分股资金历史
+    # （40+ 次 HTTP，30~50s）并做两轮 AI 归因，放最后不拖累其它域；AI 失败只记自己的
+    # 日志，不影响快照本身。同样写英文域键，云函数 NEED 才能识别。
+    try:
+        await refresh_theme_capital(session=SESSION_CLOSE)
+    except Exception as e:  # noqa: BLE001 —— 主题资金失败不能影响整轮收尾
+        log_crawl(f"  ! 主题资金 生成异常: {e}")
+        _write_crawl_log(task="theme_capital", session=SESSION_CLOSE, source="theme_capital",
                          item_count=0, status="failed", error_message=str(e)[:500])
 
     log_crawl("#" * 50)

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}主题资金 - 市场总览{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/css/theme_capital.css?v={{ static_ver or 0 }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header tc-header">
+    <div class="tc-header-top">
+        <h1>主题资金 · 算力与人形机器人产业链</h1>
+        <div class="tc-toolbar">
+            <select id="tcDate" class="tc-select" aria-label="选择交易日" style="display:none"></select>
+            <span id="tcUpdated" class="tc-updated">加载中…</span>
+            <button id="tcRefresh" class="tc-btn tc-btn-primary" type="button">刷新数据</button>
+            <button id="tcGenLlm" class="tc-btn" type="button">生成解读</button>
+            <button id="tcCfgBtn" class="tc-btn tc-btn-link" type="button">设置 Key</button>
+        </div>
+    </div>
+    <p class="form-hint">
+        回答一个问题：<strong>算力产业链、人形机器人产业链，今天发生了什么、为什么</strong>。
+        每条链用一张固定的<strong>代表股篮子</strong>（算力 25 只：光模块/CPO、AI 芯片、服务器、PCB、液冷、
+        IDC、存储、铜连接、电源；机器人 25 只：执行器、减速器、电机、丝杠、传感器、灵巧手、
+        伺服、轻量化材料、本体）逐只统计<strong>主力净额（超大单+大单，东财 f62）</strong>，
+        汇总成这条链的资金强弱与细分环节流向。
+    </p>
+    <p class="form-hint">
+        <strong>口径提醒</strong>：成分股是人工维护的观察样本，<strong>不是官方行业统计、也不是全市场</strong>；
+        涨跌与资金均为<strong>收盘快照</strong>，非实时。净流入趋势由篮内个股各自的历史主力净额按日求和，
+        篮子固定所以跨日可比。「涨停龙头」只统计篮内当日进入涨停池的个股。
+        AI 归因基于全量证据 + 近几日档案两轮自检，是<strong>基于当日数据的推断，非事实陈述，不构成投资建议</strong>。
+    </p>
+</div>
+
+<div id="tcNotice"></div>
+
+<div id="tcCfg" class="tc-cfg" style="display:none">
+    <input id="tcKey" type="password" autocomplete="off" spellcheck="false"
+           placeholder="粘贴 DeepSeek API Key（sk-…）">
+    <button id="tcKeySave" class="tc-btn tc-btn-primary" type="button">保存并生效</button>
+    <button id="tcKeyCancel" class="tc-btn tc-btn-link" type="button">取消</button>
+    <span class="tc-cfg-hint" id="tcCfgHint"></span>
+</div>
+
+<div id="tcRefreshBar" class="tc-refresh-bar" style="display:none">
+    <span class="tc-spin"></span><span id="tcRefreshMsg">正在后台抓取，约需 1 分钟…</span>
+</div>
+
+<!-- 两条链概览（净额 / 涨跌 / 龙头数） -->
+<div id="tcOverview" class="tc-overview"></div>
+
+<!-- 净流入趋势 -->
+<div class="tc-panel">
+    <div class="tc-panel-head">
+        <h2>产业链资金净流入趋势</h2>
+        <span class="tc-tip" id="tcTrendTip">篮内成分股主力净额按日合计 · 近 60 交易日</span>
+    </div>
+    <div id="tcTrendChart" class="tc-chart"><div class="tc-loading">正在加载趋势…</div></div>
+    <div class="tc-legend">
+        <span class="tc-legend-item"><i class="tc-dot" style="background:#d64545"></i>算力产业链（左轴）</span>
+        <span class="tc-legend-item"><i class="tc-dot" style="background:#4f7bd9"></i>人形机器人产业链（右轴）</span>
+        <span class="tc-legend-note">单位亿元。两条链量级差异大（算力可达上百亿、机器人多为个位数），故各用独立纵轴，
+            看的是各自趋势与拐点、不要横向比色柱高度；零轴以上为净流入、以下为净流出。
+            下方个股/环节表里的涨跌与净额沿用红涨绿跌的 A 股习惯。</span>
+    </div>
+</div>
+
+<!-- 两条链详情 -->
+<div id="tcChains"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/echarts.min.js?v={{ vendor_ver }}"></script>
+<script src="/static/js/theme_capital_charts.js?v={{ static_ver or 0 }}"></script>
+{% endblock %}
