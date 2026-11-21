@@ -16,7 +16,6 @@ from app.crawlers import (
 from app.crawlers.market_data import refresh_market_data
 from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
-from app.utils.hot_sector_refresh import fetch_and_store_hot_sector
 
 logger = logging.getLogger(__name__)
 
@@ -177,42 +176,6 @@ async def refresh_stock_temp():
     log_crawl("=" * 50)
 
 
-async def refresh_hot_sector():
-    """抓取今日热点（概念板块热点前三）并落库，供后续复盘。
-
-    与页面接口 /api/hot-sector 共用 app/utils/hot_sector_refresh.py 的实现。
-    抓取本身是异步的（akshare 阻塞调用已在线程池内执行），这里直接 await，
-    不套 asyncio.to_thread，避免「线程里再起事件循环」。
-    """
-    log_crawl("=" * 50)
-    log_crawl("开始更新今日热点（概念板块）...")
-    log_crawl("=" * 50)
-
-    try:
-        payload = await fetch_and_store_hot_sector()
-        if payload.get("status") != "ok":
-            log_crawl(f"今日热点更新失败: {payload.get('message')}")
-        else:
-            log_crawl(
-                f"今日热点更新完成: 交易日 {payload.get('trade_date')}, "
-                f"板块 {len(payload.get('sectors', []))} 个, "
-                f"落库 {payload.get('stored_sectors', 0)} 条"
-            )
-            for sector in payload.get("sectors", []):
-                log_crawl(
-                    f"  - {sector.get('rank')}. {sector.get('name')} "
-                    f"{sector.get('change_percent')}% "
-                    f"成分股 {sector.get('up_count')}涨{sector.get('down_count')}跌"
-                )
-            for msg in payload.get("errors") or []:
-                log_crawl(f"  ! {msg}")
-    except Exception as e:
-        log_crawl(f"今日热点更新出错: {str(e)}")
-        logger.error(f"!!! 今日热点更新出错: {e}", exc_info=True)
-
-    log_crawl("=" * 50)
-
-
 async def full_crawl():
     log_crawl("=" * 50)
     log_crawl("开始执行新闻抓取任务...")
@@ -284,22 +247,10 @@ def start_scheduler():
             name='Refresh stock temperature at 20:30 CST',
             replace_existing=True
         )
-        # ---- 今日热点：北京时间 20:35 抓取当日热点板块并落库 ----
-        # 热点数据只在两个时机写入：用户点页面「刷新盘面」，或本任务。这里在收盘后补抓一次，
-        # 保证每个交易日必定留下一条复盘记录（对同一交易日同一板块就地覆盖，取当日最终结果），
-        # 页面打开时只读库展示，不发外部请求。
-        # 排在 20:35 是为了避让 20:30 同时触发的市场行情/宏观/股票三件套，避免并发打外部接口。
-        scheduler.add_job(
-            refresh_hot_sector,
-            trigger=CronTrigger(hour='20', minute=35, timezone=CN_TZ),
-            id='hot_sector_snapshot_job',
-            name='Refresh hot sectors at 20:35 CST',
-            replace_existing=True
-        )
         scheduler.start()
         logger.info(
             "Scheduler started. News crawl at 8,12,16,20 JST; "
-            "market data + macro + stock indicators at 20:30 CST, hot sectors at 20:35 CST "
+            "market data + macro + stock indicators at 20:30 CST "
             "(Asia/Shanghai). "
             "History backfill is manual only (页面「补齐历史数据」按钮 / POST /api/*/backfill)."
         )
