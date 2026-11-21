@@ -10,20 +10,6 @@
 <div class="page-header st-header">
     <div class="st-header-text">
         <h1>股市热度 · 市场贪婪指数</h1>
-        <p class="form-hint">
-            <strong>0-100 · 越高越贪婪 · 对标 CNN Fear &amp; Greed · 情绪 88% + 估值 12% · 每日收盘后更新</strong>。
-            贪婪指数 = 情绪×88%（市场宽度 / 全A换手率 / 两市成交额，三项等权各 1/3）
-            + 估值×12%（沪深300 PE-TTM）；四个主指标的分位取 <strong>全部可用历史的分位</strong>。
-            ERP / 破净率为<strong>确认层</strong>：不加权，同样取<strong>全历史分位</strong>，只在极端区做闸门。
-        </p>
-        <p class="form-hint st-src-line">
-            <strong>深度恐慌</strong>：贪婪 &lt; 20 且（ERP 分位 &gt; 80 或 破净率分位 &gt; 80）→ 冷 + 便宜共振，底部信号可信度最高；
-            <strong>泡沫警示</strong>：贪婪 &gt; 80 且 ERP 分位 &lt; 20 → 热 + 贵共振，警惕均值回归。
-            数据取自中证指数（沪深300 PE-TTM，日频）、沪深交易所官网（成交额、流通市值）、
-            乐咕乐股（市场宽度、破净率）与中债国债收益率（ERP），
-            <strong>全部自动抓取、无手工录入项</strong>，由 ./start.sh 启动的定时任务（北京时间 20:30）
-            抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
-        </p>
     </div>
     <div class="st-toolbar">
         <span id="stUpdated" class="st-updated">加载中…</span>
