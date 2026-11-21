@@ -15,6 +15,7 @@ import csv
 import io
 import logging
 import calendar
+import re
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 # 美东时区：用于判断美股是否开盘
 US_EASTERN = ZoneInfo("America/New_York")
 
-_client = httpx.AsyncClient(timeout=20)
+_client = httpx.AsyncClient(timeout=20, follow_redirects=True)
 
 
 def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
@@ -108,7 +109,7 @@ def _is_us_market_open(today: date) -> bool:
 
 # 各数据源端点
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
-VIX_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+VIX_URL = "https://cdn-api.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
 TREASURY_URL = (
     "https://home.treasury.gov/resource-center/data-chart-center/"
     "interest-rates/daily-treasury-rates.csv/{year}/all"
@@ -125,6 +126,13 @@ NASDAQ_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+# 新浪财经外盘即时报价（免 Key，国内可直连）：黄金、比特币
+SINA_URL = "https://hq.sinajs.cn/list={code}"
+SINA_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Referer": "https://finance.sina.com.cn",
+}
+
 # 指标定义：source 决定用哪个数据源，column 为财政部收益率 CSV 中的列名；unit 用于前端展示（收益率用 %）
 SERIES = [
     {"key": "nasdaq", "name": "纳斯达克100指数", "symbol": "NASDAQ100", "unit": "", "source": "nasdaq",
@@ -135,6 +143,10 @@ SERIES = [
      "column": "2 Yr", "describe": "U.S. Treasury 2-Year Yield"},
     {"key": "dgs10", "name": "美债10年期收益率", "symbol": "DGS10", "unit": "%", "source": "treasury",
      "column": "10 Yr", "describe": "U.S. Treasury 10-Year Yield"},
+    {"key": "gold", "name": "黄金价格（伦敦金）", "symbol": "GOLD", "unit": "美元/盎司", "source": "sina",
+     "column": None, "code": "hf_XAU", "describe": "Spot Gold XAU/USD"},
+    {"key": "btc", "name": "比特币", "symbol": "BTCUSD", "unit": "美元", "source": "sina",
+     "column": None, "code": "btc_btcbtcusd", "describe": "Bitcoin USD"},
 ]
 
 
@@ -280,6 +292,43 @@ async def _fetch_treasury(column: str) -> Dict[str, Any]:
     return {"value": None, "date": None}
 
 
+async def _fetch_sina(code: str) -> Dict[str, Any]:
+    """抓取新浪财经外盘报价（黄金 / 比特币）。
+
+    返回格式为 `var hq_str_xxx="字段1,字段2,..."`，字段位置随品种不同：
+    - hf_*（外盘期货/现货）：第 1 个字段为最新价；
+    - btc_btcbtcusd（比特币美元指数）：第 4 个字段为最新价。
+    日期统一按字段中出现的 YYYY-MM-DD 匹配，避免不同品种下标漂移。
+    """
+    try:
+        response = await _client.get(SINA_URL.format(code=code), headers=SINA_HEADERS)
+        response.raise_for_status()
+    except Exception as e:
+        logger.error(f"获取新浪报价 {code} 失败: {e}", exc_info=True)
+        return {"value": None, "date": None}
+
+    match = re.search(r'="([^"]*)"', response.text)
+    if not match:
+        logger.error(f"新浪报价 {code} 返回格式异常: {response.text[:120]}")
+        return {"value": None, "date": None}
+
+    parts = match.group(1).split(",")
+    price_at = 3 if code.startswith("btc_") else 0
+    try:
+        value = float(parts[price_at])
+    except (IndexError, ValueError):
+        logger.error(f"新浪报价 {code} 价格无法解析: {parts[:6]}")
+        return {"value": None, "date": None}
+    if value <= 0:
+        return {"value": None, "date": None}
+
+    quote_date = next(
+        (p.strip() for p in parts if re.fullmatch(r"\d{4}-\d{2}-\d{2}", p.strip())),
+        datetime.now().strftime("%Y-%m-%d"),
+    )
+    return {"value": value, "date": quote_date}
+
+
 async def _fetch_series(series: Dict[str, Any]) -> Dict[str, Any]:
     """按指标的 source 分发给对应的抓取函数；主源无有效值时回退到备用源。"""
     source = series["source"]
@@ -291,6 +340,8 @@ async def _fetch_series(series: Dict[str, Any]) -> Dict[str, Any]:
         result = await _fetch_vix()
     elif source == "treasury":
         result = await _fetch_treasury(series["column"])
+    elif source == "sina":
+        result = await _fetch_sina(series["code"])
     else:
         logger.error(f"未知数据源 {source}，跳过指标 {series['name']}")
         return {"value": None, "date": None}
@@ -306,11 +357,15 @@ async def _fetch_series(series: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-async def fetch_fred_prices() -> List[Dict[str, Any]]:
-    """并发抓取全部指标，返回原始数据列表（不落库）。"""
-    raws = await asyncio.gather(*(_fetch_series(s) for s in SERIES))
+async def fetch_fred_prices(us_open: bool = True) -> List[Dict[str, Any]]:
+    """并发抓取全部指标，返回原始数据列表（不落库）。
+
+    美股休市时只抓黄金 / 比特币（24 小时交易），避免周末写入无效的股指/国债读数。
+    """
+    targets = [s for s in SERIES if us_open or s["source"] == "sina"]
+    raws = await asyncio.gather(*(_fetch_series(s) for s in targets))
     items = []
-    for series, raw in zip(SERIES, raws):
+    for series, raw in zip(targets, raws):
         items.append({
             "key": series["key"],
             "name": series["name"],
@@ -366,20 +421,16 @@ def save_market_prices(items: List[Dict[str, Any]]) -> None:
 
 async def refresh_market_data() -> Dict[str, Any]:
     """抓取全市场指标并落库（按 symbol+date 累积历史），返回原始数据供日志使用。"""
-    # 美股休市日（周末/节假日）不抓取，直接跳过，避免无意义的外部请求
+    # 美股休市日（周末/节假日）：股指与国债不抓，但黄金、比特币 24 小时交易，照常更新
     us_today = datetime.now(US_EASTERN).date()
-    if not _is_us_market_open(us_today):
-        logger.info(f"美股今日休市({us_today}, {us_today.strftime('%A')})，跳过市场行情抓取")
-        return {
-            "items": [],
-            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "source": "跳过(美股休市)",
-        }
+    us_open = _is_us_market_open(us_today)
+    if not us_open:
+        logger.info(f"美股今日休市({us_today}, {us_today.strftime('%A')})，仅更新黄金/比特币报价")
 
-    items = await fetch_fred_prices()
+    items = await fetch_fred_prices(us_open=us_open)
     await asyncio.to_thread(save_market_prices, items)
     return {
         "items": items,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "source": "FRED + CBOE + U.S. Treasury",
+        "source": "纳斯达克 / CBOE / 美国财政部 / FRED / 新浪财经" if us_open else "黄金 / 比特币（美股休市）",
     }

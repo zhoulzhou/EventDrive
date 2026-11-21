@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}市场行情 - 新闻抓取应用{% endblock %}
+{% block title %}全球行情 - 新闻抓取应用{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -15,7 +15,7 @@
     <div class="chart-header">
         <h2>历史走势</h2>
         <div style="display:flex;align-items:center;gap:12px;">
-            <span class="chart-sub">X 轴统一时间 · Y 轴对齐 · 三面板联动</span>
+            <span class="chart-sub">X 轴统一时间 · Y 轴对齐 · 五面板联动</span>
             <button id="cleanupBtn" type="button" class="cleanup-btn">清洗数据</button>
         </div>
     </div>
@@ -31,13 +31,19 @@
         <div class="panel">
             <div class="history-wrap"><canvas id="chartBond"></canvas></div>
         </div>
+        <div class="panel">
+            <div class="history-wrap"><canvas id="chartGold"></canvas></div>
+        </div>
+        <div class="panel">
+            <div class="history-wrap"><canvas id="chartBtc"></canvas></div>
+        </div>
     </div>
     <div class="chart-legend" id="chartLegend"></div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/static/js/chart.umd.js"></script>
 <script>
 async function loadMarket() {
     const grid = document.getElementById('marketGrid');
@@ -96,7 +102,7 @@ function renderCard(item) {
 
 const FIXED_Y_WIDTH = 84;
 
-// 跨面板共享的历史曲线 hover 状态：任一图表被悬停时，三面板联动
+// 跨面板共享的历史曲线 hover 状态：任一图表被悬停时，五面板联动
 // 画出同一 X 竖线，并在统一 tooltip(historyTip) 中集中显示各曲线数值
 const historySync = { allDates: [], valMap: {}, nameMap: {}, colorOf: {}, syms: [], charts: [], idx: -1 };
 
@@ -180,7 +186,7 @@ async function renderAllHistory(items) {
     empty.style.display = 'none';
     empty.textContent = '';
 
-    // 统一时间轴：取所有指标日期并集并排序，缺失值填 null，保证三面板 X 轴完全一致、
+    // 统一时间轴：取所有指标日期并集并排序，缺失值填 null，保证五个面板 X 轴完全一致、
     // 每条曲线端点对齐（不因部分指标缺数据而裁剪日期，避免曲线长短不齐造成"错位"）
     const nameMap = {};
     const valMap = {};
@@ -202,25 +208,34 @@ async function renderAllHistory(items) {
     const vix = mk('VIXCLS', '#ef4444', false);
     const dgs2 = mk('DGS2', '#059669', false);
     const dgs10 = mk('DGS10', '#f59e0b', false);
+    const gold = mk('GOLD', '#b8860b', false);
+    const btc = mk('BTCUSD', '#f7931a', false);
 
     // 初始化跨面板共享 hover 状态
     Object.assign(historySync, {
         allDates,
         valMap,
         nameMap,
-        colorOf: { NASDAQ100: '#2563eb', VIXCLS: '#ef4444', DGS2: '#059669', DGS10: '#f59e0b' },
-        syms: ['NASDAQ100', 'VIXCLS', 'DGS2', 'DGS10'],
+        colorOf: {
+            NASDAQ100: '#2563eb', VIXCLS: '#ef4444', DGS2: '#059669',
+            DGS10: '#f59e0b', GOLD: '#b8860b', BTCUSD: '#f7931a'
+        },
+        syms: ['NASDAQ100', 'VIXCLS', 'DGS2', 'DGS10', 'GOLD', 'BTCUSD'],
         charts: [],
         idx: -1,
     });
 
-    // 渲染三面板，均附加 crossLinePlugin（画统一竖线），并收集 chart 实例
+    // 渲染五面板，均附加 crossLinePlugin（画统一竖线），并收集 chart 实例
     const charts = [
         renderChart('chartNasdaq', allDates, [nasdaq], { showX: false },
             [drawdownEventsPlugin, crossLinePlugin], { drawdownEvents: { events: eventsMap['NASDAQ100'] || [] } }),
         renderChart('chartVix', allDates, [vix], { showX: false },
             [crossLinePlugin]),
         renderChart('chartBond', allDates, [dgs2, dgs10], { showX: true },
+            [crossLinePlugin]),
+        renderChart('chartGold', allDates, [gold], { showX: false },
+            [crossLinePlugin]),
+        renderChart('chartBtc', allDates, [btc], { showX: true },
             [crossLinePlugin]),
     ].filter(Boolean);
     historySync.charts = charts;

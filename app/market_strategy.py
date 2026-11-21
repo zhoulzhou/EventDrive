@@ -108,6 +108,8 @@ def advance(db: Session, symbol: str, value: float, date: str) -> bool:
     strategy = _get_strategy(symbol)
     if strategy is None:
         return False  # 未配置策略，不推进
+    if "red_pct" not in strategy:
+        return False  # 只配了阈值（如 VIX）的指标走 compute_level，不追踪峰值回撤
 
     state = crud.get_market_strategy_state(db, symbol)
     red_pct = strategy["red_pct"] / 100.0  # 转为小数
