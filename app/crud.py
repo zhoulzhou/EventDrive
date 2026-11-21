@@ -586,37 +586,6 @@ def bulk_upsert_macro_history(db: Session, records: List[dict]) -> Dict[str, int
     return {"added": added, "updated": updated}
 
 
-def get_macro_history_series(
-    db: Session,
-    keys: List[str],
-    per_key_limit: int = 3000,
-) -> Dict[str, List[models.MacroIndicatorHistory]]:
-    """按指标取历史序列（时间正序），供图表使用。
-
-    按 as_of（数据日期）排序而非自增 id：回溯补齐前已存在的「最新一期」记录
-    id 很小，若按 id 排会插到序列开头，导致折线图乱序。
-    每个指标最多取 per_key_limit 条最新记录，再按时间正序返回。
-    """
-    result: Dict[str, List[models.MacroIndicatorHistory]] = {k: [] for k in keys}
-    if not keys:
-        return result
-
-    for key in keys:
-        rows = (
-            db.query(models.MacroIndicatorHistory)
-            .filter(models.MacroIndicatorHistory.key == key)
-            .order_by(
-                models.MacroIndicatorHistory.as_of.desc(),
-                models.MacroIndicatorHistory.id.desc(),
-            )
-            .limit(per_key_limit)
-            .all()
-        )
-        rows.reverse()  # 转成时间正序
-        result[key] = rows
-    return result
-
-
 # ================================================================ 股票指标
 #
 # 「股票指标」页（A 股冷热三层温度计）的快照表与历史表。写入口径与市场指标

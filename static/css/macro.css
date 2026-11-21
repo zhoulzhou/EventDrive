@@ -287,14 +287,6 @@
     .macro-band-range { min-width: 84px; }
 }
 
-.macro-crosslink {
-    text-align: right;
-    font-size: 0.85rem;
-    padding: 0.5rem 0 2rem;
-}
-.macro-crosslink a { color: #667eea; text-decoration: none; font-weight: 500; }
-.macro-crosslink a:hover { text-decoration: underline; }
-
 /* ==================== 盯盘方法与口径说明 ==================== */
 .macro-notes {
     background: white;

@@ -3,7 +3,6 @@
 - GET  /api/macro           读取当前指标与组合解读（**只读库，不再自行抓取**）
 - POST /api/macro/refresh   强制重新抓取全部指标（页面「刷新数据」按钮走这里）
 - GET  /api/macro/history   查询各指标的历史读数（只增不改的历史表）
-- GET  /api/macro/series    读取「三组一定位」图表面板所需的历史序列
 - POST /api/macro/backfill  一次性回溯补齐历史数据（让趋势图有数据可画）
 
 三个维度（共 10 项），全部自动获取、无手工录入：
@@ -40,7 +39,6 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import crud
 from app.api.login import require_auth
-from app.utils import macro_backfill as mbf
 from app.utils import macro_indicators as mi
 from app.utils import macro_refresh as mrf
 
@@ -251,49 +249,6 @@ def get_macro_history(
         raise
     except Exception as e:
         logger.error("查询市场指标历史失败: %s", e, exc_info=True)
-        return {"status": "error", "message": str(e)}
-
-
-@router.get("/macro/series")
-def get_macro_series(
-    per_key: int = 3000,
-    db: Session = Depends(get_db),
-    auth: bool = Depends(require_auth),
-):
-    """返回「三组一定位」图表面板所需的全部历史序列。
-
-    - daily  ：日度序列（DR001 偏离、R001 − DR001），用于偏离度图与分层利差图
-    - monthly：月度序列（PMI、PPI、社融存量同比、M1/M2 同比、M1−M2 剪刀差、信用/部门三项），
-               用于阈值带图、双线剪刀差图、归一化叠加与四象限轨迹
-    - anchor_steps：7 天逆回购操作利率的历史档位（回溯 DR001 偏离时的锚）
-
-    序列一律按时间正序返回，元素为 {as_of, value, source}。
-    """
-    try:
-        per_key = max(10, min(int(per_key or 3000), 5000))
-        grouped = crud.get_macro_history_series(db, mi.CHART_KEYS, per_key_limit=per_key)
-
-        def _pack(key: str):
-            return [
-                {"as_of": r.as_of, "value": r.value, "source": r.source}
-                for r in grouped.get(key) or []
-                if r.value is not None
-            ]
-
-        daily = {k: _pack(k) for k in mi.CHART_DAILY_KEYS}
-        monthly = {k: _pack(k) for k in mi.CHART_MONTHLY_KEYS}
-
-        counts = {k: len(v) for k, v in list(daily.items()) + list(monthly.items())}
-        return {
-            "status": "ok",
-            "daily": daily,
-            "monthly": monthly,
-            "anchor_steps": [{"from": d, "rate": r} for d, r in mbf.POLICY_RATE_STEPS],
-            "counts": counts,
-            "total": sum(counts.values()),
-        }
-    except Exception as e:
-        logger.error("获取市场指标序列失败: %s", e, exc_info=True)
         return {"status": "error", "message": str(e)}
 
 

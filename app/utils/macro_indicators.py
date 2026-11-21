@@ -381,12 +381,6 @@ NAME_OF_KEY = {ind["key"]: ind["name"] for ind in INDICATORS}
 NAME_OF_KEY[PARAM_REVERSE_REPO] = PARAM_META[PARAM_REVERSE_REPO]["name"]
 NAME_OF_KEY.update(SERIES_EXTRA_KEYS)
 
-# 图表面板「三组一定位」用到的序列键（供 /api/macro/series 组装）
-CHART_DAILY_KEYS = ["dr001_spread", "r001_dr001"]
-CHART_MONTHLY_KEYS = ["pmi", "ppi_yoy", "tsf_yoy", "m1_yoy", "m2_yoy", "m1_m2",
-                      "corp_ml_yoy", "household_ml_yoy", "fiscal_deposit_mom"]
-CHART_KEYS = CHART_DAILY_KEYS + CHART_MONTHLY_KEYS
-
 # ---------------------------------------------------------------- 状态判定
 
 
