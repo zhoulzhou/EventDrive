@@ -679,7 +679,7 @@ def sample_percentile(value: Optional[float], series: List[Dict[str, Any]],
     n = len(windowed)
     if value is None or n < min_n:
         return None, n
-    below = sum(1 for p in windowed if p["value"] <= value)
+    below = sum(1 for p in windowed if p["value"] < value)
     return round(below / n * 100, 1), n
 
 
