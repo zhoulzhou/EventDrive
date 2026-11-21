@@ -126,7 +126,7 @@ TEMP_ZONES = [
 #
 # 0-100，越高越贪婪，对标 CNN Fear & Greed：
 #   贪婪指数 = 情绪 × 88%（市场宽度 / 全A换手率 / 两市成交额 三项等权）+ 估值 × 12%（沪深300 PE-TTM）
-#   分位口径：样本内分位，固定取最近 15 个交易日（不足 5 期时该项不参与合成）
+#   分位口径：全部可用历史分位（不足 5 期时该项不参与合成）
 #   ERP / 破净率为确认层：不加权，只做极端区闸门
 #
 #   深度恐慌 = 贪婪 < 20 且（ERP 分位 > 80 或 破净率分位 > 80）
@@ -1867,12 +1867,12 @@ def _component_context(key: str, detail: dict) -> str:
 
 def build_greed(items: Dict[str, Dict[str, Any]],
                 series_map: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
-    """市场贪婪指数：情绪 ×88% + 估值 ×12%，分位统一取近 15 个交易日。
+    """市场贪婪指数：情绪 ×88% + 估值 ×12%，分位统一取全部可用历史。
 
     ERP / 破净率为确认层，不加权，只参与「深度恐慌 / 泡沫警示」闸门判定。
     """
     series_map = series_map or {}
-    # 卡片自带分位与窗口，detail 里的分位字段口径不同（主指标 15 日 / 确认层全历史），
+    # 卡片自带分位与窗口，detail 里的分位字段来自抓取时的短窗口口径，
     # 一并跳过，避免同一张卡出现两个互相矛盾的分位。
     detail_skip = ("数据源", "分位窗口", "分位", "样本期数", "分位来源")
     components: List[Dict[str, Any]] = []
@@ -1881,7 +1881,7 @@ def build_greed(items: Dict[str, Dict[str, Any]],
         item = items.get(key) or {}
         value = item.get("value")
         series = series_map.get(key) or []
-        pct, n = sample_percentile(value, series)
+        pct, n = sample_percentile(value, series, days=1000000, min_n=GREED_MIN_SAMPLE)
         is_sent = spec["category"] == "sentiment"
         weight = (GREED_SENTIMENT_WEIGHT / 3.0) if is_sent else GREED_VALUATION_WEIGHT
         score = pct
@@ -1945,8 +1945,7 @@ def build_greed(items: Dict[str, Dict[str, Any]],
     zone_index = GREED_ZONES.index(zone) if zone else -1
 
     # 确认层：ERP / 破净率（越高 = 越冷越便宜），只做闸门。
-    # 主指标用近 15 个交易日的样本内分位；确认层是「极端区」判断，用全部可用历史分位，
-    # 避免短样本把闸门频繁打到 0/100。
+    # 主指标与确认层统一使用全部可用历史分位，样本不足 5 期的项不参与合成。
     confirm = []
     for key in GREED_CONFIRM_KEYS:
         item = items.get(key) or {}
@@ -2001,8 +2000,8 @@ def build_greed(items: Dict[str, Dict[str, Any]],
     # 一句话总结
     def _one(c):
         if c["score"] is None:
-            return "%s %s（样本不足 %d/%d）" % (
-                c["name"], c["reading"], c["sample_n"], GREED_SAMPLE_DAYS)
+            return "%s %s（样本不足，仅 %d 期）" % (
+                c["name"], c["reading"], c["sample_n"])
         return "%s %s（分位 %.1f）" % (c["name"], c["reading"], c["score"])
 
     sent_txt = " / ".join(_one(c) for c in sentiment_comps)
@@ -2012,8 +2011,8 @@ def build_greed(items: Dict[str, Dict[str, Any]],
         expr = "(%s)/%d×0.88" % ("+".join("%.1f" % s for s in sent_scores), len(sent_scores))
     if val is not None:
         expr = (expr + " + " if expr else "") + "%.1f×0.12" % val
-    summary = "市场贪婪指数 %s（情绪×88%% + 估值×12%%，样本内分位·近%d交易日）：情绪——%s；估值——%s。" % (
-        _pct_text(total), GREED_SAMPLE_DAYS, sent_txt, val_txt)
+    summary = "市场贪婪指数 %s（情绪×88%% + 估值×12%%，全历史分位）：情绪——%s；估值——%s。" % (
+        _pct_text(total), sent_txt, val_txt)
     if expr:
         summary += "加权 = %s = %s。" % (expr, _pct_text(total))
     if len(sent_scores) < len(sentiment_comps):
@@ -2031,7 +2030,6 @@ def build_greed(items: Dict[str, Dict[str, Any]],
         "zone_index": zone_index,
         "zones": GREED_ZONES,
         "formula": "贪婪指数 = 情绪 × 88%（市场宽度 / 全A换手率 / 两市成交额 各 1/3）+ 估值 × 12%（沪深300 PE-TTM）",
-        "sample_days": GREED_SAMPLE_DAYS,
         "sentiment": {
             "score": sent,
             "weight": GREED_SENTIMENT_WEIGHT,

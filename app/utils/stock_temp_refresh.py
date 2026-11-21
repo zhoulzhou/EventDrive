@@ -68,7 +68,7 @@ def _record_greed(db: Session) -> int:
     detail["估值分"] = (greed.get("valuation") or {}).get("score")
     detail["深度恐慌"] = int(bool((greed.get("gates") or {}).get("deep_fear", {}).get("triggered")))
     detail["泡沫警示"] = int(bool((greed.get("gates") or {}).get("bubble", {}).get("triggered")))
-    detail["数据源"] = "近 %d 个交易日样本内分位加权" % st.GREED_SAMPLE_DAYS
+    detail["数据源"] = "全历史分位加权"
     as_of = max(
         [c.get("as_of") for c in greed.get("components") or [] if c.get("as_of")],
         default=date.today().strftime("%Y-%m-%d"),

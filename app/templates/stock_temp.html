@@ -13,8 +13,8 @@
         <p class="form-hint">
             <strong>0-100 · 越高越贪婪 · 对标 CNN Fear &amp; Greed · 情绪 88% + 估值 12% · 每日收盘后更新</strong>。
             贪婪指数 = 情绪×88%（市场宽度 / 全A换手率 / 两市成交额，三项等权各 1/3）
-            + 估值×12%（沪深300 PE-TTM）；四个主指标的分位取 <strong>近 15 个交易日样本内分位</strong>。
-            ERP / 破净率为<strong>确认层</strong>：不加权，取<strong>全历史分位</strong>，只在极端区做闸门。
+            + 估值×12%（沪深300 PE-TTM）；四个主指标的分位取 <strong>全部可用历史的分位</strong>。
+            ERP / 破净率为<strong>确认层</strong>：不加权，同样取<strong>全历史分位</strong>，只在极端区做闸门。
         </p>
         <p class="form-hint st-src-line">
             <strong>深度恐慌</strong>：贪婪 &lt; 20 且（ERP 分位 &gt; 80 或 破净率分位 &gt; 80）→ 冷 + 便宜共振，底部信号可信度最高；
@@ -103,7 +103,7 @@ function heroHtml(g) {
         + escapeHtml(g.state || "数据不足") + "</div>"
         + "<div class=\"st-greed-sub\">" + escapeHtml(g.formula || "") + "</div>"
         + "<div class=\"st-greed-sub\">" + escapeHtml(g.updated_note || "每日收盘后更新")
-        + " · 分位口径：近 " + (g.sample_days || 15) + " 个交易日样本内分位</div>"
+        + " · 分位口径：全部可用历史分位</div>"
         + "</div></div>"
         + "<div class=\"st-gauge\"><div class=\"st-gauge-track\">" + segs + "</div>" + marker + "</div>"
         + "<div class=\"st-greed-legend\">" + legend + "</div>"
@@ -147,9 +147,9 @@ function componentCards(g) {
         lines.push("读数：" + escapeHtml(c.reading) + context);
         if (score === null) {
             lines.push("分位：" + escapeHtml(pctText(c.percentile, c.sample_n)));
-            lines.push("<span class=\"g-muted\">样本不足，不参与合成</span>");
+            lines.push("<span class=\"g-muted\">样本不足（" + c.sample_n + " 期），不参与合成</span>");
         } else {
-            lines.push("分位：" + score.toFixed(1) + "%（样本内分位 " + c.sample_n + "/" + (g.sample_days || 15) + "）");
+            lines.push("分位：" + score.toFixed(1) + "%（全历史 · " + c.sample_n + " 期）");
             lines.push("贪婪分 = 分位 " + score.toFixed(1) + " = " + score.toFixed(1)
                 + " · 贡献 " + score.toFixed(1) + "×" + c.weight_pct.toFixed(1) + "% = "
                 + Number(c.contribution).toFixed(2));
@@ -211,7 +211,7 @@ function notesHtml(g) {
         + "<div class=\"st-note\"><h3>加权方式</h3><ul>"
         + "<li>情绪 = 市场宽度 / 全A换手率 / 两市成交额，<b>三项等权各 1/3</b>，合计 88%。</li>"
         + "<li>估值 = 沪深300 PE-TTM，占 <b>12%</b>。</li>"
-        + "<li>四个主指标的分位取<b>近 15 个交易日样本内分位</b>；某项样本不足 5 期时不参与合成，按可用项重算。</li>"
+        + "<li>四个主指标的分位取<b>全部可用历史的分位</b>；某项样本不足 5 期时不参与合成，按可用项重算。</li>"
         + "<li>贪婪分 = 分位（越高越贪婪）；贡献 = 贪婪分 × 有效权重（缺失项剔除后按比例放大）。</li>"
         + "</ul></div>"
         + "<div class=\"st-note\"><h3>五档与确认层</h3><ul>"
