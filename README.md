@@ -34,8 +34,7 @@ EventDrive/
 │   │   ├── news.py             # 新闻相关API
 │   │   ├── crawl.py            # 抓取相关API
 │   │   ├── filter.py           # 筛选规则API
-│   │   ├── logs.py             # 日志相关API
-│   │   └── feishu.py           # 飞书推送API
+│   │   └── logs.py             # 日志相关API
 │   ├── crawlers/
 │   │   ├── __init__.py
 │   │   ├── base.py             # 爬虫基类
@@ -47,8 +46,7 @@ EventDrive/
 │   │   ├── __init__.py
 │   │   ├── anti_crawl.py       # 反爬虫工具
 │   │   ├── image_downloader.py # 图片下载器
-│   │   ├── filters.py          # 筛选工具
-│   │   └── feishu_notifier.py  # 飞书推送工具
+│   │   └── filters.py          # 筛选工具
 │   └── templates/
 │       ├── base.html
 │       ├── index.html
@@ -183,7 +181,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - **筛选规则**：自定义包含和排除关键词筛选新闻
 - **图片下载**：自动下载并保存新闻图片
 - **抓取日志**：完整记录抓取历史
-- **预留接口**：飞书推送、AI打分、投资决策建议
+- **预留接口**：投资决策建议
 
 ## Web界面
 
@@ -201,8 +199,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - 筛选功能
 
 ### 第二阶段（预留）
-- 飞书推送
-- AI新闻打分
 - AI投资决策建议
 
 ### 第三阶段（可选）

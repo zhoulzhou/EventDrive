@@ -10,8 +10,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, backup, feishu, login, market, index_alarm, finance, valuation, macro, stock_temp, hot_sector
-from app.utils.feishu_notifier import init_all_notifiers, start_notifier, shutdown_notifier
+from app.api import news, crawl, backup, login, market, index_alarm, finance, valuation, macro, stock_temp, hot_sector
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
 
@@ -41,26 +40,9 @@ elif index_alarm.ensure_index_data_loaded():
 else:
     print("✅ 指数预警数据已存在,直接使用数据库缓存")
 
-init_all_notifiers(
-    dfcf_url=settings.DFCF_FEISHU_WEBHOOK_URL or "",
-    dfcf_keyword=settings.DFCF_FEISHU_KEYWORD,
-    kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
-    kb_keyword=settings.KB_KEYWORD,
-    deepseek_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL or "",
-    deepseek_keyword=settings.DEEPSEEK_KEYWORD,
-    x_url=settings.X_FEISHU_WEBHOOK_URL or "",
-    x_keyword=settings.X_FEISHU_KEYWORD,
-)
-print("✅ 飞书推送初始化完成")
-if settings.DEEPSEEK_FEISHU_WEBHOOK_URL:
-    print(f"  - DeepSeek 飞书推送: ✅ (关键词: {settings.DEEPSEEK_KEYWORD})")
-if settings.KB_FEISHU_WEBHOOK_URL:
-    print(f"  - 豆包飞书推送: ✅ (关键词: {settings.KB_KEYWORD})")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await start_notifier()
     if settings.START_SCHEDULER:
         start_scheduler()
         jobs = sched_instance.get_jobs()
@@ -74,7 +56,6 @@ async def lifespan(app: FastAPI):
     if settings.START_SCHEDULER:
         stop_scheduler()
         print("🛑 定时任务调度器已停止")
-    await shutdown_notifier()
 
 
 app = FastAPI(
@@ -94,7 +75,6 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(crawl.router, prefix="/api", tags=["crawl"])
 app.include_router(backup.router, prefix="/api", tags=["backup"])
-app.include_router(feishu.router, prefix="/api", tags=["feishu"])
 app.include_router(login.router, prefix="/api", tags=["login"])
 app.include_router(market.router, prefix="/api", tags=["market"])
 app.include_router(index_alarm.router, prefix="/api", tags=["index-alarm"])

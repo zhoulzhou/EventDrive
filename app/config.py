@@ -37,27 +37,8 @@ class Settings:
     DATA_DIR: Path = BASE_DIR / "data"
     LOGS_DIR: Path = BASE_DIR / "logs"
 
-    FEISHU_WEBHOOK_URL: str = os.getenv("FEISHU_WEBHOOK_URL", "")
-    FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
-    FEISHU_KEYWORD: str = os.getenv("FEISHU_KEYWORD", "头条")
-
-    DFCF_FEISHU_WEBHOOK_URL: str = os.getenv("DFCF_FEISHU_WEBHOOK_URL", "")
-    DFCF_FEISHU_KEYWORD: str = os.getenv("DFCF_FEISHU_KEYWORD", "头条")
-
-    KB_API_KEY: str = os.getenv("KB_API_KEY", "")
-    KB_MODEL_ID: str = os.getenv("KB_MODEL_ID", "doubao-1-5-pro-256k-250115")
-    KB_REGION: str = os.getenv("KB_REGION", "cn-beijing")
-    KB_FEISHU_WEBHOOK_URL: str = os.getenv("KB_FEISHU_WEBHOOK_URL", "")
-    KB_KEYWORD: str = os.getenv("KB_KEYWORD", "Talk")
-
-    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
-    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
-    DEEPSEEK_FEISHU_WEBHOOK_URL: str = os.getenv("DEEPSEEK_FEISHU_WEBHOOK_URL", "")
-    DEEPSEEK_KEYWORD: str = os.getenv("DEEPSEEK_KEYWORD", "深度分析")
-
+    # X 推文抓取（已停用，保留配置以便恢复）
     X_B_T: str = os.getenv("X_B_T", "")
-    X_FEISHU_WEBHOOK_URL: str = os.getenv("X_FEISHU_WEBHOOK_URL", "")
-    X_FEISHU_KEYWORD: str = os.getenv("X_FEISHU_KEYWORD", "X推文")
     X_MAX_RESULTS: int = _get_int("X_MAX_RESULTS", 5)
     X_MONTH_MAX_LIMIT: int = _get_int("X_MONTH_MAX_LIMIT", 190)
     X_DAY_MAX_LIMIT: int = _get_int("X_DAY_MAX_LIMIT", 6)

@@ -19,13 +19,6 @@ from app.crawlers.market_data import refresh_market_data
 from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
 from app.utils.hot_sector_refresh import fetch_and_store_hot_sector
-from app.utils.feishu_notifier import (
-    dfcf_feishu_notify,
-    doubao_feishu_notify, deepseek_feishu_notify,
-    # x_feishu_status_notify  # X 推文抓取已停用
-)
-from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
-from app.utils.deepseek_analyzer import init_deepseek_analyzer, get_deepseek_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -228,28 +221,6 @@ async def full_crawl():
     log_crawl("=" * 50)
     start_time = datetime.now()
 
-    if settings.KB_API_KEY:
-        try:
-            init_doubao_analyzer(api_key=settings.KB_API_KEY, model=settings.KB_MODEL_ID, region=settings.KB_REGION)
-            log_crawl("豆包大模型分析器初始化完成")
-        except Exception as e:
-            logger.error(f"豆包分析器初始化失败: {e}", exc_info=True)
-
-    if settings.DEEPSEEK_API_KEY:
-        try:
-            init_deepseek_analyzer(
-                api_key=settings.DEEPSEEK_API_KEY,
-                model=settings.DEEPSEEK_MODEL,
-                feishu_webhook_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL,
-                keyword=settings.DEEPSEEK_KEYWORD
-            )
-            log_crawl("DeepSeek大模型分析器初始化完成")
-        except Exception as e:
-            logger.error(f"DeepSeek分析器初始化失败: {e}", exc_info=True)
-
-    doubao_analyzer = get_doubao_analyzer()
-    deepseek_analyzer = get_deepseek_analyzer()
-
     # 新闻源：仅东方财富（接口抓取）
     news_sources = [EastmoneyDepthCrawler]
     sem = asyncio.Semaphore(CONCURRENT_CRAWLERS)
@@ -268,55 +239,12 @@ async def full_crawl():
         source_results[cls_name] = (count, news)
         total_saved += count
 
-    async def _analyze_and_notify(news_list, analyzer, notifier_func, label):
-        nonlocal total_analyzed
-        if not news_list or not analyzer:
-            return
-        for news in news_list[:2]:
-            title = news.get('title', '')
-            summary = news.get('summary', '')
-            source = news.get('source', label)
-            log_crawl(f"[{label}] 正在分析: {title[:50]}...")
-            try:
-                result = await analyzer.analyze_only(title, summary, source)
-                if result:
-                    await notifier_func(title, result, source)
-                    log_crawl(f"[{label}] 分析并推送成功")
-                    total_analyzed += 1
-                else:
-                    log_crawl(f"[{label}] 分析失败")
-            except Exception as e:
-                logger.error(f"[{label}] 分析异常: {e}", exc_info=True)
-                log_crawl(f"[{label}] 分析异常: {e}")
-            await asyncio.sleep(2)
-
-    total_analyzed = 0
-
-    dfcf_count, dfcf_news = source_results.get("EastmoneyDepthCrawler", (0, []))
-    if dfcf_news:
-        await dfcf_feishu_notify(dfcf_news[:5], "东方财富")
-        await _analyze_and_notify(dfcf_news, deepseek_analyzer, deepseek_feishu_notify, "DeepSeek")
-        await _analyze_and_notify(dfcf_news, doubao_analyzer, doubao_feishu_notify, "豆包")
-    else:
+    _dfcf_count, dfcf_news = source_results.get("EastmoneyDepthCrawler", (0, []))
+    if not dfcf_news:
         log_crawl("东方财富没有新新闻")
 
-    # ---- X 推文抓取已停用（用户要求），保留原逻辑便于恢复 ----
-    # log_crawl("=" * 50)
-    # log_crawl("X平台推文抓取")
-    # log_crawl("=" * 50)
-    # if settings.X_B_T and settings.X_LIST_ID:
-    #     x_result = await asyncio.to_thread(fetch_tweets)
-    #     x_msg = x_result.get("message", "")
-    #     x_status = x_result.get("status", "error")
-    #     x_push = x_result.get("push_message")
-    #     log_crawl(f"[X] {x_msg} (状态: {x_status})")
-    #     if x_push:
-    #         await x_feishu_status_notify(x_push)
-    # else:
-    #     log_crawl("X平台未配置，跳过")
-
     log_crawl("=" * 50)
-    log_crawl(f"所有任务完成! 保存: {total_saved} 条, 分析推送: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
+    log_crawl(f"所有任务完成! 保存: {total_saved} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
     log_crawl("=" * 50)
 
 
