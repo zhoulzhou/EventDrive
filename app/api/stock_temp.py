@@ -181,6 +181,10 @@ def refresh_stock_temp(db: Session = Depends(get_db), auth: bool = Depends(requi
         return {"status": "error", "message": str(e)}
 
 
+# 热度趋势页只画从此刻起重新累积的数据：更早的历史仍保留在库中，但不再返回给曲线
+TREND_START_AS_OF = "2026-11-21"
+
+
 @router.get("/stock-temp/series")
 def get_stock_temp_series(
     per_key: int = 6000,
@@ -189,7 +193,7 @@ def get_stock_temp_series(
 ):
     """返回趋势面板所需的历史序列，以及按月度重建的三层温度轨迹。
 
-    - series      ：{指标键: [{as_of, value, source}, ...]}，时间正序
+    - series      ：{指标键: [{as_of, value, source}, ...]}，时间正序，且只含 TREND_START_AS_OF 之后
     - temperature ：{monthly: [{as_of, valuation, sentiment, capital, total}]}
     - counts      ：各指标可用点数，前端据此决定画什么
     """
@@ -203,7 +207,8 @@ def get_stock_temp_series(
             rows = grouped.get(key) or []
             pts = [
                 {"as_of": r.as_of, "value": r.value, "source": r.source}
-                for r in rows if r.value is not None and r.as_of
+                for r in rows
+                if r.value is not None and r.as_of and str(r.as_of)[:10] >= TREND_START_AS_OF
             ]
             series[key] = pts
             counts[key] = len(pts)

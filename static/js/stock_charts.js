@@ -172,18 +172,17 @@ function drawBelowNa(bag) {
 }
 
 function drawTurnover(bag) {
-    const amt = pts(bag.turnover_amt), rate = pts(bag.turnover_rate);
+    const amt = pts(bag.turnover_amt);
     if (!amt.length) return chartEmpty("stTurnover", "暂无成交额历史数据，随每日刷新继续累积");
     const cats = amt.map(function (p) { return p[0]; });
     // 下限压到 5000 亿（或更低），保证 7000 亿地量线也能画出来
     const lo = Math.min(5000, Math.floor(Math.min.apply(null, amt.map(function (p) { return p[1]; })) / 1000) * 1000);
     mount("stTurnover", {
         grid: baseGrid(),
-        legend: legend(["两市成交额", "全A换手率"],
-            { "两市成交额": "（亿元 · 左轴）", "全A换手率": "（% · 右轴）" }),
+        legend: legend(["两市成交额"]),
         tooltip: tipAxis(""),
         xAxis: xAxis(cats),
-        yAxis: [Object.assign(yAxis("成交额（亿元）"), { min: lo }), yAxis("", null, "right")],
+        yAxis: Object.assign(yAxis("成交额（亿元）"), { min: lo }),
         series: [
             lineSeries("两市成交额", amt, CH.amber, {
                 areaStyle: { color: withAlpha(CH.amber, 0.12) },
@@ -192,11 +191,6 @@ function drawTurnover(bag) {
                     [12000, "1.2 万亿", CH.lime], [7000, "7000 亿 地量", CH.blue]
                 ], true),
                 markPoint: lastMark("两市成交额", amt, CH.amber, 0, " 亿")
-            }),
-            lineSeries("全A换手率", rate, CH.red, {
-                yAxisIndex: 1, symbol: "circle", symbolSize: 5,
-                lineStyle: { width: 1.6, color: CH.red, type: "dashed" },
-                markPoint: lastMark("全A换手率", rate, CH.red, 2, "%")
             })
         ]
     });
@@ -375,24 +369,14 @@ function fig(title, note, id) {
 
 function panelHtml() {
     return "<section class=\"st-panel\">"
-        + "<h2 class=\"st-group-title\">趋势面板<span class=\"st-group-sub\">与股市热度页一一对应：贪婪指数 + 4 个主指标 + 2 个确认层指标</span></h2>"
+        + "<h2 class=\"st-group-title\">趋势面板<span class=\"st-group-sub\">仅两个指标：市场贪婪指数、两市成交额；曲线自 2026-11-21 起重新累积</span></h2>"
         + "<div class=\"st-fig-block st-f-temp\">"
         + "<div class=\"st-fig-block-head\">贪婪指数 · 合成读数</div>"
         + fig("市场贪婪指数（0-100）", "五档色带：0-10 / 10-30 / 30-70 / 70-90 / 90-100", "stGreed")
         + "</div>"
         + "<div class=\"st-fig-block st-f-sentiment\">"
-        + "<div class=\"st-fig-block-head\">情绪层 · 88%（三项等权）</div>"
-        + fig("市场宽度（上涨占比）", "上涨家数 /（上涨 + 下跌）；20 / 50 / 80% 参考线", "stBreadth")
-        + fig("两市成交额 与 全A换手率（双轴）", "成交额阈值 7000 / 12000 / 20000 / 30000 亿", "stTurnover")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-valuation\">"
-        + "<div class=\"st-fig-block-head\">估值层 · 12%</div>"
-        + fig("沪深300 PE-TTM 与 PB（双轴）", "PE-TTM 是贪婪指数的估值项，PB 用于交叉验证", "stPE")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-structure\">"
-        + "<div class=\"st-fig-block-head\">确认层 · 不加权，只做极端区闸门</div>"
-        + fig("ERP 股债性价比 = 1/PE − 10Y国债", "越高越便宜；均值 ±1σ 带", "stERP")
-        + fig("破净率（全部A股）", "10 / 6 / 3 / 1% 四条阈值线", "stBelowNa")
+        + "<div class=\"st-fig-block-head\">情绪层 · 成交额</div>"
+        + fig("两市成交额", "成交额阈值 7000 / 12000 / 20000 / 30000 亿", "stTurnover")
         + "</div></section>";
 }
 
@@ -401,24 +385,16 @@ function trendNotesHtml() {
     return "<section class=\"st-notes\">"
         + "<h2 class=\"st-group-title\">走势图怎么看</h2>"
         + "<div class=\"st-notes-grid\">"
-        + "<div class=\"st-note\"><h3>一、与股市热度页一一对应</h3>"
+        + "<div class=\"st-note\"><h3>一、本页只看两个指标</h3>"
         + "<ul>"
-        + "<li><b>贪婪指数</b>：0-100 合成读数，五档色带与热度页的状态标签一致。</li>"
-        + "<li><b>情绪层 88%</b>：市场宽度、全A换手率、两市成交额，三项等权各 1/3。</li>"
-        + "<li><b>估值层 12%</b>：沪深300 PE-TTM；PB 仅用于交叉验证，不参与加权。</li>"
-        + "<li><b>确认层</b>：ERP 与破净率，不加权，只用于深度恐慌 / 泡沫警示闸门。</li>"
+        + "<li><b>市场贪婪指数</b>：0-100 合成读数，五档色带与股市热度页的状态标签一致。</li>"
+        + "<li><b>两市成交额</b>：7000 亿地量 / 1.2 万亿 / 2 万亿 / 3 万亿四条阈值线。</li>"
+        + "<li>其余指标（市场宽度、PE/PB、ERP、破净率等）只在<a href=\"/stock-temp\">股市热度</a>页看当前读数。</li>"
         + "</ul></div>"
-        + "<div class=\"st-note\"><h3>二、先看分位，再看绝对水位</h3>"
+        + "<div class=\"st-note\"><h3>二、曲线从 2026-11-21 重新累积</h3>"
         + "<ul>"
-        + "<li>分位取<b>全部可用历史</b>，即当前读数在历史序列里的位置。</li>"
-        + "<li>成交额放大而宽度极低 = 放量杀跌，读数会高估真实情绪，以宽度为准。</li>"
-        + "<li>ERP 高位 + 破净率高位 = 冷 + 便宜；此时贪婪 &lt; 20 会触发深度恐慌闸门。</li>"
-        + "</ul></div>"
-        + "<div class=\"st-note\"><h3>三、数据口径</h3>"
-        + "<ul>"
-        + "<li><b>贪婪指数</b>每日收盘后打卡一次，曲线从开始记录那天画起。</li>"
-        + "<li><b>市场宽度</b>数据源只提供当日快照，历史只能按日累积。</li>"
-        + "<li>成交额 / 换手率 / PE / ERP / 破净率都按每日刷新持续累积，只展示已累计的数据。</li>"
+        + "<li>更早的历史仍保留在数据库，只是不在本页展示。</li>"
+        + "<li>贪婪指数每日收盘后打卡一次，成交额随每日刷新累积，攒够几天曲线才有形状。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
         + "</ul></div>"
         + "</div></section>";
@@ -427,12 +403,11 @@ function trendNotesHtml() {
 /* ---------------- 加载与绘制 ---------------- */
 function drawCharts(d) {
     const bag = d.series || {};
-    drawGreed(bag); drawBreadth(bag); drawTurnover(bag);
-    drawPE(bag); drawERP(bag); drawBelowNa(bag);
+    drawGreed(bag); drawTurnover(bag);
     Object.keys(chartReg).forEach(function (k) { if (chartReg[k]) chartReg[k].resize(); });
 }
 
-const CHART_IDS = ["stGreed", "stBreadth", "stTurnover", "stPE", "stERP", "stBelowNa"];
+const CHART_IDS = ["stGreed", "stTurnover"];
 
 async function loadSeries(force) {
     if (seriesCache && !force) { drawCharts(seriesCache); setTrendMeta(seriesCache, false); return; }
