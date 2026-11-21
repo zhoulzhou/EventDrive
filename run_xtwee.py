@@ -85,4 +85,5 @@ def fetch_list_tweets():
 if __name__ == "__main__":
     print("=== X列表推文抓取（50条内存去重版）===")
     print(f"目标列表ID：{LIST_ID} | 单次抓取：{MAX_RESULTS} 条 | 历史缓存：{MAX_HISTORY_IDS} 条")
-    fetch_list_tweets()
+    # X 推文抓取已停用（用户要求），保留调用便于恢复
+    # fetch_list_tweets()

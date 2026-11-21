@@ -15,7 +15,8 @@ from app.crawlers import (
     BBCCrawler,
     NewsItem
 )
-from app.crawlers.x_twitter import fetch_tweets
+# X 推文抓取已停用（用户要求），保留导入以便恢复
+# from app.crawlers.x_twitter import fetch_tweets
 from app.crawlers.market_data import refresh_market_data
 from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot
@@ -23,7 +24,7 @@ from app.utils.hot_sector_refresh import fetch_and_store_hot_sector
 from app.utils.feishu_notifier import (
     dfcf_feishu_notify, nyt_feishu_notify, bbc_feishu_notify,
     doubao_feishu_notify, openrouter_feishu_notify, deepseek_feishu_notify,
-    x_feishu_status_notify
+    # x_feishu_status_notify  # X 推文抓取已停用
 )
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
 from app.utils.openrouter_analyzer import init_openrouter_analyzer, get_openrouter_analyzer
@@ -329,19 +330,20 @@ async def full_crawl():
     else:
         log_crawl("BBC没有新新闻")
 
-    log_crawl("=" * 50)
-    log_crawl("X平台推文抓取")
-    log_crawl("=" * 50)
-    if settings.X_B_T and settings.X_LIST_ID:
-        x_result = await asyncio.to_thread(fetch_tweets)
-        x_msg = x_result.get("message", "")
-        x_status = x_result.get("status", "error")
-        x_push = x_result.get("push_message")
-        log_crawl(f"[X] {x_msg} (状态: {x_status})")
-        if x_push:
-            await x_feishu_status_notify(x_push)
-    else:
-        log_crawl("X平台未配置，跳过")
+    # ---- X 推文抓取已停用（用户要求），保留原逻辑便于恢复 ----
+    # log_crawl("=" * 50)
+    # log_crawl("X平台推文抓取")
+    # log_crawl("=" * 50)
+    # if settings.X_B_T and settings.X_LIST_ID:
+    #     x_result = await asyncio.to_thread(fetch_tweets)
+    #     x_msg = x_result.get("message", "")
+    #     x_status = x_result.get("status", "error")
+    #     x_push = x_result.get("push_message")
+    #     log_crawl(f"[X] {x_msg} (状态: {x_status})")
+    #     if x_push:
+    #         await x_feishu_status_notify(x_push)
+    # else:
+    #     log_crawl("X平台未配置，跳过")
 
     log_crawl("=" * 50)
     log_crawl(f"所有任务完成! 保存: {total_saved} 条, 分析推送: {total_analyzed} 条, 耗时: {int((datetime.now() - start_time).total_seconds())}秒")
