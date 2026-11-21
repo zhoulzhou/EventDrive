@@ -190,6 +190,74 @@
     color: #555; font-size: 0.85rem; line-height: 1.75;
 }
 
+/* ==================== 市场贪婪指数 ==================== */
+.st-greed-hero-wrap { padding-bottom: 1.1rem; }
+.st-greed-hero {
+    border: 1px solid rgba(15, 30, 44, 0.12); border-radius: 12px;
+    padding: 1.05rem 1.2rem 1.1rem; margin-bottom: 1.15rem;
+}
+.st-greed-label { font-size: 0.8rem; color: #64748b; letter-spacing: 0.08em; font-weight: 600; }
+.st-greed-value { font-size: 3.1rem; line-height: 1.05; font-weight: 800; margin: 0.15rem 0 0.35rem; }
+.st-greed-denom { font-size: 1rem; font-weight: 500; color: #94a3b8; margin-left: 0.2rem; }
+.st-greed-state {
+    display: inline-block; font-size: 0.86rem; font-weight: 700;
+    border-radius: 999px; padding: 0.18rem 0.7rem; margin-bottom: 0.5rem;
+}
+.st-greed-sub { font-size: 0.8rem; color: #64748b; line-height: 1.65; }
+.st-greed-legend { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.5rem; margin-top: 0.85rem; }
+.st-greed-legend-item { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.72rem; line-height: 1.45; }
+.st-greed-legend-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.st-greed-legend-range { font-weight: 700; color: #334155; }
+.st-greed-legend-state { color: #475569; }
+.st-greed-legend-desc { color: #94a3b8; }
+.st-greed-summary { margin-top: 0; }
+.st-greed-warn {
+    margin-top: 0.7rem; padding: 0.6rem 0.8rem; border-radius: 8px;
+    background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+    font-size: 0.82rem; line-height: 1.65;
+}
+.st-greed-row-group { font-weight: 700; color: #475569; background: #f8fafc; }
+.st-greed-row-group span { font-weight: 500; color: #94a3b8; margin-left: 0.4rem; }
+.st-greed-comp-name { font-weight: 600; color: #1f2937; }
+.st-greed-comp-detail { font-size: 0.72rem; color: #94a3b8; margin-top: 0.15rem; line-height: 1.5; }
+.st-greed-weight, .st-greed-contrib { font-variant-numeric: tabular-nums; color: #64748b; }
+.st-greed-score-cell { min-width: 96px; font-variant-numeric: tabular-nums; font-weight: 700; }
+.st-greed-bar { height: 4px; border-radius: 2px; background: #eef1f6; margin-top: 4px; overflow: hidden; }
+.st-greed-bar span { display: block; height: 100%; border-radius: 2px; }
+.st-greed-sample { display: block; font-size: 0.68rem; color: #b0b7c3; margin-top: 0.1rem; }
+.st-greed-table th, .st-greed-table td { vertical-align: top; }
+
+.st-confirm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.9rem; }
+.st-confirm-card {
+    border: 1px solid #eef1f6; border-top: 3px solid #94a3b8;
+    border-radius: 10px; background: #fbfcfe; padding: 0.85rem 1rem;
+}
+.st-confirm-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.st-confirm-name { font-weight: 700; color: #1f2937; }
+.st-confirm-tag {
+    font-size: 0.68rem; color: #64748b; background: #eef2f7;
+    border-radius: 999px; padding: 0.1rem 0.5rem; white-space: nowrap;
+}
+.st-confirm-value { font-size: 1.85rem; font-weight: 800; line-height: 1.2; margin: 0.3rem 0; }
+.st-confirm-value span { font-size: 0.78rem; font-weight: 500; color: #94a3b8; margin-left: 0.2rem; }
+.st-confirm-reading { font-size: 0.8rem; color: #475569; line-height: 1.65; }
+.st-confirm-window { font-size: 0.7rem; color: #b0b7c3; margin-top: 0.1rem; }
+.st-confirm-detail { font-size: 0.72rem; color: #94a3b8; margin-top: 0.2rem; line-height: 1.55; }
+.st-confirm-date { font-size: 0.7rem; color: #b0b7c3; margin-top: 0.35rem; }
+
+.st-gate-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.9rem; margin-top: 1rem; }
+.st-gate { border: 1px dashed #dbe2ec; border-radius: 10px; padding: 0.8rem 0.95rem; background: #fbfcfe; }
+.st-gate-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.25rem; }
+.st-gate-name { font-weight: 700; color: #334155; }
+.st-gate-state { font-size: 0.7rem; color: #94a3b8; border-radius: 999px; background: #eef2f7; padding: 0.08rem 0.5rem; }
+.st-gate-rule { font-size: 0.74rem; color: #94a3b8; line-height: 1.55; }
+.st-gate-text { font-size: 0.8rem; color: #475569; line-height: 1.65; margin-top: 0.35rem; }
+.st-gate-on { border-style: solid; }
+.st-gate-on.cold { background: #f0f7ff; border-color: #b9d4f0; }
+.st-gate-on.cold .st-gate-state { background: #5B8FC7; color: #fff; }
+.st-gate-on.hot { background: #fff3f2; border-color: #f4c2c2; }
+.st-gate-on.hot .st-gate-state { background: #EA6668; color: #fff; }
+
 @media (max-width: 900px) {
     .st-chart { height: 220px; }
 }
@@ -198,4 +266,6 @@
     .st-band-range { min-width: 92px; }
     .st-header { flex-direction: column; }
     .st-notes-grid { grid-template-columns: 1fr; }
+    .st-greed-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .st-greed-value { font-size: 2.4rem; }
 }

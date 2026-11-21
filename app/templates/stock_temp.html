@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}股市热度 - A股冷热三层温度计{% endblock %}
+{% block title %}股市热度 - 市场贪婪指数{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="/static/css/stock.css">
@@ -9,18 +9,20 @@
 {% block content %}
 <div class="page-header st-header">
     <div class="st-header-text">
-        <h1>股市热度 · A 股冷热三层温度计</h1>
+        <h1>股市热度 · 市场贪婪指数</h1>
         <p class="form-hint">
-            A 股冷热要分三层看 —— <strong>估值层</strong>（贵不贵）、<strong>情绪层</strong>（亢奋不亢奋）、
-            <strong>资金层</strong>（钱进不进），最后合成一个 <strong>0-100 市场温度计</strong>。
-            慢变量定方向 · 快变量定情绪 · 资金变量定底气；<strong>全部用历史分位说话</strong>。
-            本页只放<strong>当前读数</strong>；历史曲线与走势图见 <a href="/stock-trend">热度趋势</a>。
+            <strong>0-100 · 越高越贪婪 · 对标 CNN Fear &amp; Greed · 情绪 88% + 估值 12% · 每日收盘后更新</strong>。
+            贪婪指数 = 情绪×88%（市场宽度 / 全A换手率 / 两市成交额，三项等权各 1/3）
+            + 估值×12%（沪深300 PE-TTM）；四个主指标的分位取 <strong>近 15 个交易日样本内分位</strong>。
+            ERP / 破净率为<strong>确认层</strong>：不加权，取<strong>全历史分位</strong>，只在极端区做闸门。
         </p>
         <p class="form-hint st-src-line">
-            数据源：乐咕乐股（PE/PB、破净率、公募仓位、市场宽度）· 沪深交易所官网（成交额、流通市值）·
-            中债国债收益率（ERP）· 东财数据中心（两融、重要股东增减持）· 新浪/东财（宽基ETF份额、新基金发行）。
-            <strong>全部 13 项自动抓取、无手工录入项</strong>，由 ./start.sh 启动的定时任务
-            （北京时间 20:30）抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
+            <strong>深度恐慌</strong>：贪婪 &lt; 20 且（ERP 分位 &gt; 80 或 破净率分位 &gt; 80）→ 冷 + 便宜共振，底部信号可信度最高；
+            <strong>泡沫警示</strong>：贪婪 &gt; 80 且 ERP 分位 &lt; 20 → 热 + 贵共振，警惕均值回归。
+            数据取自中证指数（沪深300 PE-TTM，日频）、沪深交易所官网（成交额、流通市值）、
+            乐咕乐股（市场宽度、破净率）与中债国债收益率（ERP），
+            <strong>全部自动抓取、无手工录入项</strong>，由 ./start.sh 启动的定时任务（北京时间 20:30）
+            抓取落库，<strong>本页只读展示、自身不抓数据</strong>。
         </p>
     </div>
     <div class="st-toolbar">
@@ -31,7 +33,7 @@
 
 <div id="stNotice"></div>
 <div id="stRoot">
-    <div class="loading">正在加载股市热度…</div>
+    <div class="loading">正在加载市场贪婪指数…</div>
 </div>
 <div class="st-crosslink">
     <a href="/stock-trend">历史曲线与走势图在这里：热度趋势 →</a>
@@ -40,38 +42,12 @@
 
 {% block scripts %}
 <script>
-/* ==================== 页面渲染（只含当前读数与判读） ==================== */
+/* ==================== 页面渲染：市场贪婪指数 0-100 ==================== */
 const LOCAL_TONES = {
     blue: "#3b82f6", cyan: "#06b6d4", green: "#22c55e", lime: "#84cc16",
     amber: "#f59e0b", orange: "#f97316", red: "#ef4444", violet: "#8b5cf6", slate: "#64748b"
 };
 let TONES = Object.assign({}, LOCAL_TONES);
-
-// 温度计色带沿用方法论原文的五段配色（冰点 → 亢奋）
-// 索引即档位，与后端 TEMP_ZONES 五段一一对应，也是全站引用这套色的唯一来源：
-//   0  0-20   冰点 · 布局区  #5B8FC7
-//   1  20-40  偏冷           #8BC8EA
-//   2  40-60  中性           #E4D48F
-//   3  60-80  偏热           #F4B393
-//   4  80-100 亢奋 · 风险区  #EA6668
-// 纯 CSS 场景可用 style.css 里的 :root 变量 --zone-ice/cold/neutral/warm/hot（改色请两边同步）。
-const ZONE_COLORS = ["#5B8FC7", "#8BC8EA", "#E4D48F", "#F4B393", "#EA6668"];
-
-// 温度值 → 档位下标（优先按后端 zones 的 lo/hi 切档，取不到时按 20 一段回落）
-function zoneIndexOf(value, zones) {
-    const v = Number(value);
-    const list = (zones && zones.length) ? zones : null;
-    if (list) {
-        for (let i = 0; i < list.length; i++) {
-            if (v >= list[i].lo && v < list[i].hi) return Math.min(i, ZONE_COLORS.length - 1);
-        }
-        return v >= list[list.length - 1].lo ? ZONE_COLORS.length - 1 : 0;
-    }
-    return Math.max(0, Math.min(ZONE_COLORS.length - 1, Math.floor(v / 20)));
-}
-
-// 取某个温度值对应的区间色（其他位置要按温度上色时直接调它）
-function zoneColorOf(value, zones) { return ZONE_COLORS[zoneIndexOf(value, zones)]; }
 
 function tone(key) { return TONES[key] || "#6b7280"; }
 
@@ -81,312 +57,220 @@ function tint(hex, alpha) {
         + ", " + parseInt(h.substring(4, 6), 16) + ", " + alpha + ")";
 }
 
-function fmtValue(item) {
-    if (item.value === null || item.value === undefined) return "—";
-    const v = Number(item.value);
-    if (isNaN(v)) return "—";
-    const d = item.digits === undefined ? 1 : item.digits;
-    let text = v.toFixed(d);
-    if (d === 0 || d === 1) text = text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    if (v > 0 && item.unit === "bp") text = "+" + text;
-    return text;
+function num(v) { return (v === null || v === undefined || isNaN(Number(v))) ? null : Number(v); }
+
+function pctText(p, n) {
+    if (p === null || p === undefined) return "样本不足" + (n ? "（" + n + "/15）" : "");
+    return Number(p).toFixed(1);
 }
 
-function pctChip(item) {
-    if (item.percentile === null || item.percentile === undefined) return "";
-    const color = tone(item.tone);
-    const w = item.percentile_window ? " title=\"" + escapeHtml(item.percentile_window) + "\"" : "";
-    return "<span class=\"st-pct\" style=\"color:" + color + ";background:" + tint(color, 0.12) + "\"" + w + ">"
-        + "分位 " + Number(item.percentile).toFixed(1) + "%</span>";
-}
-
-function bandHtml(item) {
-    return (item.bands || []).map(function (b) {
-        const active = !!b.active;
-        const color = tone(b.tone);
-        return "<div class=\"st-band" + (active ? " active" : "") + "\""
-            + (active ? " style=\"background:" + tint(color, 0.12) + ";border-color:" + tint(color, 0.45) + "\"" : "")
-            + "><span class=\"st-band-dot\" style=\"background:" + color + "\"></span>"
-            + "<span class=\"st-band-range\">" + escapeHtml(b.range) + "</span>"
-            + "<span class=\"st-band-state\"" + (active ? " style=\"color:" + color + "\"" : "") + ">"
-            + escapeHtml(b.state || "") + "</span></div>";
-    }).join("");
-}
-
-function cardHtml(item) {
-    const color = item.missing ? "#9ca3af" : tone(item.tone);
-    const srcCls = item.source === "fallback" ? " st-src-fallback" : "";
-    return "<div class=\"st-card\" style=\"border-top-color:" + color + "\">"
-        + "<div class=\"st-card-head\"><div>"
-        + "<div class=\"st-name\">" + escapeHtml(item.name)
-        + "<span class=\"st-src" + srcCls + "\">" + escapeHtml(item.source_label) + "</span></div>"
-        + "<div class=\"st-sub\">" + escapeHtml(item.subtitle) + "</div></div>"
-        + "<div class=\"st-state\" style=\"color:" + color + ";background:" + tint(color, 0.12) + "\">"
-        + escapeHtml(item.state || "—") + "</div></div>"
-        + "<div class=\"st-value-row\"><span class=\"st-value\" style=\"color:" + color + "\">" + fmtValue(item) + "</span>"
-        + "<span class=\"st-unit\">" + escapeHtml(item.unit) + "</span>"
-        + "<span class=\"st-freq\">" + escapeHtml(item.freq || "") + "</span>"
-        + "<span class=\"st-asof\">" + escapeHtml(item.as_of) + "</span></div>"
-        + "<div class=\"st-chip-row\">" + pctChip(item) + "<span class=\"st-basis\">" + escapeHtml(item.judge_basis) + "</span></div>"
-        + (item.detail_text ? "<div class=\"st-detail\">" + escapeHtml(item.detail_text) + "</div>" : "")
-        + (item.error ? "<div class=\"st-error\">本次自动更新失败：" + escapeHtml(item.error) + "（展示上次成功读数）</div>" : "")
-        + "<div class=\"st-bands\"><div class=\"st-bands-title\">阈值分档</div>" + bandHtml(item) + "</div>"
-        + "<div class=\"st-explain\">"
-        + "<p><span class=\"st-label\">指标含义</span>" + escapeHtml(item.meaning || "") + "</p>"
-        + "<p><span class=\"st-label\">怎么看</span>" + escapeHtml(item.guide || "") + "</p>"
-        + (item.warning ? "<p class=\"st-warn\"><span class=\"st-label\">⚠ 注意</span>" + escapeHtml(item.warning) + "</p>" : "")
-        + "</div></div>";
-}
-
-function groupHtml(group) {
-    return "<section class=\"st-group\">"
-        + "<h2 class=\"st-group-title\">" + escapeHtml(group.title)
-        + "<span class=\"st-group-sub\">" + escapeHtml(group.subtitle) + "</span></h2>"
-        + "<div class=\"st-grid\">" + (group.items || []).map(cardHtml).join("") + "</div></section>";
-}
-
-/* ---------------- 三层方法论（静态，来自方法论原文） ---------------- */
-function methodHtml() {
-    const cards = [
-        { label: "① 估值层", freq: "月频 · 贵不贵", cls: "st-m-valuation", body: [
-            ["宽基 PE/PB 十年分位", "&lt;20% 极冷 · &gt;80% 极热"],
-            ["ERP 股债性价比", "1/PE − 10Y国债，&gt;均值+1σ 偏冷（便宜）· &lt;均值−1σ 偏热"],
-            ["破净率", "&gt;10% 底部区 · &lt;3% 偏热"],
-            ["⚠ 看 PE 先拆分母", "盈利下行会「被动抬升」PE，必须配 PB 交叉验证"]] },
-        { label: "② 情绪层", freq: "日频 · 亢奋还是低迷", cls: "st-m-sentiment", body: [
-            ["两市成交额", "&lt;7000亿 地量冰点 · 2万亿+ 亢奋 · 3万亿+ 极端"],
-            ["全A换手率", "看历史分位，不看绝对值"],
-            ["两融占流通市值", "&gt;3.5% 杠杆过热 · &lt;2.5% 低迷"],
-            ["市场宽度", "上涨家数占比 &gt;80% 普涨 · &lt;30% 普跌"]] },
-        { label: "③ 资金层", freq: "周频 · 钱进不进", cls: "st-m-capital", body: [
-            ["股票ETF份额", "持续申购 = 机构/国家队进场，逆势信号"],
-            ["公募仓位", "88% 上下的「仓位魔咒」（高仓 = 拥挤）"],
-            ["产业资本净增持", "增持潮 = 冷/底部；减持潮 = 热"],
-            ["新基金发行", "冰点（几十亿）vs 千亿抢购（顶部信号）"]] }
-    ];
-    return "<section class=\"st-method\">" + cards.map(function (c) {
-        return "<div class=\"st-method-card " + c.cls + "\">"
-            + "<div class=\"st-method-title\">" + c.label
-            + "<span class=\"st-method-freq\">" + c.freq + "</span></div>"
-            + "<ul>" + c.body.map(function (p) {
-                return "<li><b>" + p[0] + "</b>：" + p[1] + "</li>";
-            }).join("") + "</ul></div>";
-    }).join("") + "</section>";
-}
-
-/* ---------------- 一句话总结：把三层的分数翻译成人话 ---------------- */
-// 每层的口语描述（分数越高 = 越贵 / 越热闹 / 钱越往进走）
-// 注意：词语都不含主语，靠模板里的「估值/情绪/资金」拼成完整短语
-const SUMMARY_WORDS = {
-    valuation: [[20, "很便宜"], [40, "比较便宜"], [60, "不贵也不便宜"], [80, "偏贵"], [101, "很贵"]],
-    sentiment: [[20, "很冷清"], [40, "偏冷清"], [60, "不温不火"], [80, "偏热闹"], [101, "热过头了"]],
-    capital: [[20, "在往外撤"], [40, "没什么新钱进来"], [60, "进出平平"], [80, "在进场"], [101, "抢筹很凶"]]
-};
-const TOTAL_WORDS = [[20, "很冷"], [40, "偏冷"], [60, "不冷不热"], [80, "偏热"], [101, "很热"]];
-
-function pickWord(table, score) {
-    if (score === null || score === undefined) return "数据不足";
-    const s = Number(score);
-    for (let i = 0; i < table.length; i++) { if (s < table[i][0]) return table[i][1]; }
-    return table[table.length - 1][1];
-}
-
-function heatLevel(score) {
-    if (score === null || score === undefined) return "none";
-    const s = Number(score);
-    if (s < 40) return "cold";
-    if (s > 60) return "hot";
-    return "mid";
-}
-
-function summaryHtml(t) {
-    const byKey = {};
-    (t.layers || []).forEach(function (l) { byKey[l.key] = l; });
-    const lv = byKey.valuation, ls = byKey.sentiment, lc = byKey.capital;
-
-    if (t.value === null || t.value === undefined || !lv || !ls || !lc) {
-        return "<div class=\"st-summary\">"
-            + "<div class=\"st-summary-title\">一句话总结</div>"
-            + "<p class=\"st-summary-main\">三层里还有数据没到位，等补齐后再给结论。</p></div>";
+function scoreColor(score, zones) {
+    const s = num(score);
+    if (s === null) return "#9ca3af";
+    for (let i = 0; i < (zones || []).length; i++) {
+        const z = zones[i];
+        if (s >= z.lo && s < z.hi) return z.color;
     }
-
-    // 背景直接用温度值所在区间的色带颜色，跟刻度条一一对上
-    const zoneIdx = zoneIndexOf(t.value, t.zones);
-    const zoneColor = ZONE_COLORS[zoneIdx];
-    const zone = pickWord(TOTAL_WORDS, t.value);
-    const wv = pickWord(SUMMARY_WORDS.valuation, lv.score);
-    const ws = pickWord(SUMMARY_WORDS.sentiment, ls.score);
-    const wc = pickWord(SUMMARY_WORDS.capital, lc.score);
-    const vL = heatLevel(lv.score), sL = heatLevel(ls.score), cL = heatLevel(lc.score);
-
-    const main = "现在 A 股整体<b>" + zone + "</b>（温度 <b>" + Number(t.value).toFixed(1)
-        + "</b>）：估值<b>" + wv + "</b>、情绪<b>" + ws + "</b>、资金<b>" + wc + "</b>。";
-
-    let read;
-    if (vL === "cold" && cL === "hot") {
-        read = "便宜又有人拿钱进场，是教科书式的底部特征——赔率高，赢在耐心。";
-    } else if (vL === "hot" && cL === "cold") {
-        read = "又贵、资金还不接盘，是最该小心的组合——涨得没底气。";
-    } else if (vL === "cold" && sL === "hot") {
-        read = "便宜加上情绪回暖，是修复行情的样子——弹性好，但先别当成全面牛。";
-    } else if (sL === "hot" && cL !== "hot") {
-        read = "热闹主要是成交额撑起来的，钱没真正跟上——热点轮动快、别指望全面普涨，追高留个心眼。";
-    } else if (vL === "cold" && sL === "cold") {
-        read = "便宜但没人气，典型的磨底期——慢慢买，比抢反弹划算。";
-    } else if (vL === "hot" && sL === "hot" && cL === "hot") {
-        read = "三层一起高温，这种位置「落袋」比「加仓」重要。";
-    } else if (vL === "mid" && sL === "mid" && cL === "mid") {
-        read = "三层都在中间、没有极端信号，属于结构性行情——跟着热点走，不必赌方向。";
-    } else {
-        read = "三层没有一边倒的信号，重点看谁先变——估值定方向、资金定真假。";
-    }
-
-    const spreadTip = (t.spread !== null && t.spread !== undefined && Number(t.spread) >= 25)
-        ? "三层温差 " + Number(t.spread).toFixed(1) + " 度、分歧不小——" : "";
-
-    return "<div class=\"st-summary\" data-zone=\"" + zoneIdx + "\" style=\"background:" + zoneColor + "\">"
-        + "<div class=\"st-summary-title\">一句话总结</div>"
-        + "<p class=\"st-summary-main\">" + main + "</p>"
-        + "<p class=\"st-summary-read\">怎么理解：" + (spreadTip ? "<em>" + spreadTip + "</em>" : "")
-        + read + "</p></div>";
+    return (zones && zones.length) ? zones[zones.length - 1].color : "#9ca3af";
 }
 
-/* ---------------- 综合温度计 ---------------- */
-function gaugeHtml(t) {
-    const v = t.value;
-    const width = v === null ? 0 : Math.max(0, Math.min(100, v));
-    const zones = (t.zones || []).map(function (z) {
-        return "<span style=\"flex:1;color:#6b7280\">" + z.lo + "-" + Math.round(z.hi) + " " + z.state + "</span>";
+/* ---------------- 顶部：读数 + 五档刻度 ---------------- */
+function heroHtml(g) {
+    const v = num(g.value);
+    const zones = g.zones || [];
+    const color = g.color || (v === null ? "#9ca3af" : scoreColor(v, zones));
+    const marker = v === null ? "" :
+        "<div class=\"st-gauge-marker\" style=\"left:" + Math.max(0, Math.min(100, v)) + "%\">"
+        + "<div class=\"st-gauge-pin\"></div>"
+        + "<div class=\"st-gauge-tip\" style=\"color:" + color + "\">≈ " + v.toFixed(1) + "</div></div>";
+
+    const segs = zones.map(function (z) {
+        const width = Math.max(0, z.hi - z.lo);
+        return "<div class=\"st-gauge-seg\" style=\"flex:0 0 " + width + "%;background:" + z.color + "\""
+            + " title=\"" + escapeHtml(z.lo + "-" + z.hi + " " + z.state) + "\"></div>";
     }).join("");
 
-    const layers = (t.layers || []).map(function (l) {
-        const color = tone(l.tone);
-        const s = l.score === null ? 0 : Math.max(0, Math.min(100, l.score));
-        return "<div class=\"st-layer\">"
-            + "<div class=\"st-layer-head\"><span class=\"st-layer-name\" style=\"color:" + color + "\">" + escapeHtml(l.name)
-            + "</span><span class=\"st-layer-weight\">权重 " + Math.round(l.weight * 100) + "%</span>"
-            + "<span class=\"st-layer-score\">" + (l.score === null ? "—" : Number(l.score).toFixed(1))
-            + "<span class=\"st-layer-cov\">（覆盖 " + Math.round(l.coverage) + "%）</span></span></div>"
-            + "<div class=\"st-layer-bar\"><div class=\"st-layer-fill\" style=\"width:" + s + "%;background:" + color + "\"></div></div>"
-            + "<div class=\"st-layer-desc\">" + escapeHtml(l.desc) + "</div>"
-            + "<div class=\"st-layer-members\">" + (l.members || []).map(function (m) {
-                return "<span class=\"st-member\">" + escapeHtml(m.name)
-                    + " <b>" + (m.score === null ? "—" : Number(m.score).toFixed(0)) + "</b></span>";
-            }).join("") + "</div></div>";
+    const legend = zones.map(function (z) {
+        return "<div class=\"st-greed-legend-item\">"
+            + "<span class=\"st-greed-legend-dot\" style=\"background:" + z.color + "\"></span>"
+            + "<span class=\"st-greed-legend-range\">" + z.lo + "-" + z.hi + "</span>"
+            + "<span class=\"st-greed-legend-state\">" + escapeHtml(z.state) + "</span>"
+            + "<span class=\"st-greed-legend-desc\">" + escapeHtml(z.desc || "") + "</span></div>";
     }).join("");
 
-    return "<section class=\"st-gauge-wrap\">"
-        + "<h2 class=\"st-group-title\">综合市场温度计（0-100，多指标十年分位加权）<span class=\"st-group-sub\">"
-        + escapeHtml(t.formula) + "</span></h2>"
-        + "<div class=\"st-gauge\">"
-        + "<div class=\"st-gauge-track\">" + ZONE_COLORS.map(function (c) {
-            return "<div class=\"st-gauge-seg\" style=\"background:" + c + "\"></div>";
-        }).join("") + "</div>"
-        + (v === null ? "" :
-            "<div class=\"st-gauge-marker\" style=\"left:" + width + "%\">"
-            + "<div class=\"st-gauge-pin\"></div>"
-            + "<div class=\"st-gauge-tip\" style=\"color:" + tone(t.tone) + "\">≈ " + Number(v).toFixed(1)
-            + " " + escapeHtml(t.state) + "</div></div>")
-        + "</div>"
-        + "<div class=\"st-gauge-legend\">" + zones + "</div>"
-        + summaryHtml(t)
-        + "<div class=\"st-layer-grid\">" + layers + "</div>"
-        + "<div class=\"st-gauge-note\">三层分离度 " + (t.spread === null ? "—" : Number(t.spread).toFixed(1))
-        + " pp——差值越大说明「三层在打架」，越要看背离。"
-        + "A 股是「买冷卖热」的反向指标市场：温度越低越是机会（2018 年底、2024 年 9 月前），"
-        + "越高越要兑现（2015 年、2021 年初）。</div>"
+    return "<section class=\"st-gauge-wrap st-greed-hero-wrap\">"
+        + "<div class=\"st-greed-hero\" style=\"border-color:" + tint(color, 0.35) + ";background:" + tint(color, 0.07) + "\">"
+        + "<div class=\"st-greed-main\">"
+        + "<div class=\"st-greed-label\">市场贪婪指数</div>"
+        + "<div class=\"st-greed-value\" style=\"color:" + color + "\">" + (v === null ? "—" : v.toFixed(1))
+        + "<span class=\"st-greed-denom\">/100</span></div>"
+        + "<div class=\"st-greed-state\" style=\"color:" + color + ";background:" + tint(color, 0.14) + "\">"
+        + escapeHtml(g.state || "数据不足") + "</div>"
+        + "<div class=\"st-greed-sub\">" + escapeHtml(g.formula || "") + "</div>"
+        + "<div class=\"st-greed-sub\">" + escapeHtml(g.updated_note || "每日收盘后更新")
+        + " · 分位口径：近 " + (g.sample_days || 15) + " 个交易日样本内分位</div>"
+        + "</div></div>"
+        + "<div class=\"st-gauge\"><div class=\"st-gauge-track\">" + segs + "</div>" + marker + "</div>"
+        + "<div class=\"st-greed-legend\">" + legend + "</div>"
         + "</section>";
 }
 
-/* ---------------- 当前读数速览表 ---------------- */
-function overviewHtml(groups) {
-    const rows = [];
-    (groups || []).forEach(function (g) {
-        (g.items || []).forEach(function (it, i) {
-            // 每组首行加 st-ov-start：用一条横向分隔线把四个分类拉开（不靠底色填充）
-            rows.push("<tr" + (i === 0 ? " class=\"st-ov-start\"" : "") + ">"
-                + (i === 0 ? "<td rowspan=\"" + g.items.length + "\" class=\"st-ov-group\">" + escapeHtml(g.title.replace(/^[①②③④]\s*/, "")) + "</td>" : "")
-                + "<td>" + escapeHtml(it.name) + "</td>"
-                + "<td class=\"st-ov-val\" style=\"color:" + (it.missing ? "#9ca3af" : tone(it.tone)) + "\">"
-                + fmtValue(it) + "<span class=\"st-ov-unit\">" + escapeHtml(it.unit) + "</span></td>"
-                + "<td>" + (it.percentile === null || it.percentile === undefined ? "<span class=\"st-ov-dash\">—</span>"
-                    : Number(it.percentile).toFixed(1) + "%") + "</td>"
-                + "<td class=\"st-ov-state\" style=\"color:" + (it.missing ? "#9ca3af" : tone(it.tone)) + "\">" + escapeHtml(it.state || "—") + "</td>"
-                + "<td class=\"st-ov-date\">" + escapeHtml(it.as_of) + "</td></tr>");
-        });
-    });
-    return "<section class=\"st-overview\">"
-        + "<h2 class=\"st-group-title\">当前读数速览<span class=\"st-group-sub\">按上一节的三层口径逐项列出；分位列给出各指标所处的位置</span></h2>"
-        + "<div class=\"st-table-wrap\"><table class=\"st-table\">"
-        + "<thead><tr><th>层</th><th>指标</th><th>当前读数</th><th>历史分位</th><th>状态</th><th>数据日期</th></tr></thead>"
-        + "<tbody>" + rows.join("") + "</tbody></table></div></section>";
+/* ---------------- 一句话总结 ---------------- */
+function summaryHtml(g) {
+    if (!g.summary) return "";
+    const warn = g.distortion
+        ? "<div class=\"st-greed-warn\"><b>读数失真提示</b>：" + escapeHtml(g.distortion) + "</div>" : "";
+    return "<section class=\"st-summary st-greed-summary\">"
+        + "<div class=\"st-summary-title\">一句话总结</div>"
+        + "<p class=\"st-summary-main\">" + escapeHtml(g.summary) + "</p>"
+        + warn + "</section>";
 }
 
-/* ---------------- 方法说明（静态） ---------------- */
-function notesHtml() {
+/* ---------------- 贪婪指数分项表 ---------------- */
+function componentRows(g) {
+    const zones = g.zones || [];
+    const list = g.components || [];
+    const groups = [
+        { key: "sentiment", title: "情绪", weight: "88%", note: "三项等权 · 各 1/3" },
+        { key: "valuation", title: "估值", weight: "12%", note: "沪深300 PE-TTM" }
+    ];
+    return groups.map(function (grp) {
+        const members = list.filter(function (c) { return c.category === grp.key; });
+        if (!members.length) return "";
+        let groupNote = grp.note;
+        if (grp.key === "sentiment" && g.sentiment && g.sentiment.covered < g.sentiment.total) {
+            groupNote = "市场宽度样本不足，按可用 " + g.sentiment.covered + " 项等权重算";
+        }
+        let html = "<tr class=\"st-ov-start\"><td colspan=\"7\" class=\"st-greed-row-group\">"
+            + escapeHtml(grp.title) + " <span>" + grp.weight + " · " + escapeHtml(groupNote) + "</span></td></tr>";
+        html += members.map(function (c) {
+            const color = scoreColor(c.score, zones);
+            const score = num(c.score);
+            const bar = score === null ? "" :
+                "<div class=\"st-greed-bar\"><span style=\"width:" + Math.max(0, Math.min(100, score))
+                + "%;background:" + color + "\"></span></div>";
+            const sample = c.percentile === null || c.percentile === undefined
+                ? "<span class=\"st-ov-dash\">" + escapeHtml(pctText(c.percentile, c.sample_n)) + "</span>"
+                : "<b style=\"color:" + color + "\">" + Number(c.percentile).toFixed(1) + "</b>"
+                  + "<span class=\"st-greed-sample\">n=" + c.sample_n + "/15</span>";
+            const weight = c.excluded ? "<span class=\"st-ov-dash\">—</span>" : c.weight_pct.toFixed(1) + "%";
+            return "<tr>"
+                + "<td><div class=\"st-greed-comp-name\">" + escapeHtml(c.name) + "</div>"
+                + (c.detail_text ? "<div class=\"st-greed-comp-detail\">" + escapeHtml(c.detail_text) + "</div>" : "")
+                + "</td>"
+                + "<td class=\"st-greed-weight\">" + weight + "</td>"
+                + "<td class=\"st-ov-val\" style=\"color:" + color + "\">" + escapeHtml(c.reading) + "</td>"
+                + "<td>" + sample + "</td>"
+                + "<td class=\"st-greed-score-cell\"><span style=\"color:" + color + "\">"
+                + (score === null ? "—" : score.toFixed(1)) + "</span>" + bar + "</td>"
+                + "<td class=\"st-greed-contrib\">" + (num(c.contribution) === null ? "—" : Number(c.contribution).toFixed(2)) + "</td>"
+                + "<td class=\"st-ov-date\">" + escapeHtml(c.as_of || "—") + "</td></tr>";
+        }).join("");
+        return html;
+    }).join("");
+}
+
+function componentsHtml(g) {
+    return "<section class=\"st-overview\">"
+        + "<h2 class=\"st-group-title\">贪婪指数分项<span class=\"st-group-sub\">"
+        + "4 个主指标加权合成（情绪 88% + 估值 12%）；分位与贪婪分都是近 15 个交易日样本内分位</span></h2>"
+        + "<div class=\"st-table-wrap\"><table class=\"st-table st-greed-table\">"
+        + "<thead><tr><th>分项</th><th>权重</th><th>当前读数</th><th>样本分位</th><th>贪婪分</th><th>贡献</th><th>数据日期</th></tr></thead>"
+        + "<tbody>" + componentRows(g) + "</tbody></table></div></section>";
+}
+
+/* ---------------- 确认层 + 闸门 ---------------- */
+function confirmHtml(g) {
+    const confirms = g.confirm || [];
+    const cards = confirms.map(function (c) {
+        const pct = num(c.percentile);
+        const color = pct === null ? "#9ca3af" : (pct >= 80 ? "#5B8FC7" : (pct <= 20 ? "#EA6668" : "#94a3b8"));
+        return "<div class=\"st-confirm-card\" style=\"border-top-color:" + color + "\">"
+            + "<div class=\"st-confirm-head\"><span class=\"st-confirm-name\">" + escapeHtml(c.name) + "</span>"
+            + "<span class=\"st-confirm-tag\">确认层 · 不加权</span></div>"
+            + "<div class=\"st-confirm-value\" style=\"color:" + color + "\">"
+            + (pct === null ? "—" : "≈ " + pct.toFixed(1)) + "<span>/100 分位</span></div>"
+            + "<div class=\"st-confirm-reading\">读数：" + escapeHtml(c.reading) + "（" + escapeHtml(c.side || "冷侧分位")
+            + "≈" + pctText(c.percentile, c.sample_n) + "）</div>"
+            + "<div class=\"st-confirm-window\">分位窗口：" + escapeHtml(c.window || "全历史") + "</div>"
+            + (c.detail_text ? "<div class=\"st-confirm-detail\">" + escapeHtml(c.detail_text) + "</div>" : "")
+            + "<div class=\"st-confirm-date\">数据日期 " + escapeHtml(c.as_of || "—") + "</div>"
+            + "</div>";
+    }).join("");
+
+    const gates = g.gates || {};
+    const gate = function (item, kind) {
+        if (!item) return "";
+        const on = !!item.triggered;
+        return "<div class=\"st-gate " + (on ? "st-gate-on " + kind : "") + "\">"
+            + "<div class=\"st-gate-head\"><span class=\"st-gate-name\">" + escapeHtml(item.name) + "</span>"
+            + "<span class=\"st-gate-state\">" + (on ? "已触发" : "未触发") + "</span></div>"
+            + "<div class=\"st-gate-rule\">" + escapeHtml(item.rule) + "</div>"
+            + "<div class=\"st-gate-text\">" + escapeHtml(item.text) + "</div></div>";
+    };
+
+    return "<section class=\"st-overview\">"
+        + "<h2 class=\"st-group-title\">确认层与极端区闸门<span class=\"st-group-sub\">"
+        + "ERP / 破净率不参与加权，只在极端区确认「冷 + 便宜」或「热 + 贵」</span></h2>"
+        + "<div class=\"st-confirm-grid\">" + cards + "</div>"
+        + "<div class=\"st-gate-row\">" + gate(gates.deep_fear, "cold") + gate(gates.bubble, "hot") + "</div>"
+        + "</section>";
+}
+
+/* ---------------- 口径说明 ---------------- */
+function notesHtml(g) {
     return "<section class=\"st-notes\">"
-        + "<h2 class=\"st-group-title\">三个最重要的用法</h2>"
+        + "<h2 class=\"st-group-title\">口径与用法</h2>"
         + "<div class=\"st-notes-grid\">"
-        + "<div class=\"st-note\"><h3>一、三层必须分开看，最怕「情绪温度冒充估值温度」</h3>"
-        + "<ul>"
-        + "<li>成交额 2 万亿 <b>≠</b> 市场便宜。典型的中间态是：<b>情绪活跃（成交 2 万亿）+ 估值中性（PB 低、ERP 好）+ 杠杆退潮（两融回落）</b> = 结构性行情，不是全面牛也不是全面熊。</li>"
-        + "<li>判断「能不能长期拿」看<b>估值层</b>；判断「短线热不热」看<b>情绪层</b>；判断「行情有没有持续性」看<b>资金层</b>。</li>"
+        + "<div class=\"st-note\"><h3>加权方式</h3><ul>"
+        + "<li>情绪 = 市场宽度 / 全A换手率 / 两市成交额，<b>三项等权各 1/3</b>，合计 88%。</li>"
+        + "<li>估值 = 沪深300 PE-TTM，占 <b>12%</b>。</li>"
+        + "<li>四个主指标的分位取<b>近 15 个交易日样本内分位</b>；某项样本不足 5 期时不参与合成，按可用项重算。</li>"
+        + "<li>贪婪分 = 分位（越高越贪婪）；贡献 = 贪婪分 × 有效权重（缺失项剔除后按比例放大）。</li>"
         + "</ul></div>"
-        + "<div class=\"st-note\"><h3>二、盯「背离」，背离最值钱</h3>"
-        + "<ul>"
-        + "<li>情绪热 + 资金不进场（ETF 没增、两融不涨）→ <b>虚火</b>，涨不久。</li>"
-        + "<li>估值冷 + 资金悄悄进场（ETF 份额持续增）→ <b>底部特征</b>，最值得关注。</li>"
-        + "<li>三层分离度越大越要警惕：以<b>估值定方向</b>、以<b>资金定真假</b>。把三层画成曲线看背离更直观——见 <a href=\"/stock-trend\">热度趋势</a>。</li>"
+        + "<div class=\"st-note\"><h3>五档与确认层</h3><ul>"
+        + "<li>0-10 极端恐慌 · 机会区 / 10-30 恐慌 · 备资金 / 30-70 中性 · 无信号 / 70-90 贪婪 · 不追加 / 90-100 极端贪婪 · 泡沫。</li>"
+        + "<li><b>深度恐慌</b>：贪婪 &lt; 20 且（ERP 分位 &gt; 80 或 破净率分位 &gt; 80）——冷 + 便宜共振。</li>"
+        + "<li><b>泡沫警示</b>：贪婪 &gt; 80 且 ERP 分位 &lt; 20——热 + 贵共振。</li>"
+        + "<li>确认层的 ERP / 破净率用<b>全历史分位</b>（极端区判断），<b>不参与加权</b>，避免慢变量稀释短期情绪。</li>"
         + "</ul></div>"
-        + "<div class=\"st-note\"><h3>三、构建你自己的温度计时，选这 6 个就够</h3>"
-        + "<ul>"
-        + "<li><b>估值温度</b> = PE 分位（40%）+ ERP（30%）+ 破净率（30%）</li>"
-        + "<li><b>情绪温度</b> = 成交额分位（50%）+ 换手率分位（30%）+ 两融占流通市值（20%）</li>"
-        + "<li><b>综合温度</b> = 估值 ×50% + 情绪 ×30% + 资金 ×20%</li>"
-        + "<li>全部用十年分位，每月更新一次。分位数的取法和「叠纳指 / VIX / 美债」那套 z-score 是同一个逻辑——<b>先标准化，再相加</b>，避免量纲打架。</li>"
+        + "<div class=\"st-note\"><h3>数据口径与失真</h3><ul>"
+        + "<li>市场宽度 = 上涨家数 ÷（上涨 + 下跌），乐咕乐股全A口径。</li>"
+        + "<li>全A换手率 = 两市成交额 ÷ 两市流通市值；成交额与流通市值来自沪深交易所官网。</li>"
+        + "<li>沪深300 PE-TTM 取中证指数官网日频滚动市盈率；ERP = 1/PE − 10 年国债收益率。</li>"
+        + "<li><b>放量杀跌会抬高成交/换手分位</b>：若宽度分位极低而换手分位明显偏高，页面会给出「读数失真」提示，不能把读数回升误读为情绪回暖。</li>"
         + "</ul></div>"
-        + "</div>"
-        + "<div class=\"st-quote\">一句话：<b>看贵不贵用 PE/PB 分位 + ERP，看热不热用成交额 + 两融，看有没有钱用 ETF 份额 + 产业资本；"
-        + "三者背离时，以估值定方向、以资金定真假。</b></div>"
-        + "<div class=\"st-note st-caveat\"><h3>本页实现口径说明</h3>"
-        + "<ul>"
-        + "<li><b>分位窗口</b>：月频取近 120 个月、周频取近 520 周、日频取近 2500 个交易日；样本不足 12 期时不给分位（卡片上会标「分位样本不足」）。</li>"
-        + "<li><b>为什么有些指标「历史分位」是「—」</b>：本页按方法论原意分了两种判定口径——"
-        + "PE / PB / ERP / 公募仓位 / 新基金发行这 5 项用<b>十年分位</b>判定，故给出分位；"
-        + "成交额、换手率、两融占比、市场宽度、ETF 份额、产业资本、结构分化这 7 项，方法论本身给的是<b>绝对阈值</b>"
-        + "（如成交额 7000 亿地量 / 2 万亿亢奋、两融占流通市值 3.5%、产业资本 ±100 / −400 亿、分位差 ±20 / ±40pp），"
-        + "直接读绝对值档位反而更准，因此分位列留空、状态列给出档位判读。</li>"
-        + "<li><b>日频历史</b>：成交额 / 换手率 / 市场宽度 / ETF份额 依赖逐日抓取，本页只展示快照读数；"
-        + "历史曲线与逐日补齐在 <a href=\"/stock-trend\">热度趋势</a> 页（「补齐历史数据」默认回溯最近 60 个交易日，需要更新或补更长时再点一次；本页与定时任务都不做历史回溯）。</li>"
-        + "<li><b>两融占流通市值</b>：流通市值取沪深交易所官方口径（每日更新）；「连续回落交易日」按两融余额逐日比较统计。</li>"
-        + "<li><b>结构分化</b>用「价格分位」而非 PE 分位（科创50 上市时间较短，估值序列覆盖不足十年）。</li>"
+        + "<div class=\"st-note st-caveat\"><h3>其他说明</h3><ul>"
+        + "<li>底层 13 项读数仍每日抓取入库，其中 4 项进入贪婪指数、2 项作为确认层；其余作为辅助观测，不再在首页展开。</li>"
+        + "<li>历史曲线与逐日补齐见 <a href=\"/stock-trend\">热度趋势</a> 页；本页只读快照，不做历史回溯。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
         + "</ul></div>"
+        + "</div>"
         + "</section>";
 }
 
 function render(data) {
     TONES = Object.assign({}, LOCAL_TONES, data.tones || {});
+    const g = data.greed || {};
 
     const errs = Object.keys(data.errors || {});
     let notice = errs.length
         ? "<div class=\"st-alert\">本次有 " + errs.length + " 项自动指标更新失败（" + errs.map(escapeHtml).join("、")
-          + "），已展示上次成功读数。数据源依赖项目 venv 中的 akshare、交易所官网与东财数据中心；可稍后点「刷新数据」重试。</div>"
+          + "），已展示上次成功读数。可稍后点「刷新数据」重试。</div>"
         : "";
     if (data.stale) {
         notice += "<div class=\"st-alert\">数据已 " + data.data_age_hours + " 小时未落库（最后更新 "
-          + escapeHtml(data.updated_at) + "）。本页读数由 ./start.sh 启动的定时任务抓取，本页自身不抓数据，"
-          + "请确认调度器在运行（日志 logs/scheduler.log）。</div>";
+          + escapeHtml(data.updated_at) + "）。请确认 ./start.sh 启动的调度器在运行（日志 logs/scheduler.log）。</div>";
     }
     document.getElementById("stNotice").innerHTML = notice;
     document.getElementById("stUpdated").textContent = "数据更新于 " + (data.updated_at || "—")
         + (data.refreshed ? "（本次刷新 " + data.refreshed + " 项）" : "");
 
-    document.getElementById("stRoot").innerHTML = methodHtml()
-        + gaugeHtml(data.thermometer || {})
-        + overviewHtml(data.groups || [])
-        + (data.groups || []).map(groupHtml).join("")
-        + notesHtml();
+    document.getElementById("stRoot").innerHTML = heroHtml(g)
+        + summaryHtml(g)
+        + componentsHtml(g)
+        + confirmHtml(g)
+        + notesHtml(g);
 }
 
 async function loadStock(force) {
@@ -397,7 +281,7 @@ async function loadStock(force) {
         const response = await fetchWithAuth(force ? "/api/stock-temp/refresh" : "/api/stock-temp",
             { method: force ? "POST" : "GET" });
         const data = await response.json();
-        if (data.status !== "ok") throw new Error(data.message || "获取股市热度失败");
+        if (data.status !== "ok") throw new Error(data.message || "获取市场贪婪指数失败");
         render(data);
     } catch (error) {
         document.getElementById("stRoot").innerHTML =

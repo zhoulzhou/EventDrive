@@ -1,23 +1,25 @@
-"""股票指标（A 股冷热三层温度计）数据获取、状态判定与综合温度合成。
+"""股票指标（市场贪婪指数 0-100 · 对标 CNN Fear & Greed）数据获取与打分。
 
-体系来自「A 股冷热要分三层看」的方法论：估值层（贵不贵）、情绪层（亢奋不亢奋）、
-资金层（钱进不进），最后合成一个 0-100 的市场温度计，全部用历史分位说话。
+贪婪指数 = 情绪 ×88%（市场宽度 / 全A换手率 / 两市成交额 各 1/3）+ 估值 ×12%（沪深300 PE-TTM），
+分位统一取近 15 个交易日样本；ERP / 破净率为确认层，不加权，只做极端区闸门。
 
-四组指标：
+四组底层指标（共 13 项）：
 - 估值层（valuation）：沪深300 PE-TTM / 沪深300 PB / ERP 股债性价比 / 破净率
 - 情绪层（sentiment）：两市成交额 / 全A换手率 / 两融占流通市值 / 市场宽度
 - 资金层（capital）  ：公募仓位 / 股票ETF份额 / 新基金发行 / 产业资本净增持
 - 结构  （structure）：科创50 vs 创业板 分位差
 
 数据获取方式（全部自动，来源统一记为 source="akshare"，实际站点见各指标 note）：
+- 中证指数（经 akshare）
+      · index_hist_csindex                           → 沪深300 PE-TTM（日频，贪婪指数估值项）
 - 乐咕乐股（legulegu，经 akshare）
       · stock_index_pe_lg / stock_index_pb_lg        → 沪深300 PE-TTM / PB（月频，2005 年起）
       · stock_a_below_net_asset_statistics           → 全部A股破净率（日频，2005 年起）
       · fund_stock_position_lg                       → 股票型基金仓位（周频，2008 年起）
 - 交易所官网（经 akshare，无反爬、按日可取，用于回填）
-      · stock_sse_deal_daily / stock_szse_summary    → 沪/深 股票成交金额与流通市值
+      · stock_deal_daily_sse / stock_summary_szse    → 沪/深 股票成交金额与流通市值
 - 中债 / 新浪（经 akshare）
-      · bond_zh_us_rate                              → 中国 10 年期国债收益率
+      · bond_zh_us_yield_em                          → 中国 10 年期国债收益率
 - 东财数据中心（datacenter-web.eastmoney.com，直连）
       · 融资融券账户信息                              → 两融余额（stock_margin_account_info）
       · RPT_SHARE_HOLDER_INCREASE                    → 重要股东增减持（产业资本净增持）
@@ -25,7 +27,7 @@
       · stock_market_activity_legu                   → 涨跌家数（市场宽度）
       · fund_scale_open_sina                         → 宽基股票ETF 份额快照
       · fund_new_found_em                            → 新成立基金募集份额
-      · stock_zh_index_daily                         → 科创50 / 创业板指 收盘
+      · index_zh_daily_sina                          → 科创50 / 创业板指 收盘
 
 任一项抓取失败时不做异常抛出：该指标返回 error，页面按「数据缺失」展示并保留上一次
 成功读数，不影响其余指标与页面渲染。
@@ -120,6 +122,52 @@ TEMP_ZONES = [
     {"lo": 80, "hi": 100.01, "state": "亢奋 · 风险区", "tone": "red"},
 ]
 
+# ---------------------------------------------------------------- 市场贪婪指数
+#
+# 0-100，越高越贪婪，对标 CNN Fear & Greed：
+#   贪婪指数 = 情绪 × 88%（市场宽度 / 全A换手率 / 两市成交额 三项等权）+ 估值 × 12%（沪深300 PE-TTM）
+#   分位口径：样本内分位，固定取最近 15 个交易日（不足 5 期时该项不参与合成）
+#   ERP / 破净率为确认层：不加权，只做极端区闸门
+#
+#   深度恐慌 = 贪婪 < 20 且（ERP 分位 > 80 或 破净率分位 > 80）
+#   泡沫警示 = 贪婪 > 80 且 ERP 分位 < 20
+GREED_SAMPLE_DAYS = 15
+GREED_MIN_SAMPLE = 5
+GREED_SENTIMENT_WEIGHT = 0.88
+GREED_VALUATION_WEIGHT = 0.12
+
+GREED_COMPONENTS = [
+    {"key": "breadth", "category": "sentiment", "name": "市场宽度"},
+    {"key": "turnover_rate", "category": "sentiment", "name": "全A换手率"},
+    {"key": "turnover_amt", "category": "sentiment", "name": "两市成交额"},
+    {"key": "hs300_pe", "category": "valuation", "name": "沪深300 PE-TTM"},
+]
+GREED_KEYS = [c["key"] for c in GREED_COMPONENTS]
+GREED_CONFIRM_KEYS = ["erp", "below_na"]
+
+GREED_ZONES = [
+    {
+        "lo": 0, "hi": 10, "state": "极端恐慌 · 机会区", "tone": "blue", "color": "#5B8FC7",
+        "desc": "情绪冰点，往往对应可布局区域",
+    },
+    {
+        "lo": 10, "hi": 30, "state": "恐慌 · 备资金", "tone": "cyan", "color": "#8BC8EA",
+        "desc": "偏冷，留足子弹，等待确认",
+    },
+    {
+        "lo": 30, "hi": 70, "state": "中性 · 无信号", "tone": "lime", "color": "#E4D48F",
+        "desc": "多空平衡，不做方向性押注",
+    },
+    {
+        "lo": 70, "hi": 90, "state": "贪婪 · 不追加", "tone": "orange", "color": "#F4B393",
+        "desc": "情绪偏热，持有但不追高",
+    },
+    {
+        "lo": 90, "hi": 100.01, "state": "极端贪婪 · 泡沫", "tone": "red", "color": "#EA6668",
+        "desc": "热 + 贵共振，警惕均值回归",
+    },
+]
+
 # ---------------------------------------------------------------- 分位窗口
 
 # 各频率下「十年分位」对应的样本点数（月 120 / 周 520 / 日 2500）
@@ -131,7 +179,7 @@ CHART_KEYS = [
     "hs300_pe", "hs300_pb", "erp", "below_na",
     "turnover_amt", "turnover_rate", "margin", "total_float_mcap", "breadth",
     "fund_position", "new_fund", "industry_capital", "etf_share",
-    "structure_div", "temperature",
+    "structure_div", "temperature", "greed",
 ]
 
 # ---------------------------------------------------------------- 指标清单
@@ -618,6 +666,33 @@ def band_of(ind: Dict[str, Any], value: Optional[float]) -> Optional[Dict[str, A
     return None
 
 
+def sample_percentile(value: Optional[float], series: List[Dict[str, Any]],
+                      days: int = GREED_SAMPLE_DAYS,
+                      min_n: int = GREED_MIN_SAMPLE) -> Tuple[Optional[float], int]:
+    """样本内分位：value 在最近 days 个可用点中的百分位（0-100）。
+
+    贪婪指数统一用「近 15 个交易日」的样本内分位，而不是十年分位：
+    它衡量的是当下情绪在最近两周里的相对位置。样本不足 min_n 期时返回 (None, n)。
+    """
+    pts = [p for p in (series or []) if p.get("value") is not None]
+    windowed = pts[-days:]
+    n = len(windowed)
+    if value is None or n < min_n:
+        return None, n
+    below = sum(1 for p in windowed if p["value"] <= value)
+    return round(below / n * 100, 1), n
+
+
+def greed_zone_of(score: Optional[float]) -> Optional[Dict[str, Any]]:
+    """贪婪分 → 五档区间（0-10 / 10-30 / 30-70 / 70-90 / 90-100）。"""
+    if score is None:
+        return None
+    for z in GREED_ZONES:
+        if z["lo"] <= score < z["hi"]:
+            return z
+    return GREED_ZONES[-1]
+
+
 def dump_detail(detail: Optional[dict]) -> str:
     try:
         return json.dumps(detail or {}, ensure_ascii=False, default=str)
@@ -645,6 +720,15 @@ def _ak():
     return ak
 
 
+def _fn(ak, *names):
+    """按顺序取 akshare 接口：新版改名后旧名会抛异常，这里做一层兼容。"""
+    for name in names:
+        fn = getattr(ak, name, None)
+        if fn is not None:
+            return fn
+    raise AttributeError("当前 akshare 版本缺少接口: %s" % " / ".join(names))
+
+
 def _legu_series(df, date_col: str, value_col: str) -> List[Dict[str, Any]]:
     if df is None or df.empty:
         return []
@@ -655,25 +739,46 @@ def _legu_series(df, date_col: str, value_col: str) -> List[Dict[str, Any]]:
 
 
 def fetch_hs300_pe() -> Dict[str, Any]:
+    """沪深300 PE-TTM（日频）。
+
+    贪婪指数的估值分项需要「近 15 个交易日」的样本内分位，乐咕口径是月频，无法满足，
+    故改用中证指数官网的日频滚动市盈率（index-perf 接口）。取近三年多的日频序列，
+    既能算 15 日分位，也能让趋势图有连续曲线；接口不可用时回退乐咕月频。
+    """
     ak = _ak()
-    df = ak.stock_index_pe_lg(symbol="沪深300")
-    series = _legu_series(df, "日期", "滚动市盈率")
+    series: List[Dict[str, Any]] = []
+    source_note = "中证指数官网 index-perf（滚动市盈率）"
+    try:
+        fn = getattr(ak, "index_hist_csindex", None)
+        if fn is None:
+            raise RuntimeError("当前 akshare 版本缺少 index_hist_csindex")
+        end = date.today()
+        start = end - timedelta(days=1200)
+        df = fn(symbol="000300", start_date=start.strftime("%Y%m%d"),
+                end_date=end.strftime("%Y%m%d"))
+        series = _clean_series([
+            (_d(r.get("日期")), _num(r.get("滚动市盈率")))
+            for _, r in df.iterrows()
+        ])
+    except Exception as exc:
+        logger.warning("中证指数日频 PE 不可用，回退乐咕月频: %s", exc)
+        df = ak.stock_index_pe_lg(symbol="沪深300")
+        series = _legu_series(df, "日期", "滚动市盈率")
+        source_note = "乐咕乐股 stock_index_pe_lg"
     if not series:
-        raise RuntimeError("乐咕乐股未返回沪深300 PE 数据")
+        raise RuntimeError("未取到沪深300 PE 数据")
     last = series[-1]
-    pct, pct_window = percentile_rank(last["value"], series, "M")
-    static = _num(df["静态市盈率"].iloc[-1]) if "静态市盈率" in df.columns else None
+    pct, n = sample_percentile(last["value"], series)
     return {
         "value": round(last["value"], 2),
         "as_of": last["as_of"],
         "source": "akshare",
         "detail": {
             "PE-TTM": round(last["value"], 2),
-            "PE-静态": round(static, 2) if static is not None else None,
             "分位": pct,
-            "分位窗口": pct_window,
+            "分位窗口": "近 %d 个交易日（样本 %d 期）" % (GREED_SAMPLE_DAYS, n),
             "样本期数": len(series),
-            "数据源": "乐咕乐股 stock_index_pe_lg",
+            "数据源": source_note,
         },
         "series": series,
     }
@@ -708,36 +813,33 @@ def fetch_y10_series() -> List[Dict[str, Any]]:
     """中国 10 年期国债收益率日频序列（2014 年起，覆盖十年分位所需窗口）。"""
     ak = _ak()
     start = (date.today() - timedelta(days=365 * 11)).strftime("%Y%m%d")
-    df = ak.bond_zh_us_rate(start_date=start)
+    df = _fn(ak, "bond_zh_us_yield_em", "bond_zh_us_rate")(start_date=start)
     rows = []
     for _, r in df.iterrows():
         rows.append((_d(r.get("日期")), _num(r.get("中国国债收益率10年"))))
     return _clean_series(rows)
 
 
-def _month_end_map(daily: List[Dict[str, Any]]) -> Dict[str, float]:
-    """把日频序列压成 {YYYY-MM: 当月最后一个可用值}。"""
-    out: Dict[str, float] = {}
-    for p in daily:
-        if p.get("value") is None or not p.get("as_of"):
-            continue
-        out[p["as_of"][:7]] = p["value"]
-    return out
-
-
 def build_erp_series(pe_series: List[Dict[str, Any]],
                      y10_daily: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """ERP = 100 / PE-TTM − 10Y 国债收益率(%)，按月份对齐（PE 月频 → 取当月国债收益率末值）。"""
-    y10_m = _month_end_map(y10_daily)
+    """ERP = 100 / PE-TTM − 10Y 国债收益率(%)，按日对齐。
+
+    PE 与国债收益率都是日频；少数日期国债缺数据时，沿用该日之前最近一个有效值。
+    """
+    y = sorted((p for p in y10_daily if p.get("value") is not None), key=lambda p: p["as_of"])
     rows = []
-    for p in pe_series:
+    j, cur = 0, None
+    for p in sorted(pe_series, key=lambda p: p["as_of"]):
         pe = p.get("value")
-        if not pe or pe <= 0:
+        day = p.get("as_of")
+        if not pe or pe <= 0 or not day:
             continue
-        y = y10_m.get(p["as_of"][:7])
-        if y is None:
+        while j < len(y) and y[j]["as_of"] <= day:
+            cur = y[j]["value"]
+            j += 1
+        if cur is None:
             continue
-        rows.append((p["as_of"], round(100.0 / pe - y, 2)))
+        rows.append((day, round(100.0 / pe - cur, 2)))
     return _clean_series(rows)
 
 
@@ -749,11 +851,13 @@ def fetch_erp(pe_series: Optional[List[Dict[str, Any]]] = None,
         y10_daily = fetch_y10_series()
     series = build_erp_series(pe_series, y10_daily)
     if not series:
-        raise RuntimeError("无法合成 ERP 序列（PE 与国债收益率无重叠月份）")
+        raise RuntimeError("无法合成 ERP 序列（PE 与国债收益率无重叠日期）")
     last = series[-1]
-    pct, pct_window = percentile_rank(last["value"], series, "M")
-    pe_now = next((p["value"] for p in reversed(pe_series)), None)
-    y_now = y10_daily[-1] if y10_daily else None
+    pct, n = sample_percentile(last["value"], series)
+    pe_now = next((p["value"] for p in reversed(pe_series)
+                   if p.get("value") and p["as_of"] <= last["as_of"]), None)
+    y_now = next((p for p in reversed(y10_daily)
+                  if p.get("value") is not None and p["as_of"] <= last["as_of"]), None)
     return {
         "value": round(last["value"], 2),
         "as_of": last["as_of"],
@@ -764,7 +868,7 @@ def fetch_erp(pe_series: Optional[List[Dict[str, Any]]] = None,
             "10Y国债": round(y_now["value"], 3) if y_now else None,
             "国债日期": y_now["as_of"] if y_now else None,
             "分位": pct,
-            "分位窗口": pct_window,
+            "分位窗口": "近 %d 个交易日（样本 %d 期）" % (GREED_SAMPLE_DAYS, n),
             "均值": round(mean([p["value"] for p in series[-120:]]), 2),
             "标准差": round(pstdev([p["value"] for p in series[-120:]]), 2),
             "数据源": "沪深300 PE-TTM ÷ 中债10年国债收益率",
@@ -784,7 +888,7 @@ def fetch_below_na() -> Dict[str, Any]:
     if not series:
         raise RuntimeError("乐咕乐股未返回破净股统计")
     last = series[-1]
-    pct, pct_window = percentile_rank(last["value"], series, "D")
+    pct, n = sample_percentile(last["value"], series)
     head = df.iloc[-1]
     return {
         "value": last["value"],
@@ -795,7 +899,7 @@ def fetch_below_na() -> Dict[str, Any]:
             "破净家数": int(_num(head.get("below_net_asset")) or 0),
             "公司总数": int(_num(head.get("total_company")) or 0),
             "分位": pct,
-            "分位窗口": pct_window,
+            "分位窗口": "近 %d 个交易日（样本 %d 期）" % (GREED_SAMPLE_DAYS, n),
             "数据源": "乐咕乐股 stock_a_below_net_asset_statistics（全部A股）",
         },
         "series": series,
@@ -816,7 +920,7 @@ def _sse_day(day: str) -> Dict[str, Optional[float]]:
     挂牌数 / 市价总值 / 流通市值 / 成交金额 / 成交量 / 平均市盈率 / 换手率 / 流通换手率。
     """
     ak = _ak()
-    df = ak.stock_sse_deal_daily(date=_compact(day))
+    df = _fn(ak, "stock_deal_daily_sse", "stock_sse_deal_daily")(date=_compact(day))
     if df is None or df.empty or "股票" not in df.columns or "单日情况" not in df.columns:
         return {}
     col = df.set_index("单日情况")["股票"]
@@ -837,7 +941,7 @@ def _sse_day(day: str) -> Dict[str, Optional[float]]:
 def _szse_day(day: str) -> Dict[str, Optional[float]]:
     """深交所市场总貌：股票口径的成交金额与流通市值（原始单位：元 → 亿元）。"""
     ak = _ak()
-    df = ak.stock_szse_summary(date=_compact(day))
+    df = _fn(ak, "stock_summary_szse", "stock_szse_summary")(date=_compact(day))
     if df is None or df.empty or "证券类别" not in df.columns:
         return {}
     hit = df[df["证券类别"] == "股票"]
@@ -866,7 +970,7 @@ def trading_days_ago(n: int) -> List[str]:
     days: List[str] = []
     try:
         ak = _ak()
-        cal = ak.tool_trade_date_hist_sina()
+        cal = _fn(ak, "calendar_trade_date_hist_sina", "tool_trade_date_hist_sina")()
         col = "trade_date" if "trade_date" in cal.columns else cal.columns[0]
         today = date.today().strftime("%Y-%m-%d")
         days = [str(v)[:10] for v in cal[col].tolist() if str(v)[:10] <= today]
@@ -1330,7 +1434,7 @@ def fetch_industry_capital(months: int = 1) -> Dict[str, Any]:
 
 def _index_close_series(symbol: str) -> List[Dict[str, Any]]:
     ak = _ak()
-    df = ak.stock_zh_index_daily(symbol=symbol)
+    df = _fn(ak, "index_zh_daily_sina", "stock_zh_index_daily")(symbol=symbol)
     return _clean_series([(_d(r.get("date")), _num(r.get("close"))) for _, r in df.iterrows()])
 
 
@@ -1442,7 +1546,10 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
         t_series, r_series, m_series, latest_market = fetch_market_series(exchange_days)
         if t_series:
             t_last = t_series[-1]
-            t_pct, t_win = percentile_rank(t_last["value"], t_series, "D") if len(t_series) >= 12 else (None, None)
+            t_pct, t_n = sample_percentile(t_last["value"], t_series)
+            prev_amt = t_series[-2]["value"] if len(t_series) > 1 else None
+            amt_delta = round(t_last["value"] - prev_amt, 2) if prev_amt else None
+            amt_delta_pct = round(amt_delta / prev_amt * 100, 2) if amt_delta is not None and prev_amt else None
             out["turnover_amt"] = {
                 "value": t_last["value"],
                 "as_of": t_last["as_of"],
@@ -1453,15 +1560,17 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
                     "深市(亿)": latest_market.get("szse_turnover") if latest_market else None,
                     "流通市值(万亿)": round((latest_market or {}).get("float_mcap", 0) / 10000, 2)
                     if latest_market and latest_market.get("float_mcap") else None,
+                    "较前一日(亿)": amt_delta,
+                    "较前一日%": amt_delta_pct,
                     "分位": t_pct,
-                    "分位窗口": t_win,
+                    "分位窗口": "近 %d 个交易日（样本 %d 期）" % (GREED_SAMPLE_DAYS, t_n),
                     "数据源": "上交所《每日概况》+ 深交所《市场总貌》",
                 },
                 "series": t_series if exchange_days else None,
             }
         if r_series:
             r_last = r_series[-1]
-            r_pct, r_win = percentile_rank(r_last["value"], r_series, "D")
+            r_pct, r_n = sample_percentile(r_last["value"], r_series)
             out["turnover_rate"] = {
                 "value": r_last["value"],
                 "as_of": r_last["as_of"],
@@ -1469,7 +1578,7 @@ def fetch_all(exchange_days: int = 0, industry_months: int = 1,
                 "detail": {
                     "全A换手率%": r_last["value"],
                     "分位": r_pct,
-                    "分位窗口": r_win or "样本不足 12 个交易日",
+                    "分位窗口": "近 %d 个交易日（样本 %d 期）" % (GREED_SAMPLE_DAYS, r_n),
                     "样本交易日": len(r_series),
                     "数据源": "两市成交额 ÷ 两市流通市值（交易所官方数据合成）",
                 },
@@ -1717,7 +1826,217 @@ def build_thermometer(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def build_response(raw: Dict[str, dict]) -> dict:
+def _fmt_reading(item: Dict[str, Any]) -> str:
+    """把一个分项读数格式化成「5.64%」「14,222 亿」「13.55 倍」。"""
+    value = item.get("value")
+    if value is None:
+        return "—"
+    digits = item.get("digits", 1)
+    if abs(value) >= 1000:
+        text = "{:,.0f}".format(value)
+    else:
+        text = "{:.{d}f}".format(value, d=digits)
+    unit = item.get("unit") or ""
+    return text + unit
+
+
+def _pct_text(pct: Optional[float], n: int = 0) -> str:
+    if pct is None:
+        return "样本不足（%d/%d）" % (n, GREED_SAMPLE_DAYS)
+    return "%.1f" % pct
+
+
+def build_greed(items: Dict[str, Dict[str, Any]],
+                series_map: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+    """市场贪婪指数：情绪 ×88% + 估值 ×12%，分位统一取近 15 个交易日。
+
+    ERP / 破净率为确认层，不加权，只参与「深度恐慌 / 泡沫警示」闸门判定。
+    """
+    series_map = series_map or {}
+    # 卡片自带分位与窗口，detail 里的分位字段口径不同（主指标 15 日 / 确认层全历史），
+    # 一并跳过，避免同一张卡出现两个互相矛盾的分位。
+    detail_skip = ("数据源", "分位窗口", "分位", "样本期数", "分位来源")
+    components: List[Dict[str, Any]] = []
+    for spec in GREED_COMPONENTS:
+        key = spec["key"]
+        item = items.get(key) or {}
+        value = item.get("value")
+        series = series_map.get(key) or []
+        pct, n = sample_percentile(value, series)
+        is_sent = spec["category"] == "sentiment"
+        weight = (GREED_SENTIMENT_WEIGHT / 3.0) if is_sent else GREED_VALUATION_WEIGHT
+        score = pct
+        contribution = round(score * weight, 2) if score is not None else None
+        zone = greed_zone_of(score)
+        components.append({
+            "key": key,
+            "name": spec["name"],
+            "category": spec["category"],
+            "weight": round(weight, 4),
+            "weight_pct": round(weight * 100, 1),
+            "value": value,
+            "reading": _fmt_reading(item),
+            "unit": item.get("unit") or "",
+            "digits": item.get("digits", 1),
+            "as_of": item.get("as_of") or "—",
+            "percentile": pct,
+            "sample_n": n,
+            "score": score,
+            "contribution": contribution,
+            "state": zone["state"] if zone else "样本不足",
+            "tone": zone["tone"] if zone else "slate",
+            "color": zone["color"] if zone else "#9ca3af",
+            "detail_text": " · ".join(_detail_pairs(item.get("detail") or {}, skip=detail_skip)),
+        })
+
+    sentiment_comps = [c for c in components if c["category"] == "sentiment"]
+    valuation_comp = next((c for c in components if c["category"] == "valuation"), None)
+    sent_scores = [c["score"] for c in sentiment_comps if c["score"] is not None]
+    sent = round(sum(sent_scores) / len(sent_scores), 1) if sent_scores else None
+    val = valuation_comp["score"] if valuation_comp else None
+
+    weighted = []
+    if sent is not None:
+        weighted.append((sent, GREED_SENTIMENT_WEIGHT))
+    if val is not None:
+        weighted.append((val, GREED_VALUATION_WEIGHT))
+    total = round(sum(s * w for s, w in weighted) / sum(w for _, w in weighted), 1) if weighted else None
+
+    # 某项样本不足时不参与合成：把可用项的权重按比例放大，确保「贡献」加总等于指数
+    total_w = sum(w for _, w in weighted) or 1.0
+    eff_sent = (GREED_SENTIMENT_WEIGHT / total_w / len(sent_scores)) if sent_scores else 0.0
+    eff_val = (GREED_VALUATION_WEIGHT / total_w) if val is not None else 0.0
+    for c in components:
+        c.setdefault("excluded", False)
+        if c["category"] == "sentiment":
+            if c["score"] is None:
+                c["weight"], c["weight_pct"], c["contribution"], c["excluded"] = 0.0, 0.0, None, True
+            else:
+                c["weight"] = round(eff_sent, 4)
+                c["weight_pct"] = round(eff_sent * 100, 1)
+                c["contribution"] = round(c["score"] * eff_sent, 2)
+        else:
+            c["weight"] = round(eff_val, 4)
+            c["weight_pct"] = round(eff_val * 100, 1)
+            c["contribution"] = round(c["score"] * eff_val, 2) if c["score"] is not None else None
+            c["excluded"] = c["score"] is None
+
+    zone = greed_zone_of(total)
+    zone_index = GREED_ZONES.index(zone) if zone else -1
+
+    # 确认层：ERP / 破净率（越高 = 越冷越便宜），只做闸门。
+    # 主指标用近 15 个交易日的样本内分位；确认层是「极端区」判断，用全部可用历史分位，
+    # 避免短样本把闸门频繁打到 0/100。
+    confirm = []
+    for key in GREED_CONFIRM_KEYS:
+        item = items.get(key) or {}
+        pct, n = sample_percentile(item.get("value"), series_map.get(key) or [],
+                                   days=1000000, min_n=60)
+        name = "ERP 分位" if key == "erp" else "破净率分位"
+        rule = ("贪婪 < 20 且（ERP 分位 > 80 或 破净率分位 > 80）" if key == "erp"
+                else "泡沫警示仅使用 ERP 分位（< 20）")
+        confirm.append({
+            "key": key,
+            "name": name,
+            "reading": _fmt_reading(item),
+            "value": item.get("value"),
+            "unit": item.get("unit") or "",
+            "as_of": item.get("as_of") or "—",
+            "percentile": pct,
+            "sample_n": n,
+            "side": "冷侧分位",
+            "window": "全历史（%d 期）" % n,
+            "rule": rule,
+            "detail_text": " · ".join(_detail_pairs(item.get("detail") or {}, skip=detail_skip)),
+        })
+
+    erp_pct = next((c["percentile"] for c in confirm if c["key"] == "erp"), None)
+    below_pct = next((c["percentile"] for c in confirm if c["key"] == "below_na"), None)
+    erp_n = next((c["sample_n"] for c in confirm if c["key"] == "erp"), 0)
+    below_n = next((c["sample_n"] for c in confirm if c["key"] == "below_na"), 0)
+    deep_fear = bool(total is not None and total < 20 and (
+        (erp_pct is not None and erp_pct > 80) or (below_pct is not None and below_pct > 80)))
+    bubble = bool(total is not None and total > 80 and erp_pct is not None and erp_pct < 20)
+
+    if deep_fear:
+        deep_text = "已触发：冷 + 便宜共振，底部信号可信度最高"
+    else:
+        deep_text = "未触发（贪婪 %s，ERP 分位 %s，破净率分位 %s）" % (
+            _pct_text(total), _pct_text(erp_pct, erp_n), _pct_text(below_pct, below_n))
+    if bubble:
+        bubble_text = "已触发：热 + 贵共振，警惕均值回归"
+    else:
+        bubble_text = "未触发（需贪婪 > 80 且 ERP 分位 < 20，当前贪婪 %s / ERP 分位 %s）" % (
+            _pct_text(total), _pct_text(erp_pct, erp_n))
+
+    # 读数失真提示：宽度极冷但换手率分位不低，通常是放量杀跌抬高了情绪分
+    breadth = next((c for c in components if c["key"] == "breadth"), None)
+    rate = next((c for c in components if c["key"] == "turnover_rate"), None)
+    distortion = None
+    if (breadth and rate and breadth["score"] is not None and rate["score"] is not None
+            and breadth["score"] < 20 and rate["score"] - breadth["score"] >= 30):
+        distortion = ("放量杀跌使成交/换手分位抬升，贪婪读数可能高估真实情绪；"
+                      "宽度分位极低时，不可把读数误读为情绪回暖。")
+
+    # 一句话总结
+    def _one(c):
+        if c["score"] is None:
+            return "%s %s（样本不足 %d/%d）" % (
+                c["name"], c["reading"], c["sample_n"], GREED_SAMPLE_DAYS)
+        return "%s %s（分位 %.1f）" % (c["name"], c["reading"], c["score"])
+
+    sent_txt = " / ".join(_one(c) for c in sentiment_comps)
+    val_txt = _one(valuation_comp) if valuation_comp else "沪深300 PE-TTM —"
+    expr = ""
+    if sent_scores:
+        expr = "(%s)/%d×0.88" % ("+".join("%.1f" % s for s in sent_scores), len(sent_scores))
+    if val is not None:
+        expr = (expr + " + " if expr else "") + "%.1f×0.12" % val
+    summary = "市场贪婪指数 %s（情绪×88%% + 估值×12%%，样本内分位·近%d交易日）：情绪——%s；估值——%s。" % (
+        _pct_text(total), GREED_SAMPLE_DAYS, sent_txt, val_txt)
+    if expr:
+        summary += "加权 = %s = %s。" % (expr, _pct_text(total))
+    if len(sent_scores) < len(sentiment_comps):
+        summary += "（市场宽度样本不足，情绪按可用 %d 项重算。）" % len(sent_scores)
+    if distortion:
+        summary += "【读数失真】" + distortion
+    summary += "确认层（全历史分位）：ERP 冷侧分位 %s、破净率冷侧分位 %s。深度恐慌闸门%s；泡沫警示闸门%s。" % (
+        _pct_text(erp_pct, erp_n), _pct_text(below_pct, below_n), deep_text, bubble_text)
+
+    return {
+        "value": total,
+        "state": zone["state"] if zone else "数据不足",
+        "tone": zone["tone"] if zone else "slate",
+        "color": zone["color"] if zone else "#9ca3af",
+        "zone_index": zone_index,
+        "zones": GREED_ZONES,
+        "formula": "贪婪指数 = 情绪 × 88%（市场宽度 / 全A换手率 / 两市成交额 各 1/3）+ 估值 × 12%（沪深300 PE-TTM）",
+        "sample_days": GREED_SAMPLE_DAYS,
+        "sentiment": {
+            "score": sent,
+            "weight": GREED_SENTIMENT_WEIGHT,
+            "covered": len(sent_scores),
+            "total": len(sentiment_comps),
+        },
+        "valuation": {"score": val, "weight": GREED_VALUATION_WEIGHT},
+        "components": components,
+        "confirm": confirm,
+        "distortion": distortion,
+        "gates": {
+            "deep_fear": {"name": "深度恐慌", "triggered": deep_fear,
+                          "rule": "贪婪 < 20 且（ERP 分位 > 80 或 破净率分位 > 80）",
+                          "text": deep_text},
+            "bubble": {"name": "泡沫警示", "triggered": bubble,
+                       "rule": "贪婪 > 80 且 ERP 分位 < 20",
+                       "text": bubble_text},
+        },
+        "summary": summary,
+        "updated_note": "每日收盘后更新",
+    }
+
+
+def build_response(raw: Dict[str, dict],
+                   series_map: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> dict:
     """把库中读数（raw）组装成页面需要的结构。"""
     items: Dict[str, Dict[str, Any]] = {}
     for ind in INDICATORS:
@@ -1737,6 +2056,7 @@ def build_response(raw: Dict[str, dict]) -> dict:
         })
 
     thermo = build_thermometer(items)
+    greed = build_greed(items, series_map)
 
     # 温度计历史（用于趋势图）：由分位/热度分逐期重算，见 stock_temp_refresh
     return {
@@ -1744,6 +2064,7 @@ def build_response(raw: Dict[str, dict]) -> dict:
         "tones": TONES,
         "groups": groups,
         "thermometer": thermo,
+        "greed": greed,
         "indicators": items,
     }
 

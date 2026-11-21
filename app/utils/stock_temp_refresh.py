@@ -52,27 +52,76 @@ def _snapshot_records(db: Session) -> Dict[str, dict]:
     return out
 
 
-def _record_temperature(db: Session) -> int:
-    """把当前综合温度打卡写进历史表（key="temperature"），供「温度轨迹」长期留存。"""
+def _record_greed(db: Session) -> int:
+    """把当前市场贪婪指数打卡写进历史表（key="greed"），供趋势页长期留存。"""
     raw = _snapshot_records(db)
-    payload = st.build_response(raw)
-    thermo = payload.get("thermometer") or {}
-    if thermo.get("value") is None:
+    series_map = _series_map(db, st.GREED_KEYS + st.GREED_CONFIRM_KEYS, limit=8000)
+    payload = st.build_response(raw, series_map)
+    greed = payload.get("greed") or {}
+    if greed.get("value") is None:
         return 0
     detail = {}
-    for layer in thermo.get("layers") or []:
-        if layer.get("score") is not None:
-            detail[layer["name"]] = layer["score"]
-    detail["三层分离度(pp)"] = thermo.get("spread")
-    detail["数据源"] = "由各指标实时读数与其分位加权合成"
-    today = date.today().strftime("%Y-%m-%d")
+    for comp in greed.get("components") or []:
+        if comp.get("score") is not None:
+            detail[comp["name"] + "分位"] = comp["score"]
+    detail["情绪分"] = (greed.get("sentiment") or {}).get("score")
+    detail["估值分"] = (greed.get("valuation") or {}).get("score")
+    detail["深度恐慌"] = int(bool((greed.get("gates") or {}).get("deep_fear", {}).get("triggered")))
+    detail["泡沫警示"] = int(bool((greed.get("gates") or {}).get("bubble", {}).get("triggered")))
+    detail["数据源"] = "近 %d 个交易日样本内分位加权" % st.GREED_SAMPLE_DAYS
+    as_of = max(
+        [c.get("as_of") for c in greed.get("components") or [] if c.get("as_of")],
+        default=date.today().strftime("%Y-%m-%d"),
+    )
     return crud.add_stock_temp_history(db, [{
-        "key": "temperature",
-        "value": thermo["value"],
-        "as_of": today,
+        "key": "greed",
+        "value": greed["value"],
+        "as_of": as_of,
         "source": "akshare",
         "detail": st.dump_detail(detail),
     }])
+
+
+def _series_map(db: Session, keys, limit: int = 60) -> Dict[str, list]:
+    """从历史表读取若干键的近端序列，供 15 日样本分位使用。"""
+    grouped = crud.get_stock_temp_history_series(db, list(keys), per_key_limit=limit)
+    return {
+        key: [
+            {"as_of": row.as_of, "value": row.value}
+            for row in (rows or [])
+            if row.value is not None and row.as_of
+        ]
+        for key, rows in grouped.items()
+    }
+
+
+def _greed_history_shortage(db: Session) -> bool:
+    """日频序列不足 15 个交易日时，本次刷新需要多取一段交易所日频数据。"""
+    grouped = _series_map(db, ["turnover_amt"], limit=st.GREED_SAMPLE_DAYS + 5)
+    return len(grouped.get("turnover_amt") or []) < st.GREED_SAMPLE_DAYS + 2
+
+
+def _recent_series_records(fetched: Dict[str, Dict[str, Any]], n: int = 40) -> list:
+    """把贪婪指数与确认层各序列的近端 n 个点写进历史表（幂等）。
+
+    定时任务只抓当前读数，若不补写，首次部署时 15 日样本分位会一直算不出来。
+    """
+    records = []
+    for key in st.GREED_KEYS + st.GREED_CONFIRM_KEYS:
+        item = fetched.get(key) or {}
+        if item.get("error"):
+            continue
+        for p in (item.get("series") or [])[-n:]:
+            if p.get("value") is None or not p.get("as_of"):
+                continue
+            records.append({
+                "key": key,
+                "value": p["value"],
+                "as_of": p["as_of"],
+                "source": item.get("source") or "akshare",
+                "detail": "{}",
+            })
+    return records
 
 
 def _freq_code(ind: dict) -> str:
@@ -140,7 +189,9 @@ def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str],
         db = SessionLocal()
     try:
         prev = _snapshot_records(db)
-        fetched = st.fetch_all(exchange_days=0, industry_months=1, prev=prev)
+        # 贪婪指数要用近 15 个交易日样本分位；历史还不够时，本次顺带多取一段日频数据
+        exchange_days = (st.GREED_SAMPLE_DAYS + 5) if _greed_history_shortage(db) else 0
+        fetched = st.fetch_all(exchange_days=exchange_days, industry_months=1, prev=prev)
 
         records = []
         errors: Dict[str, str] = {}
@@ -160,11 +211,13 @@ def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str],
         if records:
             crud.upsert_stock_temp_indicators(db, records)
             added = crud.add_stock_temp_history(db, records)
-            # 单次抓取窗口太短、算不出分位的指标，用历史表补算后再打卡温度
+            # 贪婪指数与确认层的近端序列补齐（15 日样本分位依赖它）
+            added += crud.add_stock_temp_history(db, _recent_series_records(fetched))
+            # 单次抓取窗口太短、算不出分位的指标，用历史表补算后再打卡
             if _fill_percentiles(db, records):
                 crud.add_stock_temp_history(db, records)
 
-        added += _record_temperature(db)
+        added += _record_greed(db)
 
         logger.info(
             "股票指标刷新: 快照更新 %d 项, 历史新增 %d 条, 失败 %d 项",

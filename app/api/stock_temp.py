@@ -1,13 +1,17 @@
-"""股票指标（A 股冷热三层温度计）接口。
+"""股票热度接口（市场贪婪指数 0-100 · 对标 CNN Fear & Greed）。
 
-- GET  /api/stock-temp          读取当前指标、分层判读与综合温度计（**只读库，不再自行抓取**）
+- GET  /api/stock-temp          读取当前指标与市场贪婪指数（**只读库，不再自行抓取**）
 - POST /api/stock-temp/refresh  强制重新抓取全部指标（页面「刷新数据」按钮走这里）
 - GET  /api/stock-temp/series   读取趋势图所需的历史序列 + 重建的月度温度轨迹
 - GET  /api/stock-temp/history  查询任一指标的历史读数（只增不改的历史表）
 - POST /api/stock-temp/backfill 一次性回溯补齐历史数据（让趋势图有数据可画）
 
-13 项指标全部自动获取，无手工录入入口：
-- 乐咕乐股：沪深300 PE/PB、破净率、公募仓位、市场宽度
+贪婪指数 = 情绪 ×88%（市场宽度 / 全A换手率 / 两市成交额 各 1/3）+ 估值 ×12%（沪深300 PE-TTM），
+分位统一取近 15 个交易日样本；ERP / 破净率为确认层，不加权，只做极端区闸门。
+
+底层 13 项读数全部自动获取，无手工录入入口：
+- 乐咕乐股：沪深300 PB、破净率、公募仓位、市场宽度
+- 中证指数：沪深300 PE-TTM（日频，供贪婪指数估值项）
 - 交易所官网：两市成交额、全A换手率（成交额 ÷ 流通市值）
 - 中债/新浪：10 年期国债收益率（合成 ERP）
 - 东财数据中心：两融余额、重要股东增减持（产业资本净增持）
@@ -102,6 +106,24 @@ def _load_raw(db: Session) -> dict:
     return raw
 
 
+def _series_map(db: Session) -> dict:
+    """读取贪婪指数与确认层所需的历史序列。
+
+    主指标只用近 15 个交易日，但确认层（ERP / 破净率）取全历史分位，所以这里必须给足
+    样本量——否则分位会被截断成「近 60 期」的相对位置，闸门判断随之失真。
+    """
+    keys = st.GREED_KEYS + st.GREED_CONFIRM_KEYS
+    grouped = crud.get_stock_temp_history_series(db, keys, per_key_limit=8000)
+    return {
+        key: [
+            {"as_of": row.as_of, "value": row.value}
+            for row in (rows or [])
+            if row.value is not None and row.as_of
+        ]
+        for key, rows in grouped.items()
+    }
+
+
 def _payload(db: Session, refreshed: int, errors: dict, history_added: int = 0) -> dict:
     raw = _load_raw(db)
     for key, msg in errors.items():
@@ -112,7 +134,7 @@ def _payload(db: Session, refreshed: int, errors: dict, history_added: int = 0) 
                 "value": None, "as_of": "—", "source": "akshare",
                 "detail": {}, "error": msg,
             }
-    payload = st.build_response(raw)
+    payload = st.build_response(raw, _series_map(db))
     payload["refreshed"] = refreshed
     payload["errors"] = errors
     payload["history_added"] = history_added
@@ -219,6 +241,7 @@ def get_stock_temp_history(
         rows = crud.get_stock_temp_history(db, key=key, limit=limit, order=order)
         name_of = {ind["key"]: ind["name"] for ind in st.INDICATORS}
         name_of["temperature"] = "综合市场温度"
+        name_of["greed"] = "市场贪婪指数"
         name_of["total_float_mcap"] = "两市流通市值"
         records = []
         for row in rows:
