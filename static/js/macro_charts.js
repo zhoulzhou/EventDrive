@@ -90,14 +90,13 @@ function alignTo(axis, rows, field) {
 }
 
 /* ---------------- 状态词（与后端阈值一致，用于图上直接标注） ---------------- */
-function dr007State(v) {
-    if (v < -20) return ["松，钱富余", CH.blue];
-    if (v < -10) return ["偏松", CH.cyan];
-    if (v <= 10) return ["央行合意区间，平稳", CH.green];
+function dr001State(v) {
+    if (v <= -5) return ["很松，钱富余", CH.blue];
+    if (v < 0) return ["偏松", CH.cyan];
+    if (v < 10) return ["平稳", CH.green];
     if (v < 20) return ["略偏紧", CH.amber];
-    if (v <= 30) return ["边际偏紧", CH.amber];
-    if (v < 50) return ["偏紧", CH.orange];
-    if (v < 100) return ["明显紧张", CH.orange];
+    if (v < 35) return ["偏紧", CH.orange];
+    if (v < 55) return ["明显紧张", CH.orange];
     return ["钱荒级别", CH.red];
 }
 function r001State(v) {
@@ -134,16 +133,17 @@ function m1m2State(v) {
 }
 
 // 短状态词：直接标在「最新点」旁（第 5 个细节：状态词写进图里）
-function excessReserveState(v) {
-    if (v > 1.5) return ["充裕", CH.blue];
-    if (v >= 1.2) return ["中性", CH.green];
-    if (v >= 1.0) return ["偏低、资金波动放大", CH.amber];
-    return ["偏紧，全靠央行投放吊着", CH.red];
+function ncdState(v) {
+    if (v <= 1.0) return ["极低，资金宽松", CH.blue];
+    if (v < 1.3) return ["低位，宽松", CH.cyan];
+    if (v < 1.6) return ["中性", CH.green];
+    if (v < 1.95) return ["偏高，负债成本抬升", CH.amber];
+    return ["高位，融资成本高", CH.red];
 }
-function shortDr007(v) {
-    if (v < -20) return "松"; if (v < -10) return "偏松"; if (v <= 10) return "平稳";
-    if (v < 20) return "略偏紧"; if (v <= 30) return "边际偏紧"; if (v < 50) return "偏紧";
-    if (v < 100) return "明显紧张"; return "钱荒";
+function shortDr001(v) {
+    if (v <= -5) return "很松"; if (v < 0) return "偏松"; if (v < 10) return "平稳";
+    if (v < 20) return "略偏紧"; if (v < 35) return "偏紧"; if (v < 55) return "明显紧张";
+    return "钱荒";
 }
 function shortR001(v) {
     if (v < 15) return "正常"; if (v < 30) return "分层走阔";
@@ -261,9 +261,9 @@ function lineSeries(name, vals, color, o) {
     }, o.extra || {});
 }
 
-/* ---------------- ① 资金松紧：DR007 偏离 ---------------- */
-function drawDr007(bag, steps) {
-    const rows = pick(bag, "dr007_spread");
+/* ---------------- ① 资金松紧：DR001 偏离 ---------------- */
+function drawDr001(bag, steps) {
+    const rows = pick(bag, "dr001_spread");
     if (rows.length < 2) { chartEmpty("mpDr007", "暂无日度序列，点右上角「补齐历史数据」回溯"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
@@ -275,24 +275,24 @@ function drawDr007(bag, steps) {
     const x0 = dates[0], x1 = dates[dates.length - 1];
 
     const bands = [];
-    pushBand(bands, x0, x1, yMin, -20, yMin, yMax, CH.blue, "松，钱富余");
-    pushBand(bands, x0, x1, -20, 20, yMin, yMax, CH.green, "合意区 ±20bp");
-    pushBand(bands, x0, x1, 20, 50, yMin, yMax, CH.amber, "偏紧");
-    pushBand(bands, x0, x1, 50, yMax, yMin, yMax, CH.red, "钱荒级");
+    pushBand(bands, x0, x1, yMin, 0, yMin, yMax, CH.blue, "松，钱富余");
+    pushBand(bands, x0, x1, 0, 10, yMin, yMax, CH.green, "平稳 0~+10bp");
+    pushBand(bands, x0, x1, 10, 35, yMin, yMax, CH.amber, "偏紧");
+    pushBand(bands, x0, x1, 35, yMax, yMin, yMax, CH.red, "明显紧张/钱荒");
 
     const opt = baseOption(dates, {
         yName: "bp", yMin: yMin, yMax: yMax,
         tooltip: function (p) {
             const i = p[0].dataIndex, d = dates[i], v = vals[i];
-            const st = dr007State(v), rate = anchorRateOn(d, steps);
+            const st = dr001State(v), rate = anchorRateOn(d, steps);
             return "<b>" + escapeHtml(d) + "</b><br>"
-                + '<span style="color:' + CH.blue + '">●</span> DR007 偏离：<b>' + signed(v, 1) + " bp</b><br>"
+                + '<span style="color:' + CH.blue + '">●</span> DR001 偏离：<b>' + signed(v, 1) + " bp</b><br>"
                 + (rate !== null ? '<span style="color:' + CH.sub + '">锚：7天逆回购 ' + num(rate, 2) + "%</span><br>" : "")
                 + (ma5[i] !== null ? '<span style="color:' + CH.amber + '">●</span> 5日均线：' + num(ma5[i], 1) + " bp<br>" : "")
                 + '<span style="color:' + st[1] + '">状态：' + escapeHtml(st[0]) + "</span>";
         },
         series: [
-            Object.assign(lineSeries("DR007 偏离", vals, CH.blue), {
+            Object.assign(lineSeries("DR001 偏离", vals, CH.blue), {
                 areaStyle: { color: withAlpha(CH.blue, 0.10) },
                 markArea: { silent: true, data: bands },
                 markLine: {
@@ -303,7 +303,7 @@ function drawDr007(bag, steps) {
                 },
                 markPoint: marksFor(
                     dates, vals, CH.blue,
-                    shortDr007(vals[vals.length - 1]) + " " + signed(vals[vals.length - 1], 0) + "bp",
+                    shortDr001(vals[vals.length - 1]) + " " + signed(vals[vals.length - 1], 0) + "bp",
                     function (tag, v) { return tag + " " + signed(v, 0) + "bp"; }
                 )
             }),
@@ -361,31 +361,31 @@ function drawR001(bag) {
     mount("mpR001", opt);
 }
 
-/* ---------------- ① 资金松紧：超储率（季末·水位） ---------------- */
-function drawExcessReserve(bag) {
-    const rows = pick(bag, "excess_reserve");
-    if (rows.length < 2) { chartEmpty("mpER", "暂无季度序列，点右上角「补齐历史数据」回溯"); return; }
+/* ---------------- ① 资金松紧：1Y AAA 同业存单（银行负债成本） ---------------- */
+function drawNcd(bag) {
+    const rows = pick(bag, "ncd_1y_aaa");
+    if (rows.length < 2) { chartEmpty("mpER", "暂无同业存单序列，点右上角「补齐历史数据」回溯"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
-    const yMin = Math.min(Math.floor((lo - 0.15) / 0.1) * 0.1, 1.0);
-    const yMax = Math.max(Math.ceil((hi + 0.15) / 0.1) * 0.1, 1.8);
+    const yMin = Math.min(Math.floor((lo - 0.1) / 0.1) * 0.1, 1.0);
+    const yMax = Math.max(Math.ceil((hi + 0.1) / 0.1) * 0.1, 1.8);
     const x0 = dates[0], x1 = dates[dates.length - 1];
 
     const bands = [];
-    pushBand(bands, x0, x1, yMin, 1.2, yMin, yMax, CH.amber, "偏低 <1.2%");
-    pushBand(bands, x0, x1, 1.2, 1.5, yMin, yMax, CH.green, "中性 1.2~1.5%");
-    pushBand(bands, x0, x1, 1.5, yMax, yMin, yMax, CH.blue, "充裕 >1.5%");
+    pushBand(bands, x0, x1, yMin, 1.3, yMin, yMax, CH.blue, "低位 ≤1.3%");
+    pushBand(bands, x0, x1, 1.3, 1.6, yMin, yMax, CH.green, "中性 1.3~1.6%");
+    pushBand(bands, x0, x1, 1.6, yMax, yMin, yMax, CH.amber, "偏高 >1.6%");
 
     const opt = baseOption(dates, {
         yName: "%", yMin: yMin, yMax: yMax,
         tooltip: function (p) {
-            const i = p[0].dataIndex, v = vals[i], st = excessReserveState(v);
+            const i = p[0].dataIndex, v = vals[i], st = ncdState(v);
             return "<b>" + escapeHtml(dates[i]) + "</b><br>"
-                + '<span style="color:' + CH.green + '">●</span> 季末超额准备金率：<b>' + num(v, 2) + " %</b><br>"
+                + '<span style="color:' + CH.green + '">●</span> 1Y AAA 同业存单：<b>' + num(v, 3) + " %</b><br>"
                 + '<span style="color:' + st[1] + '">状态：' + escapeHtml(st[0]) + "</span>";
         },
-        series: [Object.assign(lineSeries("超储率", vals, CH.green), {
+        series: [Object.assign(lineSeries("1Y AAA 同业存单", vals, CH.green), {
             areaStyle: { color: withAlpha(CH.green, 0.12) },
             markArea: { silent: true, data: bands },
             markLine: {
@@ -393,14 +393,14 @@ function drawExcessReserve(bag) {
                 lineStyle: { color: CH.amber, width: 1, type: "dashed", opacity: 0.85 },
                 label: { position: "insideStartTop", color: CH.slate, textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5, fontSize: 9 },
                 data: [
-                    { yAxis: 1.2, lineStyle: { color: CH.amber }, label: { formatter: "1.2" } },
-                    { yAxis: 1.5, lineStyle: { color: CH.green }, label: { formatter: "1.5" } }
+                    { yAxis: 1.3, lineStyle: { color: CH.blue }, label: { formatter: "1.3" } },
+                    { yAxis: 1.6, lineStyle: { color: CH.green }, label: { formatter: "1.6" } }
                 ]
             },
             markPoint: marksFor(
                 dates, vals, CH.green,
-                "超储率 " + num(vals[vals.length - 1], 2) + "%",
-                function (tag, v) { return tag + " " + num(v, 2) + "%"; }
+                "1Y AAA " + num(vals[vals.length - 1], 3) + "%",
+                function (tag, v) { return tag + " " + num(v, 3) + "%"; }
             )
         })]
     });
@@ -624,7 +624,7 @@ function drawZScore(bag, months) {
     const axis = pmiRows.slice(-months).map(function (r) { return r.as_of; });
 
     const defs = [
-        { key: "dr007_spread", name: "DR007 偏离", color: CH.blue, rows: monthlyAvg(pick(bag, "dr007_spread")), unit: "bp" },
+        { key: "dr001_spread", name: "DR001 偏离", color: CH.blue, rows: monthlyAvg(pick(bag, "dr001_spread")), unit: "bp" },
         { key: "tsf_yoy", name: "社融存量同比", color: CH.green, rows: pick(bag, "tsf_yoy"), unit: "%" },
         { key: "pmi", name: "制造业 PMI", color: CH.orange, rows: pmiRows, unit: "" },
         { key: "ppi_yoy", name: "PPI 同比", color: CH.lime, rows: pick(bag, "ppi_yoy"), unit: "%" }
@@ -696,7 +696,7 @@ function drawZScore(bag, months) {
 
 /* ---------------- ④ 全局定位：资金 × 热度 四象限 ---------------- */
 function drawQuadrant(bag) {
-    const drM = monthlyAvg(pick(bag, "dr007_spread"));
+    const drM = monthlyAvg(pick(bag, "dr001_spread"));
     const pmiRows = pick(bag, "pmi");
     if (drM.length < 3 || pmiRows.length < 3) { chartEmpty("mpQuad", "日度/月度序列不足，点右上角「补齐历史数据」回溯"); return; }
     const pmiMap = {};
@@ -737,7 +737,7 @@ function drawQuadrant(bag) {
                 const side = (pt.x <= 0 ? "资金松" : "资金紧") + " + " + (pt.y >= 50 ? "热度高" : "热度低");
                 const nameMap = { "资金松 + 热度高": "复苏", "资金紧 + 热度高": "过热", "资金松 + 热度低": "流动性陷阱", "资金紧 + 热度低": "滞胀" };
                 return "<b>" + escapeHtml(pt.as_of) + "</b><br>"
-                    + "资金面（DR007 偏离月均）：<b>" + signed(pt.x, 1) + " bp</b><br>"
+                    + "资金面（DR001 偏离月均）：<b>" + signed(pt.x, 1) + " bp</b><br>"
                     + "景气（制造业 PMI）：<b>" + num(pt.y, 1) + "</b><br>"
                     + "象限：<b>" + escapeHtml(nameMap[side] || side) + "</b>";
             }
@@ -817,10 +817,10 @@ function panelHtml() {
         + "</div>"
         + '<div class="mp-grid">'
         + panelCard("mp-liq", "① 资金松紧", "日度 / 季度", [
-            panelChart("主图 · DR007 − 7天逆回购利率", "偏离度线 + 0 轴 + ±20bp 带 + 5 日均线", "mpDr007"),
+            panelChart("主图 · DR001 − 7天逆回购利率", "偏离度线 + 0 轴 + 关键阈值带 + 5 日均线", "mpDr007"),
             panelChart("辅图 · R001 − DR001", "分层利差 + 15 / 30 / 50bp 警戒线", "mpR001"),
-            panelChart("水位 · 金融机构超额准备金率（季末）", "季度慢变量 + 1.2 / 1.5% 参考线", "mpER")
-        ], "高偏离且分层走阔 = 真紧；只高不阔 = 结构性问题；超储率是资金面的「水位」")
+            panelChart("水位 · 1Y AAA 同业存单收益率", "银行负债成本 + 1.3 / 1.6% 参考线", "mpER")
+        ], "高偏离且分层走阔 = 真紧；只高不阔 = 结构性问题；同业存单收益率是资金面的「水位」")
         + panelCard("mp-credit", "② 信用扩张", "月度 · 领先 2-3 季", [
             panelChart("主图 · 社融存量同比", "阈值带：<8 收缩 / 8~10 中性 / >12 宽信用", "mpTsf"),
             panelChart("辅图 · M1、M2 同比 + 剪刀差", "M1>M2 绿、M1<M2 红（面积填充）", "mpM1M2")
@@ -857,22 +857,22 @@ function notesHtml() {
         + '<div class="mp-note">'
         + "<h3>一、组合三原则</h3>"
         + "<ol>"
-        + "<li><b>频率对齐</b>：日度（DR007 / R001 / GC001）一张图，月度（社融 / PMI / PPI / M1）一张图，季度（超储率）单独。混频率 = 看不清。</li>"
-        + "<li><b>量纲配对</b>：同量纲直接叠（DR007 vs 政策利率）；不同量纲先转成利差 / 偏离度 / 剪刀差 / z-score 再叠。</li>"
+        + "<li><b>频率对齐</b>：日度（DR001 / R001 / 1Y 存单）一张图，月度（社融 / PMI / PPI / M1）一张图。混频率 = 看不清。</li>"
+        + "<li><b>量纲配对</b>：同量纲直接叠（DR001 vs 政策利率）；不同量纲先转成利差 / 偏离度 / 剪刀差 / z-score 再叠。</li>"
         + "<li><b>领先验证</b>：信用（社融、M1−M2）领先实体 2-3 个季度，用于<b>预判</b>；PMI / PPI 是<b>同步确认</b>。两者背离时，以信用为方向、以景气验证。</li>"
         + "</ol></div>"
         + '<div class="mp-note">'
         + "<h3>二、四种呈现形态</h3>"
         + "<ol>"
-        + "<li><b>偏离度图</b>（资金面首选）：不裸画两条线让人自己算差，直接画 DR007 − 7天逆回购利率单线 + 0 轴 + ±20bp 色带 + 5 日均线。高于 0 越多越紧、低于 0 越多越松，一眼定生死。</li>"
+        + "<li><b>偏离度图</b>（资金面首选）：不裸画两条线让人自己算差，直接画 DR001 − 7天逆回购利率单线 + 0 轴 + 阈值色带 + 5 日均线。高于 0 越多越紧、低于 0 越多越松，一眼定生死。</li>"
         + "<li><b>阈值带图</b>（区间类指标首选）：给指标画「泳道」。社融背景分三段色带（&lt;8% 收缩 / 8~10% 中性 / &gt;12% 宽信用）；R001−DR001 画 15 / 30 / 50bp 三条横线；PPI 画 −3 / 0 / 2 / 5% 四档带。泳道比裸线强在<b>阈值内置，不用记</b>。</li>"
         + "<li><b>双线 + 剪刀差填充</b>（配对指标首选）：M1、M2 两条线，中间差值用面积填充，M1&gt;M2 绿色、M1&lt;M2 红色。剪刀差的「转正 / 转负」比两条线的绝对值信息量大得多。</li>"
-        + "<li><b>归一化叠加</b>（跨量纲共振检测）：把 DR007 偏离、社融、PMI、PPI 各算 z-score 画进同一张图，看共振：同时抬头 = 全面回暖，背离 = 结构性矛盾。原始数值标注在提示里，z-score 只负责同图，数值负责精确。</li>"
+        + "<li><b>归一化叠加</b>（跨量纲共振检测）：把 DR001 偏离、社融、PMI、PPI 各算 z-score 画进同一张图，看共振：同时抬头 = 全面回暖，背离 = 结构性矛盾。原始数值标注在提示里，z-score 只负责同图，数值负责精确。</li>"
         + "</ol></div>"
         + '<div class="mp-note">'
         + "<h3>三、四象限定位</h3>"
         + "<ul>"
-        + "<li>X 轴 = 资金面（DR007 偏离度，左松右紧）；Y 轴 = PMI 或 PPI（下冷上热）。</li>"
+        + "<li>X 轴 = 资金面（DR001 偏离度，左松右紧）；Y 轴 = PMI 或 PPI（下冷上热）。</li>"
         + "<li>每月一个点，连成轨迹。经典轮动：复苏 → 过热 → 滞胀 → 流动性陷阱 → 复苏。</li>"
         + "<li>当前落在「资金平稳、热度磨底」的位置——离复苏象限（左上）只差 PMI 上穿 50 与社融企稳，这两个就是观察哨。</li>"
         + "</ul></div>"
@@ -893,9 +893,9 @@ function notesHtml() {
 function drawCharts(d) {
     const bag = Object.assign({}, d.daily || {}, d.monthly || {});
     const steps = d.anchor_steps || [];
-    drawDr007(bag, steps);
+    drawDr001(bag, steps);
     drawR001(bag);
-    drawExcessReserve(bag);
+    drawNcd(bag);
     drawTsf(bag);
     drawM1M2(bag);
     drawPmi(bag);
@@ -924,7 +924,7 @@ async function loadSeries(force) {
 
 async function runBackfill() {
     const btn = document.getElementById("macroBackfill");
-    if (!window.confirm("将回溯补齐各指标的历史数据（日度逐月请求 + 央行社融逐期解析 + 超储率的季度报告 PDF 逐份下载，首次约需 3~4 分钟）。\n已存在的记录按「指标 + 数据日期」覆盖更新，不会产生重复行。\n超储率历史补足后不会再重复下载。\n\n继续？")) return;
+    if (!window.confirm("将回溯补齐各指标的历史数据（日度逐月请求 + 央行社融/信贷逐期解析，首次约需 2~3 分钟）。\n已存在的记录按「指标 + 数据日期」覆盖更新，不会产生重复行。\n\n继续？")) return;
     btn.disabled = true;
     btn.textContent = "回溯中…（约 3~4 分钟）";
     try {
@@ -977,7 +977,7 @@ function setTrendMeta(d, failed) {
     const notice = document.getElementById("trendNotice");
     if (!notice) return;
     notice.innerHTML = s.total < 200
-        ? '<div class="macro-alert">历史序列偏少（' + s.total + ' 条），曲线可能很短。可点「补齐历史数据」回溯：日度逐月请求 + 央行社融逐期解析 + 超储率季度报告 PDF 逐份下载，首次约 3~4 分钟；一律按「指标 + 数据日期」覆盖写入，不会堆重复行。</div>'
+        ? '<div class="macro-alert">历史序列偏少（' + s.total + ' 条），曲线可能很短。可点「补齐历史数据」回溯：日度逐月请求 + 央行社融/信贷逐期解析，首次约 2~3 分钟；一律按「指标 + 数据日期」覆盖写入，不会堆重复行。</div>'
         : "";
 }
 

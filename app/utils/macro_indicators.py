@@ -1,24 +1,24 @@
 """宏观盯盘清单（三个维度）数据获取、状态判定与组合解读。
 
-三个维度、每维 3 项读数，共 9 项：
+三个维度、共 10 项读数：
 
-- ① 资金面（松 ↔ 紧，日度）：DR007 − 7天逆回购利率、超储率、R001 − DR001
-- ② 经济热度（冷 ↔ 热，月度）：制造业 PMI、社融存量同比、PPI 同比
-- ③ 部门结构（钱的流向，月度累计）：M1 − M2 剪刀差、住户存款/贷款、非银存款
+- ① 资金面（松 ↔ 紧，日度）：DR001 − 政策利率、1Y AAA 同业存单收益率、R001 − DR001
+- ② 经济热度（冷 ↔ 热，月度）：制造业 PMI、PPI 同比、社融存量同比、M1 − M2 剪刀差
+- ③ 信用 / 部门（资金活化 ↔ 空转，月度）：企业中长贷同比多增、住户中长贷同比多增、财政存款当月增量
 
 A股估值/情绪类读数（沪深300 PE/PB、ERP、成交额、两融）**不在本页**，
 见「股票指标」页（app/utils/stock_temp.py）。
 
 数据获取方式（全部自动，来源见各自 source 字段）：
 - akshare（source="akshare"）
-          · repo_rate_hist              → FDR001 / FDR007（即 DR001 / DR007 定盘价）、FR001（即 R001）
+          · interest_rate_repo_hist_cm  → FDR001 / FR001（即 DR001 / R001 定盘价）
+          · bond_zh_close_yield_cm      → 同业存单(AAA) 收盘收益率曲线 1Y
           · macro_china_pmi             → 制造业 PMI
           · macro_china_ppi             → PPI 当月同比
-          · macro_china_money_supply    → M1 / M2 同比
+          · macro_china_money_supply_em    → M1 / M2 同比
 - 央行官网（source="pbc"，见 app/utils/pbc_data.py）
           · 《公开市场业务交易公告》      → 7天逆回购操作利率（每个交易日）
-          · 《金融统计数据报告》          → 社融存量同比、分部门存贷款（每月，累计口径）
-          · 《中国货币政策执行报告》PDF   → 超储率（每季度）
+          · 《金融统计数据报告》          → 社融存量同比、企业与住户中长贷、财政存款（每月）
 
 全部指标均为自动获取，页面不提供任何手工录入入口。
 
@@ -60,9 +60,9 @@ GROUP_FREQS = {
 }
 
 GROUP_DESCS = {
-    GROUP_LIQUIDITY: "钱贵不贵：看「价」（DR007 偏离、分层利差）与「水位」（超储率）",
-    GROUP_HEAT: "经济跑不跑：看「量」（社融）与「温度」（PMI、PPI）",
-    GROUP_STRUCTURE: "钱在谁手里：看 M1−M2 剪刀差与分部门存贷款，判断居民/企业是否缩表",
+    GROUP_LIQUIDITY: "钱贵不贵：看「价」（DR001 偏离、1Y 同业存单）与「分层」（R001−DR001）",
+    GROUP_HEAT: "经济跑不跑：看「量」（社融）与「温度」（PMI、PPI、M1−M2）",
+    GROUP_STRUCTURE: "钱在谁手里：看企业中长贷、住户中长贷与财政存款，判断信用扩张与资金回笼",
 }
 
 # 色调 -> 前端配色（前端按 tone 取色）
@@ -80,55 +80,53 @@ TONES = {
 
 INDICATORS: List[Dict[str, Any]] = [
     {
-        "key": "dr007_spread",
+        "key": "dr001_spread",
         "group": GROUP_LIQUIDITY,
-        "name": "DR007 − 7天逆回购利率",
-        "subtitle": "资金价格：银行资金价 vs 央行政策利率锚",
+        "name": "DR001 − 政策利率（隔夜）",
+        "subtitle": "隔夜资金价格 vs 央行政策利率锚",
         "unit": "bp",
         "digits": 0,
         "source": "auto",
         "meaning": (
-            "DR007 是存款类机构（银行）7 天期质押式回购加权利率，是央行重点观察的"
-            "\"政策利率 → 市场利率\"传导指标；7 天逆回购利率是央行公开市场操作的锚"
-            "（当前锚 1.40%）。两者之差即银行拿钱的成本相对央行合意水平偏离了多少。"
+            "DR001 是存款类机构（银行）隔夜期质押式回购加权利率；7 天逆回购利率是央行"
+            "公开市场操作的锚（当前锚 1.40%）。两者之差即银行隔夜拿钱的成本相对政策利率"
+            "偏离了多少，正值表示银行体系隔夜资金偏紧。"
         ),
         "guide": (
-            "看\"价\"。负偏离=资金比政策利率还便宜，说明钱多；正偏离持续扩大=银行体系缺钱，"
-            "缴税、政府债缴款高峰时常出现；+100bp 以上属钱荒级别（2013 年 6 月、2020 年末）。"
+            "看「价」。负偏离 = 隔夜资金比政策利率还便宜，说明钱多；正偏离持续扩大 = "
+            "银行体系缺钱，缴税、政府债缴款高峰时常出现；+35bp 以上属明显紧张。"
         ),
         "bands": [
-            {"range": "低于 −20bp", "state": "松，钱富余", "tone": "blue"},
-            {"range": "−20 ~ −10bp", "state": "偏松", "tone": "cyan"},
-            {"range": "±10bp 内", "state": "央行合意区间，平稳", "tone": "green"},
+            {"range": "≤ −5bp", "state": "很松，钱富余", "tone": "blue"},
+            {"range": "−5 ~ 0bp", "state": "偏松", "tone": "cyan"},
+            {"range": "0 ~ +10bp", "state": "平稳", "tone": "green"},
             {"range": "+10 ~ +20bp", "state": "略偏紧", "tone": "amber"},
-            {"range": "+20 ~ +30bp", "state": "边际偏紧", "tone": "amber"},
-            {"range": "+30 ~ +50bp", "state": "偏紧", "tone": "orange"},
-            {"range": "+50bp 以上持续", "state": "明显紧张（缴税 / 政府债缴款高峰）", "tone": "orange"},
-            {"range": "+100bp 以上", "state": "钱荒级别（2013、2020 年末）", "tone": "red"},
+            {"range": "+20 ~ +35bp", "state": "偏紧", "tone": "orange"},
+            {"range": "≥ +55bp", "state": "钱荒级别", "tone": "red"},
         ],
     },
     {
-        "key": "excess_reserve",
+        "key": "ncd_1y_aaa",
         "group": GROUP_LIQUIDITY,
-        "name": "超储率",
-        "subtitle": "银行体系水位",
+        "name": "1Y AAA 同业存单",
+        "subtitle": "银行负债成本（中国货币网收盘收益率曲线）",
         "unit": "%",
-        "digits": 2,
+        "digits": 3,
         "source": "auto",
         "meaning": (
-            "超额存款准备金率 = 银行体系在央行存放的超额准备金 / 存款总额，反映银行体系的"
-            "\"可用资金厚度\"。央行在《货币政策执行报告》中按季披露（季末值），"
-            "季末、缴税、缴准时点会有短期扰动。"
+            "1 年期 AAA 同业存单到期收益率，来自中国货币网「收盘收益率曲线 → 同业存单(AAA)」"
+            "（中债估值口径）。它是银行主动负债的边际成本，也是资金面「水位」的价格化体现。"
         ),
         "guide": (
-            "看\"水位\"。水位高 = 银行不缺钱、资金面波动小；水位低 = 全靠央行公开市场投放"
-            "\"吊着\"，一旦投放不及预期，资金面就容易紧。"
+            "看「水位」。收益率低位 = 银行负债压力小、资金宽裕；快速上行 = 负债端收紧，"
+            "往往先于信贷投放放缓出现。"
         ),
         "bands": [
-            {"range": "> 1.5%", "state": "充裕", "tone": "blue"},
-            {"range": "1.2 ~ 1.5%", "state": "中性（当前中枢 1.2~1.4%）", "tone": "green"},
-            {"range": "1.0 ~ 1.2%", "state": "偏低、资金波动放大", "tone": "amber"},
-            {"range": "< 1.0%", "state": "偏紧，全靠央行投放吊着", "tone": "red"},
+            {"range": "≤ 1.00%", "state": "极低，资金宽松", "tone": "blue"},
+            {"range": "1.00 ~ 1.30%", "state": "低位", "tone": "cyan"},
+            {"range": "1.30 ~ 1.60%", "state": "中性", "tone": "green"},
+            {"range": "1.60 ~ 1.95%", "state": "偏高，负债成本抬升", "tone": "amber"},
+            {"range": "≥ 2.30%", "state": "高位，融资成本高", "tone": "red"},
         ],
     },
     {
@@ -253,59 +251,77 @@ INDICATORS: List[Dict[str, Any]] = [
         ],
     },
 
-    # ------------------------------------------------------------ ③ 部门结构
+    # ------------------------------------------------------------ ③ 信用 / 部门
     {
-        "key": "household_dep_loan",
+        "key": "corp_ml_yoy",
         "group": GROUP_STRUCTURE,
-        "name": "住户存款 / 贷款",
-        "subtitle": "居民加杠杆还是缩表（累计口径）",
-        "unit": "万亿",
-        "digits": 2,
+        "name": "企业中长贷 同比多增",
+        "subtitle": "企业资本开支意愿（当月同比）",
+        "unit": "亿",
+        "digits": 0,
         "source": "auto",
         "meaning": (
-            "央行《金融统计数据报告》第四、五节披露的分部门数据，口径是\"年初至今累计\""
-            "增量（如\"前八个月住户存款增加 6.99 万亿元、住户贷款减少 1.03 万亿元\"），"
-            "不是当月增量——央行月度报告只披露累计数。"
-            "住户贷款是居民加杠杆意愿的直接体现；住户存款多增而贷款不增，"
-            "说明居民在\"还债、存钱、不借钱\"，即居民部门缩表。"
+            "企（事）业单位中长期贷款当月增量相对去年同月的多增额。央行《金融统计数据报告》"
+            "只披露年初至今累计数，本页先用相邻两期累计相减得到当月增量，再与去年同月比较。"
+            "中长贷对应企业的资本开支与设备投资，是信用扩张「实不实」的核心观察。"
         ),
         "guide": (
-            "本卡读数取「住户贷款累计增量」，看符号与水平：累计为负 = 居民净还贷（缩表）；"
-            "转正并持续抬升 = 居民重新加杠杆，通常对应地产销售与消费信心修复。"
-            "同期住户存款高增则强化缩表判断——钱进了银行就不出门。卡内附注给出存款读数。"
+            "同比多增 = 企业愿意借钱做长期投资；持续少增 = 企业收缩资本开支。"
+            "短贷与票据冲量不算资本开支，本页不纳入打分。"
         ),
         "bands": [
-            {"range": "累计 < −0.5 万亿", "state": "居民净还贷、明显缩表", "tone": "blue"},
-            {"range": "−0.5 ~ 0 万亿", "state": "居民不借钱、边际缩表", "tone": "cyan"},
-            {"range": "0 ~ 1 万亿", "state": "温和加杠杆", "tone": "green"},
-            {"range": "1 ~ 2.5 万亿", "state": "加杠杆意愿回升", "tone": "amber"},
-            {"range": "> 2.5 万亿", "state": "居民扩张、需求回暖", "tone": "red"},
+            {"range": "多增 ≥ 4000 亿", "state": "企业扩张明显", "tone": "red"},
+            {"range": "多增 2000 ~ 4000 亿", "state": "扩张意愿回升", "tone": "amber"},
+            {"range": "0 ~ 2000 亿", "state": "小幅多增", "tone": "green"},
+            {"range": "少增 0 ~ 2000 亿", "state": "边际收缩", "tone": "cyan"},
+            {"range": "少增 ≥ 2000 亿", "state": "明显收缩", "tone": "blue"},
         ],
     },
     {
-        "key": "nonbank_deposit",
+        "key": "household_ml_yoy",
         "group": GROUP_STRUCTURE,
-        "name": "非银存款",
-        "subtitle": "存款搬家 · 钱滞留在资管",
-        "unit": "万亿",
-        "digits": 2,
+        "name": "住户中长贷 同比多增",
+        "subtitle": "居民按揭与长期消费（当月同比）",
+        "unit": "亿",
+        "digits": 0,
         "source": "auto",
         "meaning": (
-            "非银行业金融机构（券商、基金、保险、理财等）在银行的存款，同样是"
-            "\"年初至今累计\"增量。它多增通常意味着居民/企业的钱从存款搬到了资管产品，"
-            "钱在金融体系里转，但没有直接进入实体投资。"
+            "住户中长期贷款当月增量相对去年同月的多增额，口径同上（累计相减 + 同比）。"
+            "住户中长贷以按揭为主，直接反映居民加杠杆与地产销售意愿。"
         ),
         "guide": (
-            "多增并维持高位 = 存款搬家、钱滞资管，往往伴随债市/权益的增量资金；"
-            "大幅回落 = 资金回流实体或被抽离。要和 M1−M2 剪刀差一起看："
-            "剪刀差收窄 + 非银存款回落，才是钱真正活起来。"
+            "同比多增 = 居民重新加杠杆，通常对应地产销售与消费信心修复；"
+            "持续少增 = 居民提前还贷、缩表。"
         ),
         "bands": [
-            {"range": "> 6 万亿", "state": "存款搬家明显、钱堆资管", "tone": "red"},
-            {"range": "3 ~ 6 万亿", "state": "偏多，资金转向金融市场", "tone": "amber"},
-            {"range": "0 ~ 3 万亿", "state": "中性", "tone": "green"},
-            {"range": "−3 ~ 0 万亿", "state": "回落", "tone": "cyan"},
-            {"range": "< −3 万亿", "state": "大幅回落，资金回流或被抽离", "tone": "blue"},
+            {"range": "多增 ≥ 3000 亿", "state": "居民扩张明显", "tone": "red"},
+            {"range": "多增 1500 ~ 3000 亿", "state": "加杠杆意愿回升", "tone": "amber"},
+            {"range": "0 ~ 1500 亿", "state": "小幅多增", "tone": "green"},
+            {"range": "少增 0 ~ 1500 亿", "state": "边际收缩", "tone": "cyan"},
+            {"range": "少增 ≥ 1500 亿", "state": "居民缩表", "tone": "blue"},
+        ],
+    },
+    {
+        "key": "fiscal_deposit_mom",
+        "group": GROUP_STRUCTURE,
+        "name": "财政存款 当月增量",
+        "subtitle": "财政投放还是回笼",
+        "unit": "亿",
+        "digits": 0,
+        "source": "auto",
+        "meaning": (
+            "财政性存款当月增量（相邻两期累计相减）。财政存款增加 = 税款/债券资金进入国库、"
+            "从银行体系抽走流动性；减少 = 财政支出投放流动性。"
+        ),
+        "guide": (
+            "减少（尤其 ≥3000 亿）= 财政投放，利好流动性；增加（尤其 ≥3000 亿）= 财政回笼，"
+            "抽走银行体系资金，常出现在缴税大月与政府债发行高峰。"
+        ),
+        "bands": [
+            {"range": "减少 ≥ 3000 亿", "state": "财政大幅投放", "tone": "green"},
+            {"range": "减少 0 ~ 3000 亿", "state": "财政小幅投放", "tone": "lime"},
+            {"range": "增加 0 ~ 3000 亿", "state": "财政小幅回笼", "tone": "amber"},
+            {"range": "增加 ≥ 3000 亿", "state": "财政明显回笼", "tone": "red"},
         ],
     },
 ]
@@ -322,7 +338,7 @@ SERIES_EXTRA_KEYS = {
 
 # ------------------------------------------------------------ 参数与抓取键
 
-# 7 天逆回购利率：央行政策利率锚，用于计算 DR007 偏离
+# 7 天逆回购利率：央行政策利率锚，用于计算 DR001 偏离
 # （自动抓取自央行《公开市场业务交易公告》）
 PARAM_REVERSE_REPO = "reverse_repo_rate"
 PARAM_META = {
@@ -331,20 +347,19 @@ PARAM_META = {
         "unit": "%",
         "digits": 2,
         "default": 1.40,
-        "hint": "央行 7 天期公开市场逆回购操作利率，用于计算 DR007 偏离。自动抓取自《公开市场业务交易公告》。",
+        "hint": "央行 7 天期公开市场逆回购操作利率，用于计算 DR001 偏离。自动抓取自《公开市场业务交易公告》。",
     },
 }
 
 # 抓取失败且库中无记录时的兜底读数（保证页面有数可展示，source 标记为 fallback）
 FALLBACK_DEFAULTS: Dict[str, Any] = {
-    "excess_reserve": {"value": 1.30, "as_of": "兜底默认值"},
     "tsf_yoy": {"value": 7.2, "as_of": "兜底默认值"},
     PARAM_REVERSE_REPO: {"value": 1.40, "as_of": "兜底默认值"},
 }
 
 # 自动抓取键：akshare 来源 + 央行官网来源（无手工入口，全部自动）
-AK_KEYS = ["dr007_spread", "r001_dr001", "pmi", "m1_m2", "ppi_yoy"]
-PBC_KEYS = ["excess_reserve", "tsf_yoy", "household_dep_loan", "nonbank_deposit",
+AK_KEYS = ["dr001_spread", "ncd_1y_aaa", "r001_dr001", "pmi", "m1_m2", "ppi_yoy"]
+PBC_KEYS = ["tsf_yoy", "corp_ml_yoy", "household_ml_yoy", "fiscal_deposit_mom",
             PARAM_REVERSE_REPO]
 AUTO_KEYS = AK_KEYS + PBC_KEYS
 
@@ -367,10 +382,9 @@ NAME_OF_KEY[PARAM_REVERSE_REPO] = PARAM_META[PARAM_REVERSE_REPO]["name"]
 NAME_OF_KEY.update(SERIES_EXTRA_KEYS)
 
 # 图表面板「三组一定位」用到的序列键（供 /api/macro/series 组装）
-CHART_DAILY_KEYS = ["dr007_spread", "r001_dr001"]
-# excess_reserve（超储率）是季频，但仍归入 monthly 序列：面板上单独一图展示季度水位，
-# 不参与日度/月度的混频叠加（z-score 图只取显式列出的指标）
-CHART_MONTHLY_KEYS = ["pmi", "ppi_yoy", "tsf_yoy", "excess_reserve", "m1_yoy", "m2_yoy", "m1_m2"]
+CHART_DAILY_KEYS = ["dr001_spread", "r001_dr001"]
+CHART_MONTHLY_KEYS = ["pmi", "ppi_yoy", "tsf_yoy", "m1_yoy", "m2_yoy", "m1_m2",
+                      "corp_ml_yoy", "household_ml_yoy", "fiscal_deposit_mom"]
 CHART_KEYS = CHART_DAILY_KEYS + CHART_MONTHLY_KEYS
 
 # ---------------------------------------------------------------- 状态判定
@@ -385,31 +399,31 @@ def _decide(key: str, value: Optional[float]):
         return None
     v = float(value)
 
-    if key == "dr007_spread":  # bp
-        if v < -20:
-            return ("松，钱富余", "blue", 0)
-        if v < -10:
+    if key == "dr001_spread":  # bp
+        if v <= -5:
+            return ("很松，钱富余", "blue", 0)
+        if v < 0:
             return ("偏松", "cyan", 1)
-        if v <= 10:
-            return ("央行合意区间，平稳", "green", 2)
+        if v < 10:
+            return ("平稳", "green", 2)
         if v < 20:
             return ("略偏紧", "amber", 3)
-        if v <= 30:
-            return ("边际偏紧", "amber", 3)
-        if v < 50:
+        if v < 35:
             return ("偏紧", "orange", 4)
-        if v < 100:
+        if v < 55:
             return ("明显紧张", "orange", 4)
         return ("钱荒级别", "red", 5)
 
-    if key == "excess_reserve":  # %
-        if v > 1.5:
-            return ("充裕", "blue", 0)
-        if v >= 1.2:
+    if key == "ncd_1y_aaa":  # %
+        if v <= 1.0:
+            return ("极低，资金宽松", "blue", 0)
+        if v < 1.3:
+            return ("低位，宽松", "cyan", 1)
+        if v < 1.6:
             return ("中性", "green", 2)
-        if v >= 1.0:
-            return ("偏低、资金波动放大", "amber", 3)
-        return ("偏紧，全靠央行投放吊着", "red", 5)
+        if v < 1.95:
+            return ("偏高，负债成本抬升", "amber", 3)
+        return ("高位，融资成本高", "red", 4)
 
     if key == "r001_dr001":  # bp
         if v < 15:
@@ -462,28 +476,37 @@ def _decide(key: str, value: Optional[float]):
             return ("偏冷", "cyan", 1)
         return ("深度通缩", "blue", 0)
 
-    # ---------------- ③ 部门结构（0=钱淤积/缩表 → 4=钱活化/扩张）
-    if key == "household_dep_loan":  # 万亿元（累计口径）
-        if v < -0.5:
-            return ("居民净还贷、明显缩表", "blue", 0)
-        if v < 0:
-            return ("居民不借钱、边际缩表", "cyan", 1)
-        if v < 1:
-            return ("温和加杠杆", "green", 2)
-        if v < 2.5:
-            return ("加杠杆意愿回升", "amber", 3)
-        return ("居民扩张、需求回暖", "red", 4)
-
-    if key == "nonbank_deposit":  # 万亿元（累计口径）
-        if v > 6:
-            return ("存款搬家明显、钱堆资管", "red", 4)
-        if v >= 3:
-            return ("偏多，资金转向金融市场", "amber", 3)
+    # ---------------- ③ 信用 / 部门（0=收缩/回笼 → 4=扩张/投放）
+    if key == "corp_ml_yoy":  # 亿元（同比多增）
+        if v >= 4000:
+            return ("企业扩张明显", "red", 4)
+        if v >= 2000:
+            return ("扩张意愿回升", "amber", 3)
         if v >= 0:
-            return ("中性", "green", 2)
-        if v >= -3:
-            return ("回落", "cyan", 1)
-        return ("大幅回落，资金回流或被抽离", "blue", 0)
+            return ("小幅多增", "green", 2)
+        if v >= -2000:
+            return ("边际收缩", "cyan", 1)
+        return ("明显收缩", "blue", 0)
+
+    if key == "household_ml_yoy":  # 亿元（同比多增）
+        if v >= 3000:
+            return ("居民扩张明显", "red", 4)
+        if v >= 1500:
+            return ("加杠杆意愿回升", "amber", 3)
+        if v >= 0:
+            return ("小幅多增", "green", 2)
+        if v >= -1500:
+            return ("边际收缩", "cyan", 1)
+        return ("居民缩表", "blue", 0)
+
+    if key == "fiscal_deposit_mom":  # 亿元（当月增量）
+        if v <= -3000:
+            return ("财政大幅投放", "green", 4)
+        if v < 0:
+            return ("财政小幅投放", "lime", 3)
+        if v < 3000:
+            return ("财政小幅回笼", "amber", 1)
+        return ("财政明显回笼", "red", 0)
 
     return None
 
@@ -546,7 +569,8 @@ def _fetch_repo_rates(ak) -> Dict[str, Any]:
     last_error = None
     for start, end in windows:
         try:
-            df = ak.repo_rate_hist(
+            fn = getattr(ak, "interest_rate_repo_hist_cm", None) or ak.repo_rate_hist
+            df = fn(
                 start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d")
             )
         except Exception as exc:
@@ -565,6 +589,45 @@ def _fetch_repo_rates(ak) -> Dict[str, Any]:
             "FDR007": None if row.get("FDR007") is None else float(row["FDR007"]),
         }
     raise RuntimeError("回购定盘利率抓取失败: %s" % (last_error or "区间内无数据"))
+
+
+def _fetch_ncd_1y(ak) -> Dict[str, Any]:
+    """抓取中国货币网「同业存单(AAA)」收盘收益率曲线的 1Y 到期收益率。"""
+    today = date.today()
+    first_of_month = today.replace(day=1)
+    last_month_end = first_of_month - timedelta(days=1)
+    windows = [
+        (first_of_month, today),
+        (last_month_end.replace(day=1), last_month_end),
+    ]
+    last_error = None
+    for start, end in windows:
+        try:
+            df = ak.bond_zh_close_yield_cm(
+                symbol="同业存单(AAA)", period="1",
+                start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"),
+            )
+        except Exception as exc:
+            last_error = exc
+            continue
+        if df is None or df.empty or "期限" not in df.columns:
+            continue
+        one_year = df[df["期限"].astype(float) == 1.0].copy()
+        if one_year.empty:
+            continue
+        one_year["_d"] = one_year["日期"].astype(str)
+        latest_date = one_year["_d"].max()
+        row = one_year[one_year["_d"] == latest_date].iloc[-1]
+        return {
+            "value": round(float(row["到期收益率"]), 3),
+            "as_of": latest_date[:10],
+            "detail": {
+                "曲线": "同业存单(AAA)",
+                "期限": "1Y",
+                "即期收益率": None if row.get("即期收益率") is None else round(float(row["即期收益率"]), 3),
+            },
+        }
+    raise RuntimeError("同业存单 1Y 收益率抓取失败: %s" % (last_error or "区间内无 1Y 数据"))
 
 
 def _fetch_pmi(ak) -> Dict[str, Any]:
@@ -594,7 +657,8 @@ def _fetch_ppi(ak) -> Dict[str, Any]:
 
 
 def _fetch_money_supply(ak) -> Dict[str, Any]:
-    df = ak.macro_china_money_supply()
+    fn = getattr(ak, "macro_china_money_supply_em", None) or ak.macro_china_money_supply
+    df = fn()
     row = _latest_row(df, "月份")
     if row is None:
         raise RuntimeError("货币供应量无有效数据")
@@ -650,7 +714,7 @@ def fetch_auto_values(
             "error": str(exc),
         }
 
-    # ---------------- 央行官网：逆回购利率 / 社融存量同比 / 超储率 / 分部门存贷款
+    # ---------------- 央行官网：逆回购利率 / 社融 / 中长期贷款与财政存款
     pbc = _import_pbc()
     if pbc is None:
         for key in PBC_KEYS:
@@ -671,38 +735,14 @@ def fetch_auto_values(
             _fail("tsf_yoy", "pbc", exc)
 
         try:
-            item = pbc.fetch_excess_reserve((hints.get("excess_reserve") or {}))
-            if item.get("skipped"):
-                # 报告期未变：沿用库中已有读数，本次不写库
-                result["excess_reserve"] = {"skipped": True, "as_of": item.get("as_of")}
-            else:
-                result["excess_reserve"] = _item(
-                    item["value"], item.get("as_of"), "pbc", item.get("detail"))
-        except Exception as exc:
-            _fail("excess_reserve", "pbc", exc)
-
-        try:
-            item = pbc.fetch_deposit_loan_split()
-            split = item.get("detail") or {}
+            item = pbc.fetch_credit_breakdown()
             as_of = item.get("as_of")
-            # 住户存款/贷款：主读数取住户贷款累计增量（判「加杠杆 or 缩表」）
-            result["household_dep_loan"] = _item(item["value"], as_of, "pbc", {
-                "住户存款": split.get("住户存款"),
-                "住户贷款": split.get("住户贷款"),
-                "口径": split.get("口径"),
-                "报告": split.get("报告"),
-                # 完整两期明细：宏观温度计要用「当期 − 上期」算住户贷款当月增量
-                "分部门明细": split.get("分部门明细"),
-            })
-            # 非银存款：同一份报告里的另一项，单独成卡
-            result["nonbank_deposit"] = _item(split.get("非银存款"), as_of, "pbc", {
-                "非金融企业存款": split.get("企业存款"),
-                "口径": split.get("口径"),
-                "报告": split.get("报告"),
-            })
+            detail = item.get("detail") or {}
+            for key in ("corp_ml_yoy", "household_ml_yoy", "fiscal_deposit_mom"):
+                result[key] = _item(item.get(key), as_of, "pbc", detail)
         except Exception as exc:
-            _fail("household_dep_loan", "pbc", exc)
-            _fail("nonbank_deposit", "pbc", exc)
+            for key in ("corp_ml_yoy", "household_ml_yoy", "fiscal_deposit_mom"):
+                _fail(key, "pbc", exc)
 
     # ---------------- akshare
     ak = _import_akshare()
@@ -722,20 +762,19 @@ def fetch_auto_values(
     try:
         repo = _fetch_repo_rates(ak)
     except Exception as exc:
-        _fail("dr007_spread", "akshare", exc)
+        _fail("dr001_spread", "akshare", exc)
         _fail("r001_dr001", "akshare", exc)
 
     if repo is not None:
-        fdr007 = repo.get("FDR007")
         fdr001 = repo.get("FDR001")
         fr001 = repo.get("FR001")
 
-        if fdr007 is None:
-            _fail("dr007_spread", "akshare", RuntimeError("缺少 FDR007 读数"))
+        if fdr001 is None:
+            _fail("dr001_spread", "akshare", RuntimeError("缺少 FDR001 读数"))
         else:
-            result["dr007_spread"] = _item(
-                round((fdr007 - anchor) * 100, 1), repo["date"], "akshare",
-                {"DR007": fdr007, "逆回购利率": anchor},
+            result["dr001_spread"] = _item(
+                round((fdr001 - anchor) * 100, 1), repo["date"], "akshare",
+                {"DR001": fdr001, "逆回购利率": anchor},
             )
 
         if fdr001 is None or fr001 is None:
@@ -747,6 +786,7 @@ def fetch_auto_values(
             )
 
     for key, fetcher in (
+        ("ncd_1y_aaa", _fetch_ncd_1y),
         ("pmi", _fetch_pmi),
         ("ppi_yoy", _fetch_ppi),
         ("m1_m2", _fetch_money_supply),
@@ -768,7 +808,7 @@ QUADRANTS = [
         "brief": "宽货币没进实体",
         "desc": (
             "钱堆在银行间和债市，对应\"资产荒\"、长债利率低位。"
-            "DR007 平 ≠ 经济好，必须拿社融、PMI 证伪。"
+            "DR001 平 ≠ 经济好，必须拿社融、PMI 证伪。"
         ),
         "tone": "cyan",
     },
@@ -801,7 +841,7 @@ MEMORY_LINE = (
 # 已随 ④A股温度 从本页移出，改在「股票指标」页看（成交额 turnover_amt / 两融 margin）。
 WATCH_LIST = [
     {"key": "tsf_yoy", "label": "社融存量同比企稳（回到 8% 以上）"},
-    {"key": "household_dep_loan", "label": "住户贷款累计增量转正（居民重新借钱）"},
+    {"key": "household_ml_yoy", "label": "住户中长贷同比转正（居民重新加杠杆）"},
     {"key": "turnover_amt", "label": "成交额与两融余额同向放大（情绪有杠杆支撑）"},
 ]
 
@@ -815,16 +855,16 @@ def compute_combination(items: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """由三个维度汇总出资金面松紧、经济热度与部门结构，并给出四象限归属。"""
     liq_avg = _avg([
         (items.get(k) or {}).get("level")
-        for k in ("dr007_spread", "excess_reserve", "r001_dr001")
+        for k in ("dr001_spread", "ncd_1y_aaa", "r001_dr001")
     ])
-    # 经济热度只放「量价」三项；M1−M2 已归入③部门结构
+    # 经济热度只放「量价」三项；M1−M2 归入③信用/部门（与温度计口径一致）
     heat_avg = _avg([
         (items.get(k) or {}).get("level")
         for k in ("pmi", "tsf_yoy", "ppi_yoy")
     ])
     struct_avg = _avg([
         (items.get(k) or {}).get("level")
-        for k in ("m1_m2", "household_dep_loan", "nonbank_deposit")
+        for k in ("corp_ml_yoy", "household_ml_yoy", "fiscal_deposit_mom")
     ])
 
     if liq_avg is None:

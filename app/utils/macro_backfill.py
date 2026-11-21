@@ -9,20 +9,20 @@
 ======================  ==========================================  ==================
 指标                    数据源                                       回溯范围
 ======================  ==========================================  ==================
-DR007 偏离              akshare repo_rate_hist（FDR007）             逐月回溯（默认 24 个月）
-R001 − DR001            akshare repo_rate_hist（FR001/FDR001）      逐月回溯（默认 24 个月）
+DR001 偏离              akshare interest_rate_repo_hist_cm（FDR001） 逐月回溯（默认 24 个月）
+R001 − DR001            akshare interest_rate_repo_hist_cm（FR001/FDR001） 逐月回溯（默认 24 个月）
 制造业 PMI              akshare macro_china_pmi                      全量（默认取近 60 期）
 PPI 同比                akshare macro_china_ppi                      全量（默认取近 60 期）
-M1 / M2 同比            akshare macro_china_money_supply             全量（默认取近 60 期）
+M1 / M2 同比            akshare macro_china_money_supply_em          全量（默认取近 60 期）
 社融存量同比            央行《金融统计数据报告》逐期解析               栏目可列出的最近 13 期
 ======================  ==========================================  ==================
 
 两处需要注意的口径问题：
 
-1. **DR007 偏离的锚随时间变化**：7 天期逆回购操作利率是政策利率，历史上多次调整，
+1. **DR001 偏离的锚随时间变化**：7 天期逆回购操作利率是政策利率，历史上多次调整，
    直接用当前 1.40% 去算几年前的数据会整体偏移。故按 POLICY_RATE_STEPS 取「当日
    生效的政策利率」作为锚。
-2. **repo_rate_hist 单次查询区间不能超过一个月**，因此按自然月逐段请求再拼接。
+2. **回购定盘利率单次查询区间不能超过一个月**，因此按自然月逐段请求再拼接。
 
 本模块只负责「产出记录」，落库由 crud.bulk_upsert_macro_history 完成；
 任一段抓取失败只跳过该段，不影响其余数据。
@@ -122,20 +122,21 @@ def _rec(as_of: str, value: float, source: str, detail: Optional[dict] = None) -
 
 
 def series_repo_daily(months: int = 24) -> Dict[str, List[Dict[str, Any]]]:
-    """逐月回溯 DR007 偏离与 R001 − DR001（日度）。
+    """逐月回溯 DR001 偏离与 R001 − DR001（日度）。
 
-    返回 {"dr007_spread": [...], "r001_dr001": [...]}，按时间正序。
+    返回 {"dr001_spread": [...], "r001_dr001": [...]}，按时间正序。
     某个月请求失败只跳过该月。
     """
     ak = _import_akshare()
     if ak is None:
         raise RuntimeError("当前运行环境未安装 akshare，无法回溯历史")
 
-    out: Dict[str, List[Dict[str, Any]]] = {"dr007_spread": [], "r001_dr001": []}
+    out: Dict[str, List[Dict[str, Any]]] = {"dr001_spread": [], "r001_dr001": []}
     ok_months = 0
     for start, end in _month_windows(months):
         try:
-            df = ak.repo_rate_hist(start_date=start, end_date=end)
+            fn = getattr(ak, "interest_rate_repo_hist_cm", None) or ak.repo_rate_hist
+            df = fn(start_date=start, end_date=end)
         except Exception as exc:
             logger.warning("回购利率回溯失败 %s~%s: %s", start, end, exc)
             continue
@@ -144,16 +145,15 @@ def series_repo_daily(months: int = 24) -> Dict[str, List[Dict[str, Any]]]:
         ok_months += 1
         for _, row in df.dropna(subset=["date"]).iterrows():
             day = str(row["date"])[:10]
-            fdr007 = _num(row.get("FDR007"))
             fdr001 = _num(row.get("FDR001"))
             fr001 = _num(row.get("FR001"))
 
-            if fdr007 is not None:
+            if fdr001 is not None:
                 anchor = policy_rate_on(day)
-                rec = _rec(day, round((fdr007 - anchor) * 100, 1), "akshare",
-                           {"DR007": fdr007, "逆回购利率": anchor})
-                rec["key"] = "dr007_spread"
-                out["dr007_spread"].append(rec)
+                rec = _rec(day, round((fdr001 - anchor) * 100, 1), "akshare",
+                           {"DR001": fdr001, "逆回购利率": anchor})
+                rec["key"] = "dr001_spread"
+                out["dr001_spread"].append(rec)
 
             if fdr001 is not None and fr001 is not None:
                 rec = _rec(day, round((fr001 - fdr001) * 100, 1), "akshare",
@@ -161,8 +161,8 @@ def series_repo_daily(months: int = 24) -> Dict[str, List[Dict[str, Any]]]:
                 rec["key"] = "r001_dr001"
                 out["r001_dr001"].append(rec)
 
-    logger.info("回购利率回溯完成: %d/%d 个月有数据, DR007 偏离 %d 条, R001−DR001 %d 条",
-                ok_months, months, len(out["dr007_spread"]), len(out["r001_dr001"]))
+    logger.info("回购利率回溯完成: %d/%d 个月有数据, DR001 偏离 %d 条, R001−DR001 %d 条",
+                ok_months, months, len(out["dr001_spread"]), len(out["r001_dr001"]))
     return out
 
 
@@ -317,66 +317,12 @@ def series_tsf(limit: int = 13) -> List[Dict[str, Any]]:
     return deduped
 
 
-# ---------------------------------------------------------------- 季度：央行超储率
-
-
-def series_excess_reserve(limit: int = 20) -> List[Dict[str, Any]]:
-    """逐期解析央行《货币政策执行报告》PDF，回溯季末金融机构超额准备金率。
-
-    超储率只在季报正文里以文字给出，每期要下载一份 1~4MB 的 PDF（约 5~10 秒），
-    所以 limit 控制回溯的季度数（20 期≈5 年，约 2 分钟），不适合每天全量跑。
-    单期解析失败只跳过该期，不影响其余——早年报告的排版差异会体现在这里。
-    """
-    from app.utils import pbc_data
-
-    html = pbc_data._get(pbc_data.COL_MPR).text
-    links = pbc_data._recent_links(
-        html, "中国货币政策执行报告", limit=max(12, limit + 10)
-    )
-    quarters = [(t, h) for t, h in links if "季度" in t][: max(1, limit)]
-    if not quarters:
-        raise RuntimeError("《货币政策执行报告》栏目未解析到季度条目")
-
-    rows: List[Dict[str, Any]] = []
-    for title, href in quarters:
-        as_of = pbc_data._quarter_end_iso(title)
-        if not as_of:
-            continue
-        try:
-            item = pbc_data.excess_reserve_from_report(title, href)
-        except Exception as exc:
-            logger.warning("超储率回溯：解析失败 %s: %s", title, exc)
-            continue
-        rows.append({
-            "key": "excess_reserve",
-            "value": item["value"],
-            "as_of": item.get("as_of") or as_of,
-            "source": "pbc",
-            "detail": item.get("detail") or {},
-        })
-
-    # rows 已按栏目顺序（新 → 旧），同一季度若出现多条则保留更靠前＝更新的那条
-    seen = set()
-    deduped: List[Dict[str, Any]] = []
-    for rec in rows:
-        if rec["as_of"] in seen:
-            continue
-        seen.add(rec["as_of"])
-        deduped.append(rec)
-    deduped.sort(key=lambda rec: rec["as_of"])
-    logger.info("超储率回溯完成: %d 期", len(deduped))
-    return deduped
-
-
 # ---------------------------------------------------------------- 汇总
 
 
 def backfill_all(months_daily: int = 24, months_monthly: int = 60,
-                 tsf_limit: int = 13, er_limit: int = 0) -> Dict[str, Any]:
-    """执行全量回溯，返回 {series: {key: [...]}, counts, errors, anchor_steps}。
-
-    er_limit > 0 时额外回溯超储率（每期一份央行季报 PDF，较慢），默认 0 跳过。
-    """
+                 tsf_limit: int = 13) -> Dict[str, Any]:
+    """执行全量回溯，返回 {series: {key: [...]}, counts, errors, anchor_steps}。"""
     series: Dict[str, List[Dict[str, Any]]] = {}
     errors: Dict[str, str] = {}
 
@@ -395,14 +341,6 @@ def backfill_all(months_daily: int = 24, months_monthly: int = 60,
     except Exception as exc:
         errors["tsf_yoy"] = str(exc)
         logger.error("回溯失败 [tsf_yoy]: %s", exc)
-
-    # 超储率要逐份下载央行季报 PDF，较慢：由调用方按需开启（er_limit=0 即跳过）
-    if er_limit and er_limit > 0:
-        try:
-            series["excess_reserve"] = series_excess_reserve(er_limit)
-        except Exception as exc:
-            errors["excess_reserve"] = str(exc)
-            logger.error("回溯失败 [excess_reserve]: %s", exc)
 
     counts = {k: len(v) for k, v in series.items()}
     return {"series": series, "counts": counts, "errors": errors,

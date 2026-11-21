@@ -1,4 +1,4 @@
-"""宏观盯盘清单接口（三个维度 / 9 项指标）。
+"""宏观盯盘清单接口（三个维度 / 10 项指标）。
 
 - GET  /api/macro           读取当前指标与组合解读（**只读库，不再自行抓取**）
 - POST /api/macro/refresh   强制重新抓取全部指标（页面「刷新数据」按钮走这里）
@@ -6,10 +6,10 @@
 - GET  /api/macro/series    读取「三组一定位」图表面板所需的历史序列
 - POST /api/macro/backfill  一次性回溯补齐历史数据（让趋势图有数据可画）
 
-三个维度（每维 3 项），全部自动获取、无手工录入：
-- ① 资金面      akshare：DR007 偏离、R001−DR001；央行：超储率
-- ② 经济热度    akshare：PMI、PPI；央行：社融存量同比
-- ③ 部门结构    akshare：M1−M2；央行《金融统计数据报告》：住户存款/贷款、非银存款
+三个维度（共 10 项），全部自动获取、无手工录入：
+- ① 资金面      akshare：DR001 偏离、R001−DR001；货币网：1Y AAA 同业存单
+- ② 经济热度    akshare：PMI、PPI、M1−M2；央行：社融存量同比
+- ③ 信用 / 部门 央行《金融统计数据报告》：企业中长贷、住户中长贷、财政存款
 
 A股估值/情绪类读数不在本页，见「股票指标」页（/stock-temp）。
 
@@ -211,8 +211,8 @@ def get_macro_history(
 ):
     """查询市场指标历史读数（只增不改的历史表）。
 
-    - key   ：指标键；不传则返回全部指标的历史（如 dr007_spread / excess_reserve /
-              r001_dr001 / pmi / tsf_yoy / m1_m2 / ppi_yoy / reverse_repo_rate）
+    - key   ：指标键；不传则返回全部指标的历史（如 dr001_spread / ncd_1y_aaa /
+              corp_ml_yoy / household_ml_yoy / fiscal_deposit_mom / pmi / tsf_yoy ...）
     - limit ：返回条数，1~2000，默认 200
     - order ：desc（默认，最新在前）/ asc
     """
@@ -259,10 +259,10 @@ def get_macro_series(
 ):
     """返回「三组一定位」图表面板所需的全部历史序列。
 
-    - daily  ：日度序列（DR007 偏离、R001 − DR001），用于偏离度图与分层利差图
-    - monthly：月度序列（PMI、PPI、社融存量同比、M1/M2 同比、M1−M2 剪刀差），
+    - daily  ：日度序列（DR001 偏离、R001 − DR001），用于偏离度图与分层利差图
+    - monthly：月度序列（PMI、PPI、社融存量同比、M1/M2 同比、M1−M2 剪刀差、信用/部门三项），
                用于阈值带图、双线剪刀差图、归一化叠加与四象限轨迹
-    - anchor_steps：7 天逆回购操作利率的历史档位（回溯 DR007 偏离时的锚）
+    - anchor_steps：7 天逆回购操作利率的历史档位（回溯 DR001 偏离时的锚）
 
     序列一律按时间正序返回，元素为 {as_of, value, source}。
     """
