@@ -42,16 +42,10 @@ else:
     print("✅ 指数预警数据已存在,直接使用数据库缓存")
 
 init_all_notifiers(
-    nyt_url=settings.NYT_FEISHU_WEBHOOK_URL or "",
-    nyt_keyword=settings.NYT_FEISHU_KEYWORD,
-    bbc_url=settings.BBC_FEISHU_WEBHOOK_URL or "",
-    bbc_keyword=settings.BBC_FEISHU_KEYWORD,
     dfcf_url=settings.DFCF_FEISHU_WEBHOOK_URL or "",
     dfcf_keyword=settings.DFCF_FEISHU_KEYWORD,
     kb_url=settings.KB_FEISHU_WEBHOOK_URL or "",
     kb_keyword=settings.KB_KEYWORD,
-    openrouter_url=settings.OPENROUTER_FEISHU_WEBHOOK_URL or "",
-    openrouter_keyword=settings.OPENROUTER_KEYWORD,
     deepseek_url=settings.DEEPSEEK_FEISHU_WEBHOOK_URL or "",
     deepseek_keyword=settings.DEEPSEEK_KEYWORD,
     x_url=settings.X_FEISHU_WEBHOOK_URL or "",

@@ -11,9 +11,6 @@ from app.database import SessionLocal
 from app import crud, schemas
 from app.crawlers import (
     EastmoneyDepthCrawler,
-    # NYT / BBC 新闻抓取已停用（用户要求只保留东方财富接口抓取），保留导入便于恢复
-    # NYTDepthCrawler,
-    # BBCCrawler,
     NewsItem
 )
 # X 推文抓取已停用（用户要求），保留导入以便恢复
@@ -24,14 +21,10 @@ from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_
 from app.utils.hot_sector_refresh import fetch_and_store_hot_sector
 from app.utils.feishu_notifier import (
     dfcf_feishu_notify,
-    # NYT / BBC / OpenRouter 推送已停用，保留导入便于恢复
-    # nyt_feishu_notify, bbc_feishu_notify, openrouter_feishu_notify,
     doubao_feishu_notify, deepseek_feishu_notify,
     # x_feishu_status_notify  # X 推文抓取已停用
 )
 from app.utils.doubao_analyzer import init_doubao_analyzer, get_doubao_analyzer
-# OpenRouter 仅服务 NYT 新闻分析，NYT 抓取停用后一并停用
-# from app.utils.openrouter_analyzer import init_openrouter_analyzer, get_openrouter_analyzer
 from app.utils.deepseek_analyzer import init_deepseek_analyzer, get_deepseek_analyzer
 
 logger = logging.getLogger(__name__)
@@ -242,14 +235,6 @@ async def full_crawl():
         except Exception as e:
             logger.error(f"豆包分析器初始化失败: {e}", exc_info=True)
 
-    # OpenRouter 仅服务 NYT 新闻分析，NYT 抓取停用后不再初始化
-    # if settings.OPENROUTER_API_KEY:
-    #     try:
-    #         init_openrouter_analyzer(api_key=settings.OPENROUTER_API_KEY)
-    #         log_crawl("OpenRouter大模型分析器初始化完成")
-    #     except Exception as e:
-    #         logger.error(f"OpenRouter分析器初始化失败: {e}", exc_info=True)
-
     if settings.DEEPSEEK_API_KEY:
         try:
             init_deepseek_analyzer(
@@ -263,10 +248,9 @@ async def full_crawl():
             logger.error(f"DeepSeek分析器初始化失败: {e}", exc_info=True)
 
     doubao_analyzer = get_doubao_analyzer()
-    # openrouter_analyzer = get_openrouter_analyzer()
     deepseek_analyzer = get_deepseek_analyzer()
 
-    # 新闻源：只保留东方财富（接口抓取），NYT / BBC 及其浏览器抓取已停用
+    # 新闻源：仅东方财富（接口抓取）
     news_sources = [EastmoneyDepthCrawler]
     sem = asyncio.Semaphore(CONCURRENT_CRAWLERS)
 
@@ -284,7 +268,7 @@ async def full_crawl():
         source_results[cls_name] = (count, news)
         total_saved += count
 
-    async def _analyze_and_notify(news_list, analyzer, notifier_func, label, model_name=""):
+    async def _analyze_and_notify(news_list, analyzer, notifier_func, label):
         nonlocal total_analyzed
         if not news_list or not analyzer:
             return
@@ -296,10 +280,7 @@ async def full_crawl():
             try:
                 result = await analyzer.analyze_only(title, summary, source)
                 if result:
-                    if model_name:
-                        await notifier_func(title, result, source, model_name)
-                    else:
-                        await notifier_func(title, result, source)
+                    await notifier_func(title, result, source)
                     log_crawl(f"[{label}] 分析并推送成功")
                     total_analyzed += 1
                 else:
@@ -318,24 +299,6 @@ async def full_crawl():
         await _analyze_and_notify(dfcf_news, doubao_analyzer, doubao_feishu_notify, "豆包")
     else:
         log_crawl("东方财富没有新新闻")
-
-    # ---- NYT / BBC 新闻抓取已停用（用户要求只保留东方财富接口抓取） ----
-    # nyt_count, nyt_news = source_results.get("NYTDepthCrawler", (0, []))
-    # if nyt_news:
-    #     await nyt_feishu_notify(nyt_news[:5], "纽约时报")
-    #     if openrouter_analyzer:
-    #         await _analyze_and_notify(
-    #             nyt_news, openrouter_analyzer, openrouter_feishu_notify,
-    #             "OpenRouter", openrouter_analyzer.last_used_model
-    #         )
-    # else:
-    #     log_crawl("纽约时报没有新新闻")
-    #
-    # bbc_count, bbc_news = source_results.get("BBCCrawler", (0, []))
-    # if bbc_news:
-    #     await bbc_feishu_notify(bbc_news[:5], "BBC")
-    # else:
-    #     log_crawl("BBC没有新新闻")
 
     # ---- X 推文抓取已停用（用户要求），保留原逻辑便于恢复 ----
     # log_crawl("=" * 50)

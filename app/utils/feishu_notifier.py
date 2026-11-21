@@ -386,25 +386,10 @@ async def _do_send(webhook_url: str, secret: str, keyword: str, content: str) ->
         return False
 
 
-_nyt_feishu_notifier: Optional[FeishuNotifier] = None
-_bbc_feishu_notifier: Optional[FeishuNotifier] = None
 _dfcf_feishu_notifier: Optional[FeishuNotifier] = None
 _kb_feishu_notifier: Optional[FeishuNotifier] = None
-_openrouter_feishu_notifier: Optional[FeishuNotifier] = None
 _deepseek_feishu_notifier: Optional[FeishuNotifier] = None
 _x_feishu_notifier: Optional[FeishuNotifier] = None
-
-
-def init_nyt_feishu_notifier(webhook_url: str, secret: str, keyword: str = "HOT"):
-    global _nyt_feishu_notifier
-    _nyt_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"纽约时报飞书推送已初始化，关键词: '{keyword}'")
-
-
-def init_bbc_feishu_notifier(webhook_url: str, secret: str, keyword: str = "HOT"):
-    global _bbc_feishu_notifier
-    _bbc_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"BBC飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_dfcf_feishu_notifier(webhook_url: str, secret: str, keyword: str = "头条"):
@@ -417,12 +402,6 @@ def init_kb_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"
     global _kb_feishu_notifier
     _kb_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
     logger.info(f"豆包分析飞书推送已初始化，关键词: '{keyword}'")
-
-
-def init_openrouter_feishu_notifier(webhook_url: str, secret: str, keyword: str = "Talk"):
-    global _openrouter_feishu_notifier
-    _openrouter_feishu_notifier = FeishuNotifier(webhook_url, secret, keyword)
-    logger.info(f"OpenRouter分析飞书推送已初始化，关键词: '{keyword}'")
 
 
 def init_deepseek_feishu_notifier(webhook_url: str, secret: str, keyword: str = "深度分析"):
@@ -438,43 +417,23 @@ def init_x_feishu_notifier(webhook_url: str, secret: str, keyword: str = "X推�
 
 
 def init_all_notifiers(
-    nyt_url: str = "",
-    nyt_keyword: str = "HOT",
-    bbc_url: str = "",
-    bbc_keyword: str = "HOT",
     dfcf_url: str = "",
     dfcf_keyword: str = "头条",
     kb_url: str = "",
     kb_keyword: str = "Talk",
-    openrouter_url: str = "",
-    openrouter_keyword: str = "Talk",
     deepseek_url: str = "",
     deepseek_keyword: str = "深度分析",
     x_url: str = "",
     x_keyword: str = "X推文",
 ):
-    if nyt_url:
-        init_nyt_feishu_notifier(nyt_url, "", nyt_keyword)
-    if bbc_url:
-        init_bbc_feishu_notifier(bbc_url, "", bbc_keyword)
     if dfcf_url:
         init_dfcf_feishu_notifier(dfcf_url, "", dfcf_keyword)
     if kb_url:
         init_kb_feishu_notifier(kb_url, "", kb_keyword)
-    if openrouter_url:
-        init_openrouter_feishu_notifier(openrouter_url, "", openrouter_keyword)
     if deepseek_url:
         init_deepseek_feishu_notifier(deepseek_url, "", deepseek_keyword)
     if x_url:
         init_x_feishu_notifier(x_url, "", x_keyword)
-
-
-def get_nyt_feishu_notifier() -> Optional[FeishuNotifier]:
-    return _nyt_feishu_notifier
-
-
-def get_bbc_feishu_notifier() -> Optional[FeishuNotifier]:
-    return _bbc_feishu_notifier
 
 
 def get_dfcf_feishu_notifier() -> Optional[FeishuNotifier]:
@@ -483,10 +442,6 @@ def get_dfcf_feishu_notifier() -> Optional[FeishuNotifier]:
 
 def get_kb_feishu_notifier() -> Optional[FeishuNotifier]:
     return _kb_feishu_notifier
-
-
-def get_openrouter_feishu_notifier() -> Optional[FeishuNotifier]:
-    return _openrouter_feishu_notifier
 
 
 def get_deepseek_feishu_notifier() -> Optional[FeishuNotifier]:
@@ -546,20 +501,6 @@ async def dfcf_feishu_notify(news_list: List[dict], source: str) -> bool:
     return False
 
 
-async def nyt_feishu_notify(news_list: List[dict], source: str) -> bool:
-    notifier = get_nyt_feishu_notifier()
-    if notifier:
-        return await notifier.send_news_notification(news_list, source)
-    return False
-
-
-async def bbc_feishu_notify(news_list: List[dict], source: str) -> bool:
-    notifier = get_bbc_feishu_notifier()
-    if notifier:
-        return await notifier.send_news_notification(news_list, source)
-    return False
-
-
 async def doubao_feishu_notify(news_title: str, analysis_result: str, source: str) -> bool:
     notifier = get_kb_feishu_notifier()
     if notifier:
@@ -571,26 +512,6 @@ async def doubao_feishu_notify(news_title: str, analysis_result: str, source: st
             "===== 分析结果 =====",
             analysis_result
         ]
-        content = "\n".join(content_lines)
-        return await notifier.send_message(content)
-    return False
-
-
-async def openrouter_feishu_notify(news_title: str, analysis_result: str, source: str, model: str = "") -> bool:
-    notifier = get_openrouter_feishu_notifier()
-    if notifier:
-        content_lines = [
-            f"【Talk】 新闻深度分析",
-            f"来源: {source}",
-            f"标题: {news_title}",
-        ]
-        if model:
-            content_lines.append(f"模型: {model}")
-        content_lines.extend([
-            "",
-            "===== 分析结果 =====",
-            analysis_result
-        ])
         content = "\n".join(content_lines)
         return await notifier.send_message(content)
     return False

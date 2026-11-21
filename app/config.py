@@ -41,19 +41,8 @@ class Settings:
     FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
     FEISHU_KEYWORD: str = os.getenv("FEISHU_KEYWORD", "头条")
 
-    NYT_API_KEY: str = os.getenv("NYT_API_KEY", "")
-    NYT_FEISHU_WEBHOOK_URL: str = os.getenv("NYT_FEISHU_WEBHOOK_URL", "")
-    NYT_FEISHU_KEYWORD: str = os.getenv("NYT_FEISHU_KEYWORD", "HOT")
-
-    BBC_FEISHU_WEBHOOK_URL: str = os.getenv("BBC_FEISHU_WEBHOOK_URL", "")
-    BBC_FEISHU_KEYWORD: str = os.getenv("BBC_FEISHU_KEYWORD", "HOT")
-
     DFCF_FEISHU_WEBHOOK_URL: str = os.getenv("DFCF_FEISHU_WEBHOOK_URL", "")
     DFCF_FEISHU_KEYWORD: str = os.getenv("DFCF_FEISHU_KEYWORD", "头条")
-
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-    OPENROUTER_FEISHU_WEBHOOK_URL: str = os.getenv("OPENROUTER_FEISHU_WEBHOOK_URL", "")
-    OPENROUTER_KEYWORD: str = os.getenv("OPENROUTER_KEYWORD", "Talk")
 
     KB_API_KEY: str = os.getenv("KB_API_KEY", "")
     KB_MODEL_ID: str = os.getenv("KB_MODEL_ID", "doubao-1-5-pro-256k-250115")
