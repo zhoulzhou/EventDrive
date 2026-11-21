@@ -1,150 +1,98 @@
-import asyncio
-from datetime import datetime
-from pathlib import Path
-import sys
-import re
 import logging
-sys.path.insert(0, str(Path(__file__).parent))
+import time
+from datetime import datetime
+from typing import Any, Dict, List
 
-from playwright.sync_api import sync_playwright
+import httpx
+
+from app.config import settings
 from app.crawlers.base import BaseCrawler, NewsItem
-from app.utils.anti_crawl import async_random_delay
 
 logger = logging.getLogger(__name__)
 
 
 class EastmoneyDepthCrawler(BaseCrawler):
+    """东方财富新闻爬虫（接口版）。
+
+    原实现用 Playwright 打开 finance.eastmoney.com/a/ccjdd.html 解析 DOM，
+    页面改版或反爬都会导致抓取失败。现改为直接请求东方财富新闻列表接口
+    np-listapi/comm/web/getNewsByColumns（column=350 财经导读），不再启动浏览器。
+    """
+
     source_name = "东方财富"
+    API_URL = "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns"
+    COLUMN = "350"  # 财经导读
 
-    def __init__(self):
-        super().__init__()
-        self.base_url = "https://finance.eastmoney.com"
+    async def fetch_news_list(self) -> List[Dict[str, Any]]:
+        params = {
+            "client": "web",
+            "biz": "web_news_col",
+            "column": self.COLUMN,
+            "order": "1",
+            "needInteractData": "0",
+            "page_index": "1",
+            "page_size": str(max(settings.NEWS_PER_SOURCE, 10)),
+            "req_trace": str(int(time.time() * 1000)),
+        }
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://finance.eastmoney.com/a/ccjdd.html",
+        }
 
-    def _fetch_sync(self):
-        news_list = []
-        logger.info(f"[东方财富] 开始抓取，URL: {self.base_url}/a/ccjdd.html")
+        logger.info(f"[东方财富] 请求新闻接口, column={self.COLUMN}, page_size={params['page_size']}")
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.get(self.API_URL, params=params, headers=headers)
+                resp.raise_for_status()
+                payload = resp.json()
+        except Exception as e:
+            self.error_message = f"请求东方财富新闻接口失败: {e}"
+            logger.error(f"[东方财富] {self.error_message}", exc_info=True)
+            return []
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-            )
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                locale="zh-CN"
-            )
-            page = context.new_page()
+        if str(payload.get("code")) != "1":
+            self.error_message = f"东方财富新闻接口返回异常: {payload.get('message')}"
+            logger.error(f"[东方财富] {self.error_message}")
+            return []
 
-            try:
-                logger.info(f"[东方财富] 正在访问页面...")
-                page.goto(f"{self.base_url}/a/ccjdd.html", wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(5000)
-                logger.info(f"[东方财富] 页面加载完成，当前URL: {page.url}")
+        items = (payload.get("data") or {}).get("list") or []
+        logger.info(f"[东方财富] 接口返回 {len(items)} 条新闻")
+        return [self._to_raw_news(item) for item in items if item.get("title")]
 
-                items = page.query_selector_all('#newsListContent > li')
-                logger.info(f"[东方财富] 找到 {len(items)} 个文章元素")
-
-                if len(items) == 0:
-                    logger.warning(f"[东方财富] 未找到任何文章元素，获取页面信息...")
-                    logger.info(f"[东方财富] 页面标题: {page.title()}")
-                    page_content = page.content()
-                    logger.info(f"[东方财富] 页面HTML前500字符: {page_content[:500]}")
-
-                seen_urls = set()
-                for idx, item in enumerate(items):
-                    try:
-                        title_elem = item.query_selector('p.title a')
-                        if not title_elem:
-                            logger.debug(f"[东方财富] 第{idx+1}个文章: 未找到标题元素")
-                            continue
-
-                        href = title_elem.get_attribute('href')
-                        if not href:
-                            logger.debug(f"[东方财富] 第{idx+1}个文章: 无href属性")
-                            continue
-                        if href in seen_urls:
-                            logger.debug(f"[东方财富] 第{idx+1}个文章: URL已存在，跳过")
-                            continue
-                        seen_urls.add(href)
-
-                        title = title_elem.inner_text()
-                        title = title.strip()
-
-                        if not title or title == "None" or len(title) < 5:
-                            logger.debug(f"[东方财富] 第{idx+1}个文章: 标题无效: '{title}'")
-                            continue
-
-                        time_elem = item.query_selector('p.time')
-                        publish_time_str = time_elem.inner_text() if time_elem else ""
-                        publish_time = self._parse_publish_time(publish_time_str)
-
-                        info_elem = item.query_selector('p.info')
-                        summary = info_elem.get_attribute('title') if info_elem else ""
-                        summary = summary.strip() if summary else ""
-
-                        logger.info(f"[东方财富] 第{idx+1}个文章: 标题='{title[:30]}...', URL={href}")
-                        news_list.append({
-                            "title": title,
-                            "url": href,
-                            "publish_time": publish_time,
-                            "summary": summary,
-                            "content": summary
-                        })
-
-                    except Exception as e:
-                        logger.error(f"[东方财富] 第{idx+1}个文章解析异常: {e}")
-                        continue
-
-                logger.info(f"[东方财富] 抓取完成，共获取 {len(news_list)} 条新闻")
-
-            except Exception as e:
-                self.error_message = f"获取东方财富新闻失败: {str(e)}"
-                logger.error(f"[东方财富] 页面访问异常: {e}")
-            finally:
-                browser.close()
-
-        return news_list
-
-    async def fetch_news_list(self):
-        return await asyncio.to_thread(self._fetch_sync)
+    def _to_raw_news(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        summary = (item.get("summary") or "").strip()
+        return {
+            "title": (item.get("title") or "").strip(),
+            "url": item.get("uniqueUrl") or item.get("url") or "",
+            "publish_time": self._parse_publish_time(item.get("showTime") or ""),
+            "summary": summary,
+            "content": summary,
+            "author": (item.get("mediaName") or "").strip() or None,
+        }
 
     def _parse_publish_time(self, time_str: str) -> datetime:
         try:
-            if not time_str:
-                return datetime.now()
-
-            time_str = time_str.strip()
-
-            match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})', time_str)
-            if match:
-                year, month, day, hour, minute = int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4)), int(match.group(5))
-                return datetime(year, month, day, hour, minute)
-
-            match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', time_str)
-            if match:
-                year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
-                return datetime(year, month, day)
-
-            return datetime.now()
-        except:
+            return datetime.strptime(time_str.strip(), "%Y-%m-%d %H:%M:%S")
+        except Exception:
             return datetime.now()
 
     def parse_news_item(self, raw_data):
         try:
             title = raw_data.get("title", "")
-            content = raw_data.get("content", raw_data.get("summary", ""))
-            url = raw_data.get("url", "")
-            publish_time = raw_data.get("publish_time", datetime.now())
-
             if not title:
                 return None
 
             return NewsItem(
                 title=title,
-                content=content,
+                content=raw_data.get("content", raw_data.get("summary", "")),
                 source=self.source_name,
-                publish_time=publish_time,
-                url=url,
+                publish_time=raw_data.get("publish_time", datetime.now()),
+                url=raw_data.get("url", ""),
+                author=raw_data.get("author"),
                 summary=raw_data.get("summary"),
                 image_url=None
             )
@@ -152,34 +100,5 @@ class EastmoneyDepthCrawler(BaseCrawler):
             self.error_message = f"解析失败: {str(e)}"
             return None
 
-    def is_within_time_range(self, publish_time: datetime) -> bool:
-        return True
-
     async def fetch_news_detail(self, url: str) -> dict:
         return {}
-
-    async def crawl(self):
-        self.start_time = asyncio.get_event_loop().time()
-        self.news_list = []
-        self.error_message = None
-
-        try:
-            logger.info(f"[东方财富] 调用 fetch_news_list()...")
-            raw_news_list = await self.fetch_news_list()
-            logger.info(f"[东方财富] fetch_news_list() 返回 {len(raw_news_list)} 条")
-
-            for raw_news in raw_news_list[:10]:
-                news_item = self.parse_news_item(raw_news)
-
-                if news_item:
-                    self.news_list.append(news_item)
-                    await async_random_delay(min_delay=1, max_delay=2)
-
-                    if len(self.news_list) >= 10:
-                        break
-
-        except Exception as e:
-            self.error_message = str(e)
-            logger.error(f"[东方财富] crawl() 异常: {e}", exc_info=True)
-
-        return self.news_list
