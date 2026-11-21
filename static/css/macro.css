@@ -224,6 +224,7 @@
 .mp-liq { background: linear-gradient(165deg, rgba(139,200,234,0.16), rgba(139,200,234,0.04)); }
 .mp-credit { background: linear-gradient(165deg, rgba(228,212,143,0.20), rgba(228,212,143,0.04)); }
 .mp-heat { background: linear-gradient(165deg, rgba(244,179,147,0.18), rgba(244,179,147,0.04)); }
+.mp-dept { background: linear-gradient(165deg, rgba(157,123,255,0.16), rgba(157,123,255,0.04)); }
 .mp-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; margin-bottom: 0.55rem; }
 .mp-card-name { font-size: 0.95rem; font-weight: 600; color: #333; }
 .mp-card-freq { font-size: 0.72rem; color: #6b7280; }

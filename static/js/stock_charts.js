@@ -304,6 +304,68 @@ function drawTemp(tp) {
     if (el) el.textContent = tp.note || "";
 }
 
+/* ---------------- 贪婪指数 与 市场宽度 ---------------- */
+const GREED_BANDS = [
+    { lo: 0, hi: 10, name: "极端恐慌", color: "#5B8FC7" },
+    { lo: 10, hi: 30, name: "恐慌", color: "#8BC8EA" },
+    { lo: 30, hi: 70, name: "中性", color: "#E4D48F" },
+    { lo: 70, hi: 90, name: "贪婪", color: "#F4B393" },
+    { lo: 90, hi: 100, name: "极端贪婪", color: "#EA6668" }
+];
+
+function drawGreed(bag) {
+    const rows = pts(bag.greed);
+    if (rows.length < 2) {
+        return chartEmpty("stGreed", "暂无贪婪指数历史（每日收盘后打卡），累积 2 个交易日以上再画");
+    }
+    const cats = rows.map(function (p) { return p[0]; });
+    mount("stGreed", {
+        grid: baseGrid(),
+        legend: legend(["市场贪婪指数"]),
+        tooltip: tipAxis(""),
+        xAxis: xAxis(cats),
+        yAxis: Object.assign(yAxis("0-100"), { min: 0, max: 100 }),
+        series: [lineSeries("市场贪婪指数", rows, CH.red, {
+            markArea: {
+                silent: true,
+                data: GREED_BANDS.map(function (z) {
+                    return [
+                        {
+                            yAxis: z.lo,
+                            itemStyle: { color: withAlpha(z.color, 0.16) },
+                            label: {
+                                show: true, position: "insideTopLeft", color: CH.slate,
+                                fontSize: 10, formatter: z.name
+                            }
+                        },
+                        { yAxis: z.hi }
+                    ];
+                })
+            },
+            markLine: thresholdLines([[90, "90 泡沫", CH.red], [70, "70", CH.orange],
+                [30, "30", CH.lime], [10, "10", CH.blue]], true),
+            markPoint: lastMark("市场贪婪指数", rows, CH.red, 1, "")
+        })]
+    });
+}
+
+function drawBreadth(bag) {
+    const rows = pts(bag.breadth);
+    if (!rows.length) return chartEmpty("stBreadth", "暂无市场宽度历史，需按日累积");
+    mount("stBreadth", {
+        grid: baseGrid(),
+        legend: legend(["市场宽度"]),
+        tooltip: tipAxis("%"),
+        xAxis: xAxis(rows.map(function (p) { return p[0]; })),
+        yAxis: Object.assign(yAxis("%"), { min: 0, max: 100 }),
+        series: [lineSeries("市场宽度", rows, CH.cyan, {
+            areaStyle: { color: withAlpha(CH.cyan, 0.12) },
+            markLine: thresholdLines([[80, "80% 普涨", CH.red], [50, "50%", CH.slate], [20, "20% 极冷", CH.blue]], true),
+            markPoint: lastMark("市场宽度", rows, CH.cyan, 2, "%")
+        })]
+    });
+}
+
 /* ---------------- 面板骨架（顺序即页面顺序） ---------------- */
 function fig(title, note, id) {
     return "<div class=\"st-fig\"><div class=\"st-fig-head\"><span class=\"st-fig-title\">" + escapeHtml(title)
@@ -313,31 +375,24 @@ function fig(title, note, id) {
 
 function panelHtml() {
     return "<section class=\"st-panel\">"
-        + "<h2 class=\"st-group-title\">趋势面板<span class=\"st-group-sub\">阈值线已内置，落在哪条泳道直接读；缺数据的图层自动断线</span></h2>"
-        + "<div class=\"st-fig-block st-f-valuation\">"
-        + "<div class=\"st-fig-block-head\">估值层 · 慢变量定方向</div>"
-        + fig("沪深300 PE-TTM 与 PB（双轴）", "月频；分位带与当前值标在图上", "stPE")
-        + fig("ERP 股债性价比 = 1/PE − 10Y国债", "月频；均值 ±1σ 带，越高越便宜", "stERP")
-        + fig("破净率（全部A股）", "日频；10 / 6 / 3 / 1% 四条阈值线", "stBelowNa")
+        + "<h2 class=\"st-group-title\">趋势面板<span class=\"st-group-sub\">与股市热度页一一对应：贪婪指数 + 4 个主指标 + 2 个确认层指标</span></h2>"
+        + "<div class=\"st-fig-block st-f-temp\">"
+        + "<div class=\"st-fig-block-head\">贪婪指数 · 合成读数</div>"
+        + fig("市场贪婪指数（0-100）", "五档色带：0-10 / 10-30 / 30-70 / 70-90 / 90-100", "stGreed")
         + "</div>"
         + "<div class=\"st-fig-block st-f-sentiment\">"
-        + "<div class=\"st-fig-block-head\">情绪层 · 快变量定情绪</div>"
+        + "<div class=\"st-fig-block-head\">情绪层 · 88%（三项等权）</div>"
+        + fig("市场宽度（上涨占比）", "上涨家数 /（上涨 + 下跌）；20 / 50 / 80% 参考线", "stBreadth")
         + fig("两市成交额 与 全A换手率（双轴）", "成交额阈值 7000 / 12000 / 20000 / 30000 亿", "stTurnover")
-        + fig("两融余额（万亿）", "杠杆水位；占流通市值比例见指标卡", "stMargin")
         + "</div>"
-        + "<div class=\"st-fig-block st-f-capital\">"
-        + "<div class=\"st-fig-block-head\">资金层 · 资金变量定底气</div>"
-        + fig("公募仓位 与 新基金发行（双轴）", "股票型基金仓位（周）+ 权益类新成立基金募集（月）", "stFund")
-        + fig("产业资本净增持（滚动30日，亿元）", "红柱=净增持 · 绿柱=净减持（A 股涨红跌绿惯例）", "stCapital")
+        + "<div class=\"st-fig-block st-f-valuation\">"
+        + "<div class=\"st-fig-block-head\">估值层 · 12%</div>"
+        + fig("沪深300 PE-TTM 与 PB（双轴）", "PE-TTM 是贪婪指数的估值项，PB 用于交叉验证", "stPE")
         + "</div>"
         + "<div class=\"st-fig-block st-f-structure\">"
-        + "<div class=\"st-fig-block-head\">结构 · 热度在哪个市场</div>"
-        + fig("科创50 vs 创业板 · 价格分位差", "月度；±20 / ±40pp 分化阈值线", "stStruct")
-        + "</div>"
-        + "<div class=\"st-fig-block st-f-temp\">"
-        + "<div class=\"st-fig-block-head\">温度轨迹 · 重建口径</div>"
-        + fig("三层温度 与 综合温度", "逐点滚动分位；三层齐备才给综合温度", "stTemp")
-        + "<div class=\"st-temp-note\" id=\"stTempNote\"></div>"
+        + "<div class=\"st-fig-block-head\">确认层 · 不加权，只做极端区闸门</div>"
+        + fig("ERP 股债性价比 = 1/PE − 10Y国债", "越高越便宜；均值 ±1σ 带", "stERP")
+        + fig("破净率（全部A股）", "10 / 6 / 3 / 1% 四条阈值线", "stBelowNa")
         + "</div></section>";
 }
 
@@ -346,27 +401,24 @@ function trendNotesHtml() {
     return "<section class=\"st-notes\">"
         + "<h2 class=\"st-group-title\">走势图怎么看</h2>"
         + "<div class=\"st-notes-grid\">"
-        + "<div class=\"st-note\"><h3>一、图里的三层结构</h3>"
+        + "<div class=\"st-note\"><h3>一、与股市热度页一一对应</h3>"
         + "<ul>"
-        + "<li><b>阈值线已内置</b>：成交额 7000 亿地量 / 2 万亿亢奋 / 3 万亿极端、两融与 ERP 的均值 ±1σ、破净率 10 / 6 / 3 / 1%、"
-        + "公募仓位 88%、产业资本 ±100 / −400 亿、结构分化 ±20 / ±40pp。落在线哪一侧，直接读状态。</li>"
-        + "<li><b>末端数值标签</b>在每条线最右侧单独一列，是「最新一个数据点」的读数（不是当前快照，含日期差）。</li>"
-        + "<li><b>缺数据的图层自动断线</b>——某一层在早期没有数据，曲线就从有数据那天开始画，不做插补。</li>"
-        + "<li>红涨绿跌按 A 股惯例：温度计与状态热=红橙、冷=蓝绿；产业资本红柱=净增持、绿柱=净减持。</li>"
+        + "<li><b>贪婪指数</b>：0-100 合成读数，五档色带与热度页的状态标签一致。</li>"
+        + "<li><b>情绪层 88%</b>：市场宽度、全A换手率、两市成交额，三项等权各 1/3。</li>"
+        + "<li><b>估值层 12%</b>：沪深300 PE-TTM；PB 仅用于交叉验证，不参与加权。</li>"
+        + "<li><b>确认层</b>：ERP 与破净率，不加权，只用于深度恐慌 / 泡沫警示闸门。</li>"
         + "</ul></div>"
-        + "<div class=\"st-note\"><h3>二、先看背离，再看绝对水位</h3>"
+        + "<div class=\"st-note\"><h3>二、先看分位，再看绝对水位</h3>"
         + "<ul>"
-        + "<li>估值在低位（PE / PB 分位低、ERP 高、破净率高位）而<b>资金层抬头</b>（ETF 份额增、产业资本净增持）= 底部特征。</li>"
-        + "<li>情绪层冲高（成交额 2 万亿+、换手率抬升）而<b>资金层不动</b>（公募仓位不增、两融不涨）= 虚火。</li>"
-        + "<li>两层打架时用<b>温度轨迹</b>图看分离度：三条线张口越大，越不该用单一维度下结论。</li>"
+        + "<li>分位取<b>全部可用历史</b>，即当前读数在历史序列里的位置。</li>"
+        + "<li>成交额放大而宽度极低 = 放量杀跌，读数会高估真实情绪，以宽度为准。</li>"
+        + "<li>ERP 高位 + 破净率高位 = 冷 + 便宜；此时贪婪 &lt; 20 会触发深度恐慌闸门。</li>"
         + "</ul></div>"
         + "<div class=\"st-note\"><h3>三、数据口径</h3>"
         + "<ul>"
-        + "<li><b>分位窗口</b>：月频近 120 个月、周频近 520 周、日频近 2500 个交易日；样本不足 12 期不给分位。</li>"
-        + "<li><b>日频历史靠逐日抓取</b>：成交额 / 换手率 / 市场宽度 / ETF份额 的曲线长短取决于回填窗口，"
-        + "「补齐历史数据」默认回溯最近 60 个交易日（约需 5 分钟），需要更新或补更长时再点一次（本页与定时任务都不做历史回溯）。</li>"
-        + "<li><b>温度轨迹</b>按逐点滚动分位重建，分位样本不足的指标退回按读数档位打分；三层齐备的月份才给综合温度。</li>"
-        + "<li><b>结构分化</b>用「价格分位」而非 PE 分位（科创50 上市时间较短，估值序列覆盖不足十年）。</li>"
+        + "<li><b>贪婪指数</b>每日收盘后打卡一次，曲线从开始记录那天画起。</li>"
+        + "<li><b>市场宽度</b>数据源只提供当日快照，历史只能按日累积。</li>"
+        + "<li>成交额 / 换手率 / PE / ERP / 破净率可用「补齐历史数据」回溯。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
         + "</ul></div>"
         + "</div></section>";
@@ -375,13 +427,12 @@ function trendNotesHtml() {
 /* ---------------- 加载与绘制 ---------------- */
 function drawCharts(d) {
     const bag = d.series || {};
-    drawPE(bag); drawERP(bag); drawBelowNa(bag); drawTurnover(bag);
-    drawMargin(bag); drawFund(bag); drawCapital(bag); drawStruct(bag);
-    drawTemp(d.temperature || {});
+    drawGreed(bag); drawBreadth(bag); drawTurnover(bag);
+    drawPE(bag); drawERP(bag); drawBelowNa(bag);
     Object.keys(chartReg).forEach(function (k) { if (chartReg[k]) chartReg[k].resize(); });
 }
 
-const CHART_IDS = ["stPE", "stERP", "stBelowNa", "stTurnover", "stMargin", "stFund", "stCapital", "stStruct", "stTemp"];
+const CHART_IDS = ["stGreed", "stBreadth", "stTurnover", "stPE", "stERP", "stBelowNa"];
 
 async function loadSeries(force) {
     if (seriesCache && !force) { drawCharts(seriesCache); setTrendMeta(seriesCache, false); return; }

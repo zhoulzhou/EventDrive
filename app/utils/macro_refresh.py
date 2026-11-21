@@ -157,7 +157,6 @@ def backfill_history(
                 "months_daily": months_daily,
                 "months_monthly": months_monthly,
                 "tsf_limit": tsf_limit,
-                "er_limit": er_limit,
             },
         }
     finally:

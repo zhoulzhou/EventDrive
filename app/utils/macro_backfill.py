@@ -228,7 +228,8 @@ def series_monthly(months: int = 60) -> Dict[str, List[Dict[str, Any]]]:
 
     # M1 / M2 同比 + 剪刀差
     try:
-        df = ak.macro_china_money_supply()
+        fn = getattr(ak, "macro_china_money_supply_em", None) or ak.macro_china_money_supply
+        df = fn()
         for _, row in df.iterrows():
             m1 = _num(row.get("货币(M1)-同比增长"))
             m2 = _num(row.get("货币和准货币(M2)-同比增长"))
@@ -317,6 +318,37 @@ def series_tsf(limit: int = 13) -> List[Dict[str, Any]]:
     return deduped
 
 
+def series_credit_breakdown(months: int = 60) -> Dict[str, List[Dict[str, Any]]]:
+    """逐期解析央行《金融统计数据报告》，回溯部门结构三项（单位：亿元）。
+
+    与页面实时读数同一套口径：当月增量 = 相邻两期累计相减；同比多增 = 当月增量 − 去年同月增量。
+    同比需要去年同月的累计值，故抓取期数在 months 之外多留 12 个月。
+    """
+    from app.utils import pbc_data
+
+    rows = pbc_data.fetch_credit_series(periods=max(months + 12, 24))
+    out: Dict[str, List[Dict[str, Any]]] = {
+        "corp_ml_yoy": [], "household_ml_yoy": [], "fiscal_deposit_mom": [],
+    }
+    for rec in rows[-months:]:
+        for key in out:
+            value = rec.get(key)
+            if value is None:
+                continue
+            out[key].append({
+                "key": key,
+                "value": value,
+                "as_of": rec["as_of"],
+                "source": "pbc",
+                "detail": {"口径": "亿元；同比多增 = 当月增量 − 去年同月增量"},
+            })
+    logger.info(
+        "部门结构回溯完成: 企业 %d 期, 住户 %d 期, 财政存款 %d 期",
+        len(out["corp_ml_yoy"]), len(out["household_ml_yoy"]), len(out["fiscal_deposit_mom"]),
+    )
+    return out
+
+
 # ---------------------------------------------------------------- 汇总
 
 
@@ -341,6 +373,12 @@ def backfill_all(months_daily: int = 24, months_monthly: int = 60,
     except Exception as exc:
         errors["tsf_yoy"] = str(exc)
         logger.error("回溯失败 [tsf_yoy]: %s", exc)
+
+    try:
+        series.update(series_credit_breakdown(months_monthly))
+    except Exception as exc:
+        errors["credit_breakdown"] = str(exc)
+        logger.error("回溯失败 [部门结构]: %s", exc)
 
     counts = {k: len(v) for k, v in series.items()}
     return {"series": series, "counts": counts, "errors": errors,

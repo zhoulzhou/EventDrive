@@ -794,6 +794,32 @@ function drawQuadrant(bag) {
     mount("mpQuad", opt);
 }
 
+/* ---------------- ④ 部门结构：信贷流向 ---------------- */
+function drawDept(bag, key, id, color, label, unit, note) {
+    const rows = pick(bag, key);
+    if (rows.length < 2) { chartEmpty(id, note || "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    const dates = rows.map(function (r) { return r.as_of; });
+    const vals = rows.map(function (r) { return Number(r.value); });
+    const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    const pad = Math.max((hi - lo) * 0.18, Math.abs(hi) * 0.05, 10);
+    const last = vals[vals.length - 1];
+    mount(id, baseOption(dates, {
+        yName: unit,
+        yMin: Math.floor(lo - pad), yMax: Math.ceil(hi + pad),
+        series: [Object.assign(lineSeries(label, vals, color, { width: 2 }), {
+            areaStyle: { color: withAlpha(color, 0.12) },
+            markLine: {
+                silent: true, symbol: "none",
+                label: { color: CH.sub, fontSize: 10 },
+                lineStyle: { type: "dashed", color: CH.axis },
+                data: [{ yAxis: 0 }]
+            },
+            markPoint: marksFor(dates, vals, color, "最新 " + last.toFixed(0) + " " + unit,
+                function (tag, v) { return tag + " " + v.toFixed(0) + " " + unit; })
+        })]
+    }));
+}
+
 /* ---------------- 面板骨架与说明文字 ---------------- */
 function panelChart(title, note, id) {
     return '<div class="mp-fig">'
@@ -829,9 +855,14 @@ function panelHtml() {
             panelChart("主图 · 制造业 PMI", "折线 + 50 荣枯线 + 48/50/52 分档带", "mpPmi"),
             panelChart("辅图 · PPI 同比", "0 轴 + −3/−2/0/2/5% 分档带", "mpPpi")
         ], "PMI 上穿 50 且 PPI 连续回升 = 复苏确认")
+        + panelCard("mp-dept", "④ 部门结构", "月度 · 信贷流向", [
+            panelChart("主图 · 企业中长贷同比多增", "亿元；>0 = 同比多增（信用扩张向企业）", "mpCorpML"),
+            panelChart("辅图 · 住户中长贷同比多增", "亿元；居民按揭与中长贷需求", "mpHouseML"),
+            panelChart("辅图 · 财政性存款当月增量", "亿元；>0 = 财政资金回笼", "mpFiscal")
+        ], "企业多增 + 居民回升 = 信用扩张传导顺畅；财政存款大增 = 财政投放偏慢")
         + "</div>"
         + '<div class="mp-wide mp-quad">'
-        + panelChart("④ 全局定位 · 资金 × 热度 四象限", "月度快照，连成轨迹看迁徙", "mpQuad")
+        + panelChart("⑤ 全局定位 · 资金 × 热度 四象限", "月度快照，连成轨迹看迁徙", "mpQuad")
         + '<div class="mp-quad-side">'
         + '<div class="mp-quad-cycle">经典轮动：<b>复苏 → 过热 → 滞胀 → 流动性陷阱 → 复苏</b></div>'
         + "<ul>"
@@ -843,7 +874,7 @@ function panelHtml() {
         + '<div class="mp-quad-watch">观察哨：<b>PMI 上穿 50</b> 与 <b>社融存量同比企稳</b>——这两个是离开「流动性陷阱」进入复苏的必要条件。</div>'
         + "</div></div>"
         + '<div class="mp-wide">'
-        + panelChart("归一化叠加 · 跨量纲共振检测", "各指标滚动 12 月 z-score 同图；悬停可同时看到 z-score 与原始数值", "mpZscore")
+        + panelChart("⑥ 归一化叠加 · 跨量纲共振检测", "各指标滚动 12 月 z-score 同图；悬停可同时看到 z-score 与原始数值", "mpZscore")
         + '<div class="mp-znote">z-score =（当期值 − 滚动 12 月均值）／ 滚动 12 月标准差。'
         + "四条线同时抬头 = 全面回暖；相互背离 = 结构性矛盾。原始数值只在悬停提示里给出，避免同图量纲失真。</div>"
         + "</div>"
@@ -900,6 +931,11 @@ function drawCharts(d) {
     drawM1M2(bag);
     drawPmi(bag);
     drawPpi(bag);
+    drawDept(bag, "corp_ml_yoy", "mpCorpML", CH.red, "企业中长贷同比多增", "亿",
+        "同比多增需要去年同月的累计值，央行栏目仅保留近 14 期报告，历史暂不可回溯（实时读数正常）");
+    drawDept(bag, "household_ml_yoy", "mpHouseML", CH.amber, "住户中长贷同比多增", "亿",
+        "同比多增需要去年同月的累计值，央行栏目仅保留近 14 期报告，历史暂不可回溯（实时读数正常）");
+    drawDept(bag, "fiscal_deposit_mom", "mpFiscal", CH.green, "财政性存款当月增量", "亿");
     drawZScore(bag, 36);
     drawQuadrant(bag);
     Object.keys(chartReg).forEach(function (k) { chartReg[k].resize(); });
@@ -915,7 +951,7 @@ async function loadSeries(force) {
         drawCharts(d);
         setTrendMeta(d, false);
     } catch (error) {
-        ["mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi", "mpZscore", "mpQuad"].forEach(function (id) {
+        ["mpDr007", "mpR001", "mpER", "mpTsf", "mpM1M2", "mpPmi", "mpPpi", "mpCorpML", "mpHouseML", "mpFiscal", "mpZscore", "mpQuad"].forEach(function (id) {
             chartEmpty(id, "历史序列加载失败：" + error.message);
         });
         setTrendMeta(null, true);

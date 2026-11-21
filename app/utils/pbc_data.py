@@ -460,4 +460,57 @@ def fetch_credit_breakdown(periods: int = 16) -> Dict[str, Any]:
     }
 
 
+def fetch_credit_series(periods: int = 30) -> List[Dict[str, Any]]:
+    """回溯各报告期的分部门信贷读数（单位：亿元），供趋势图使用。
+
+    与 fetch_credit_breakdown 同一套解析与口径，但逐期返回：
+    {as_of, corp_ml_yoy, household_ml_yoy, fiscal_deposit_mom}。
+    同比多增需要「去年同月」的累计值，periods 太小时最早几期会缺同比，故默认取 30 期。
+    """
+    html = _get(COL_FIN_STAT).text
+    candidates = _recent_links(html, "金融统计数据报告", limit=max(periods + 8, 18))
+    if not candidates:
+        raise RuntimeError("《金融统计数据报告》栏目未解析到任何条目")
+
+    by_period: Dict[str, Dict[str, Any]] = {}
+    for title, href in candidates:
+        try:
+            flat = re.sub(r"\s+", "", _page_text(href))
+        except Exception:
+            continue
+        record = _parse_split_report(title, flat)
+        if record and record.get("as_of"):
+            by_period[record["as_of"]] = record
+
+    def _flow(period: Optional[str], field: str) -> Optional[float]:
+        """某期该字段的当月增量（亿元）。"""
+        if not period:
+            return None
+        rec = by_period.get(period)
+        if not rec or rec.get(field) is None:
+            return None
+        cum = float(rec[field])
+        prev_period = _month_before(period)
+        if prev_period is None:
+            return round(cum * 10000.0, 0)
+        prev = by_period.get(prev_period)
+        if not prev or prev.get(field) is None:
+            return None
+        return round((cum - float(prev[field])) * 10000.0, 0)
+
+    rows: List[Dict[str, Any]] = []
+    for period in sorted(by_period):
+        corp = _flow(period, "企业中长期贷款")
+        corp_ly = _flow(_same_month_last_year(period), "企业中长期贷款")
+        house = _flow(period, "住户中长期贷款")
+        house_ly = _flow(_same_month_last_year(period), "住户中长期贷款")
+        rows.append({
+            "as_of": period,
+            "corp_ml_yoy": None if corp is None or corp_ly is None else round(corp - corp_ly, 0),
+            "household_ml_yoy": None if house is None or house_ly is None else round(house - house_ly, 0),
+            "fiscal_deposit_mom": _flow(period, "财政性存款"),
+        })
+    return rows
+
+
 
