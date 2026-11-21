@@ -190,12 +190,7 @@ function anchorHtml(data) {
 }
 
 // 盯盘方法与取数口径说明（用户给定的方法论，随页面一起展示，勿删）
-const PLAYBOOK_CORE = [
-    { dim: "① 资金面", core: "DR001 对政策利率的偏离 + 1Y AAA 存单", freq: "每天", how: "偏离 ≤−5bp = 很松；+35bp 以上 = 真紧" },
-    { dim: "② 经济热度", core: "PMI + 社融 + PPI + M1−M2", freq: "每月", how: "PMI 上穿 50、社融回升到 8% 以上 = 回暖" },
-    { dim: "③ 信用 / 部门", core: "企业中长贷、住户中长贷同比多增", freq: "每月", how: "连续多增 + 财政存款回落 = 信用真正扩张" }
-];
-
+// 指标清单不再手写，直接由接口返回的分组生成，保证与上方卡片一一对应
 const PLAYBOOK_RULES = [
     { title: "频率对齐", body: "日度指标盯「异动」（偏离、跳空），月度指标盯「趋势」（连续两个月同向才算数）。频率混着看最容易自己骗自己。" },
     { title: "背离优先", body: "单指标别急着下结论，看跨维度背离 —— 例如「资金松 vs 信用紧」这种背离，才是最有信息量的时刻。" },
@@ -208,10 +203,21 @@ const PLAYBOOK_SOURCES = [
     { dim: "③ 信用 / 部门", src: "央行《金融统计数据报告》分部门存贷款：企业与住户中长期贷款（累计相减成当月增量后对比去年同月）、财政性存款" }
 ];
 
-function notesHtml() {
-    const coreRows = PLAYBOOK_CORE.map(function (r) {
-        return `<tr><td class="macro-tb-dim">${escapeHtml(r.dim)}</td><td><b>${escapeHtml(r.core)}</b></td>
-            <td class="macro-tb-freq">${escapeHtml(r.freq)}</td><td>${escapeHtml(r.how)}</td></tr>`;
+function notesHtml(data) {
+    const groups = (data && data.groups) || [];
+    const total = groups.reduce(function (n, g) { return n + (g.items || []).length; }, 0);
+    // 与上方卡片同源：维度 → 该维度下的全部指标，名称 / 频率 / 日期 / 状态逐项对应
+    const coreRows = groups.map(function (g) {
+        const items = g.items || [];
+        return items.map(function (item, i) {
+            const dimCell = i === 0
+                ? `<td class="macro-tb-dim" rowspan="${items.length}">${escapeHtml(g.title)}</td>`
+                : "";
+            return `<tr>${dimCell}<td><b>${escapeHtml(item.name)}</b></td>
+                <td class="macro-tb-freq">${escapeHtml(g.freq || "")}</td>
+                <td>${escapeHtml(item.as_of || "—")}</td>
+                <td>${escapeHtml(item.state || "—")}</td></tr>`;
+        }).join("");
     }).join("");
     const srcRows = PLAYBOOK_SOURCES.map(function (r) {
         return `<tr><td class="macro-tb-dim">${escapeHtml(r.dim)}</td><td>${escapeHtml(r.src)}</td></tr>`;
@@ -224,12 +230,12 @@ function notesHtml() {
         <h2 class="macro-notes-title">盯盘方法与口径说明</h2>
         <p class="macro-notes-lead">
             这套清单覆盖了从货币到实体的完整链路：<b>钱贵不贵（资金面）→ 经济跑不跑（热度）→ 钱在谁手里（部门结构）</b>。
-            每周花 10 分钟过一遍这 9 个数字，宏观方向就不会看错。
+            页面共 <b>${total}</b> 个数字，下方清单与上方卡片一一对应，每周花 10 分钟过一遍，宏观方向就不会看错。
         </p>
         <div class="macro-note macro-note-wide">
-            <h3>一、简化版：每个维度记住一个核心</h3>
+            <h3>一、指标清单（与上方卡片一致）</h3>
             <table class="macro-table">
-                <thead><tr><th>维度</th><th>必看核心</th><th>频率</th><th>看什么</th></tr></thead>
+                <thead><tr><th>维度</th><th>指标</th><th>频率</th><th>数据日期</th><th>状态</th></tr></thead>
                 <tbody>${coreRows}</tbody>
             </table>
         </div>
@@ -483,7 +489,7 @@ function render(data) {
         + thermoHtml(data)
         + (data.groups || []).map(groupHtml).join("")
         + anchorHtml(data)
-        + notesHtml();
+        + notesHtml(data);
     document.getElementById("macroRoot").innerHTML = html;
 }
 
