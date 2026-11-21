@@ -116,23 +116,28 @@ def _cn_ym_to_iso(text: str) -> Optional[str]:
     return "%s-%02d" % (m.group(1), int(m.group(2)))
 
 
-# ---------------------------------------------------------------- 7天逆回购利率
+# ---------------------------------------------------------------- 逆回购操作利率
 
 
-def _parse_7d_repo_rate(text: str) -> Optional[float]:
-    """从《公开市场业务交易公告》正文里解析 7 天期逆回购操作利率。
+# 逆回购期限：央行按流动性需要选择操作期限（近年以隔夜为主）
+_REPO_TERMS = ("隔夜", "7天", "14天", "28天")
 
-    页面表格渲染成 "…期限 操作 利率 投标量 中标量 7 天 1. 40 % 1650 亿元…"，
-    先去空白再匹配 `7天1.40%`。
+
+def _parse_repo_row(text: str) -> Optional[Tuple[str, float]]:
+    """从《公开市场业务交易公告》正文里解析逆回购操作期限与利率。
+
+    页面表格渲染成 "…期限 操作 利率 投标量 中标量 隔夜 1. 25 % 3795 亿元…"，
+    先去空白再匹配「期限 + 利率」。公告可能同时做多个期限，取表格中第一个。
     """
     flat = re.sub(r"\s+", "", text).replace("．", ".").replace("％", "%")
-    flat = re.sub(r"(\d)\.(\d)", r"\1.\2", flat)
     if "逆回购" not in flat:
         return None
-    m = re.search(r"7天(?:期)?[^0-9%]{0,24}?(\d+\.\d+)%", flat)
-    if not m:
-        m = re.search(r"7天(\d+\.\d+)%", flat)
-    return float(m.group(1)) if m else None
+    for term in _REPO_TERMS:
+        # 标题「隔夜逆回购操作情况」后面不带利率，正则会自动跳到表格中的操作行
+        m = re.search(r"%s(?:期)?[^0-9%%]{0,16}?(\d+\.\d+)%%" % term, flat)
+        if m:
+            return term, float(m.group(1))
+    return None
 
 
 def _announce_date(text: str) -> Optional[str]:
@@ -141,10 +146,10 @@ def _announce_date(text: str) -> Optional[str]:
 
 
 def fetch_reverse_repo_rate() -> Dict[str, Any]:
-    """抓取 7 天期逆回购操作利率（取最近公告中最新一条含 7 天操作的）。
+    """抓取最近一期公开市场逆回购操作利率（政策利率锚，期限随公告变化）。
 
-    并非每个交易日的公告都含 7 天期操作（可能只做隔夜、买断式或国债买卖），
-    因此向前回溯若干条公告，取最新一条能解析出 7 天期利率的。
+    期限可能是隔夜、7 天、14 天等，按公告实际披露返回；向前回溯若干条公告，
+    取最新一条能解析出「期限 + 利率」的。
     """
     html = _get(COL_OMO).text
     candidates = _recent_links(html, "公开市场业务交易公告", limit=12)
@@ -158,19 +163,22 @@ def fetch_reverse_repo_rate() -> Dict[str, Any]:
         except Exception as exc:
             last_error = exc
             continue
-        rate = _parse_7d_repo_rate(text)
-        if rate is None:
+        parsed = _parse_repo_row(text)
+        if parsed is None:
             continue
+        term, rate = parsed
         return {
             "value": rate,
             "as_of": _announce_date(text) or "",
+            "term": term,
             "detail": {
                 "公告": title,
+                "期限": term,
                 "来源": "中国人民银行公开市场业务交易公告",
                 "链接": href if href.startswith("http") else (_working_base or _BASE_CANDIDATES[0]) + href,
             },
         }
-    raise RuntimeError("最近公告中未找到 7 天期逆回购操作利率（%s）" % (last_error or "均无 7 天期操作"))
+    raise RuntimeError("最近公告中未找到逆回购操作利率（%s）" % (last_error or "均无可解析的操作行"))
 
 
 # ---------------------------------------------------------------- 社融存量同比

@@ -125,16 +125,19 @@ def _load_raw(db: Session) -> Dict[str, dict]:
 
 
 def _load_params(db: Session) -> Dict[str, dict]:
-    """读取 7 天逆回购利率锚（自动抓取自央行公告，只读展示）。"""
+    """读取逆回购操作利率锚（自动抓取自央行公告，只读展示）。"""
     meta = mi.PARAM_META[mi.PARAM_REVERSE_REPO]
     row = crud.get_macro_indicator(db, mi.PARAM_REVERSE_REPO)
     value = row.value if row is not None and row.value is not None else meta["default"]
     source = row.source if row is not None else "fallback"
     detail = mi.load_detail(row.detail) if row is not None else {}
+    # 期限随公告变化（隔夜 / 7 天等），有抓取结果时名称带上实际期限
+    term = detail.get("期限")
+    name = f"{term}逆回购操作利率（政策利率锚）" if term else meta["name"]
     return {
         mi.PARAM_REVERSE_REPO: {
             "key": mi.PARAM_REVERSE_REPO,
-            "name": meta["name"],
+            "name": name,
             "unit": meta["unit"],
             "digits": meta["digits"],
             "hint": meta["hint"],
