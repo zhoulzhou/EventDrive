@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import engine, Base, ensure_schema_compatibility
-from app.api import news, crawl, backup, login, market, index_alarm, finance, valuation, macro, stock_temp
+from app.api import news, crawl, backup, login, market, finance, valuation, macro, stock_temp
 from app.scheduler import start_scheduler, stop_scheduler, scheduler as sched_instance
 from app.api.login import is_logged_in
 
@@ -28,17 +28,6 @@ print("=" * 60)
 ensure_schema_compatibility(engine)
 Base.metadata.create_all(bind=engine)
 print("✅ 数据库表初始化完成")
-
-# 指数预警:CSV 更新后置 RELOAD_INDEX_DATA=1 强制重导;否则仅在表为空时导入一次,之后直接查库
-if settings.RELOAD_INDEX_DATA:
-    if index_alarm.reload_index_data():
-        print("✅ 指数预警 CSV 数据已强制重新导入数据库")
-    else:
-        print("❌ 指数预警 CSV 强制重导失败")
-elif index_alarm.ensure_index_data_loaded():
-    print("✅ 指数预警 CSV 数据已一次性导入数据库")
-else:
-    print("✅ 指数预警数据已存在,直接使用数据库缓存")
 
 
 @asynccontextmanager
@@ -77,7 +66,6 @@ app.include_router(crawl.router, prefix="/api", tags=["crawl"])
 app.include_router(backup.router, prefix="/api", tags=["backup"])
 app.include_router(login.router, prefix="/api", tags=["login"])
 app.include_router(market.router, prefix="/api", tags=["market"])
-app.include_router(index_alarm.router, prefix="/api", tags=["index-alarm"])
 app.include_router(finance.router, prefix="/api", tags=["finance"])
 app.include_router(valuation.router, prefix="/api", tags=["valuation"])
 app.include_router(macro.router, prefix="/api", tags=["macro"])
@@ -139,13 +127,6 @@ async def market_page(request: Request):
     return render_template("market.html", {"request": request})
 
 
-@app.get("/index-alarm")
-async def index_alarm_page(request: Request):
-    if not is_logged_in(request):
-        return RedirectResponse(url="/login")
-    return render_template("index_alarm.html", {"request": request})
-
-
 @app.get("/finance")
 async def finance_page(request: Request):
     if not is_logged_in(request):
@@ -195,7 +176,6 @@ _PAGE_LINKS = [
     ("/home", "首页"),
     ("/crawl", "抓取"),
     ("/market", "行情"),
-    ("/index-alarm", "指数预警"),
     ("/finance", "财务"),
     ("/valuation", "估值"),
     ("/macro", "宏观指标"),
