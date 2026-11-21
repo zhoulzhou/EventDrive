@@ -7,7 +7,6 @@
 {% endblock %}
 
 {% block content %}
-<div class="st-dark">
 <div class="page-header st-header">
     <div class="st-header-text">
         <h1>股市热度 · 市场贪婪指数</h1>
@@ -39,14 +38,11 @@
 <div class="st-crosslink">
     <a href="/stock-trend">历史曲线与走势图在这里：热度趋势 →</a>
 </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 /* ==================== 页面渲染：市场贪婪指数 0-100 ==================== */
-document.body.classList.add("st-dark-body");
-
 const LOCAL_TONES = {
     blue: "#3b82f6", cyan: "#06b6d4", green: "#22c55e", lime: "#84cc16",
     amber: "#f59e0b", orange: "#f97316", red: "#ef4444", violet: "#8b5cf6", slate: "#64748b"
@@ -143,7 +139,7 @@ function cardHtml(opt) {
 function componentCards(g) {
     return (g.components || []).map(function (c) {
         const score = num(c.score);
-        const color = score === null ? "#7C93AB" : (score >= 90 ? "#E5484D" : "#4CC2FF");
+        const color = score === null ? "#94a3b8" : (score >= 90 ? "#ef4444" : "#3b82f6");
         const cat = c.category === "valuation" ? "估值 12%" : "情绪 88%";
         const weight = (c.excluded || !c.weight_pct) ? "权重—" : "权重" + c.weight_pct.toFixed(1) + "%";
         const lines = [];
@@ -181,7 +177,7 @@ function confirmCards(g) {
         return cardHtml({
             name: c.name + "（确认层）", meta: "确认层 · 不加权 · 权重—",
             scoreText: pct === null ? "—" : "≈ " + pct.toFixed(1), unit: "/100 分位",
-            color: pct === null ? "#7C93AB" : "#9D7BFF", fill: pct, lines: lines
+            color: pct === null ? "#94a3b8" : "#8b5cf6", fill: pct, lines: lines
         });
     }).join("");
 }
