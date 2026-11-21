@@ -13,8 +13,6 @@ from app.crawlers import (
     EastmoneyDepthCrawler,
     NewsItem
 )
-# X 推文抓取已停用（用户要求），保留导入以便恢复
-# from app.crawlers.x_twitter import fetch_tweets
 from app.crawlers.market_data import refresh_market_data
 from app.utils.macro_refresh import refresh_snapshot
 from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_snapshot

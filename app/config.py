@@ -37,13 +37,6 @@ class Settings:
     DATA_DIR: Path = BASE_DIR / "data"
     LOGS_DIR: Path = BASE_DIR / "logs"
 
-    # X 推文抓取（已停用，保留配置以便恢复）
-    X_B_T: str = os.getenv("X_B_T", "")
-    X_MAX_RESULTS: int = _get_int("X_MAX_RESULTS", 5)
-    X_MONTH_MAX_LIMIT: int = _get_int("X_MONTH_MAX_LIMIT", 190)
-    X_DAY_MAX_LIMIT: int = _get_int("X_DAY_MAX_LIMIT", 6)
-    X_LIST_ID: str = os.getenv("X_LIST_ID", "")
-
     START_SCHEDULER: bool = _get_bool("START_SCHEDULER", False)
     # CSV 更新后置 1 可强制重导 index_history 表
     RELOAD_INDEX_DATA: bool = _get_bool("RELOAD_INDEX_DATA", False)

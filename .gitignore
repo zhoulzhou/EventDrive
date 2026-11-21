@@ -51,9 +51,6 @@ nohup.out
 
 # Runtime data
 data/images/
-data/x_twitter_quota.json
-data/x_twitter_state.json
-data/history_tweet_cache.json
 *.pid
 
 # Temporary files
