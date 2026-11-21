@@ -245,6 +245,7 @@
 .st-confirm-detail { font-size: 0.72rem; color: #94a3b8; margin-top: 0.2rem; line-height: 1.55; }
 .st-confirm-date { font-size: 0.7rem; color: #b0b7c3; margin-top: 0.35rem; }
 
+/* 分项与确认层改为深色卡片（.g-card），旧的表格 / 白卡样式已移除 */
 .st-gate-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.9rem; margin-top: 1rem; }
 .st-gate { border: 1px dashed #dbe2ec; border-radius: 10px; padding: 0.8rem 0.95rem; background: #fbfcfe; }
 .st-gate-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.25rem; }
@@ -268,4 +269,75 @@
     .st-notes-grid { grid-template-columns: 1fr; }
     .st-greed-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .st-greed-value { font-size: 2.4rem; }
+}
+
+/* ==================== 深色看板：股市热度页 ==================== */
+/* 配色取自设计稿：底 #0B1522 / 卡片 #101E30 / 描边 #1E3650 / 主文字 #D7E3F0
+   次文字 #7C93AB / 情绪蓝 #4CC2FF / 泡沫红 #E5484D / 确认层紫 #9D7BFF */
+body.st-dark-body { background: #0B1522; }
+body.st-dark-body .footer, body.st-dark-body .footer p { color: #7C93AB; }
+body.st-dark-body .loading, body.st-dark-body .error-state { color: #7C93AB; }
+
+.st-dark .page-header h1 { color: #D7E3F0; }
+.st-dark .form-hint { color: #7C93AB; }
+.st-dark .form-hint strong { color: #D7E3F0; }
+.st-dark .st-updated { color: #7C93AB; }
+.st-dark .st-crosslink a { color: #4CC2FF; }
+.st-dark .st-alert { background: #2A1D16; border: 1px solid #5C3A22; color: #F0B27A; }
+
+/* 顶部读数与一句话总结 */
+.st-dark .st-gauge-wrap { background: transparent; box-shadow: none; padding: 0 0 0.2rem; }
+.st-dark .st-greed-hero { background: #101E30 !important; border-color: #1E3650 !important; }
+.st-dark .st-greed-label, .st-dark .st-greed-denom { color: #7C93AB; }
+.st-dark .st-greed-sub { color: #7C93AB; }
+.st-dark .st-greed-legend-range { color: #D7E3F0; }
+.st-dark .st-greed-legend-state { color: #B9C7DA; }
+.st-dark .st-greed-legend-desc { color: #7C93AB; }
+.st-dark .st-summary { background: #101E30; border-color: #1E3650; }
+.st-dark .st-summary-title { color: #7C93AB; }
+.st-dark .st-summary-main, .st-dark .st-summary-read { color: #D7E3F0; }
+.st-dark .st-summary-read em { color: #FFFFFF; }
+.st-dark .st-greed-warn { background: #2A1D16; border-color: #5C3A22; color: #F0B27A; }
+
+/* 分项区 */
+.st-dark .st-overview, .st-dark .st-notes { background: transparent; box-shadow: none; padding: 0; }
+.st-dark .st-group-title { color: #D7E3F0; border-left: 0; padding-left: 0; font-size: 1.02rem; }
+.st-dark .st-group-sub { color: #7C93AB; }
+
+.g-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.85rem; }
+.g-card { background: #101E30; border: 1px solid #1E3650; border-radius: 10px; padding: 0.85rem 0.95rem 0.95rem; }
+.g-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.15rem 0.5rem; margin-bottom: 0.45rem; }
+.g-card-name { color: #D7E3F0; font-size: 0.92rem; font-weight: 700; white-space: nowrap; }
+.g-card-meta { color: #7C93AB; font-size: 0.68rem; white-space: nowrap; margin-left: auto; }
+.g-card-score { font-size: 1.85rem; font-weight: 800; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.g-card-denom { color: #7C93AB; font-size: 0.72rem; font-weight: 500; margin-left: 0.25rem; }
+.g-card-bar { height: 4px; border-radius: 2px; background: #0D1A2A; margin: 0.55rem 0 0.6rem; overflow: hidden; }
+.g-card-bar span { display: block; height: 100%; border-radius: 2px; }
+.g-card-line { color: #C9D6E5; font-size: 0.73rem; line-height: 1.7; }
+.g-muted { color: #7C93AB; }
+
+/* 确认层闸门 */
+.st-dark .st-gate { background: #101E30; border: 1px dashed #1E3650; }
+.st-dark .st-gate-name { color: #D7E3F0; }
+.st-dark .st-gate-state { background: #16273C; color: #7C93AB; }
+.st-dark .st-gate-rule { color: #7C93AB; }
+.st-dark .st-gate-text { color: #C9D6E5; }
+.st-dark .st-gate-on.cold { background: #0E2233; border-color: #2F6E9E; }
+.st-dark .st-gate-on.cold .st-gate-state { background: #4CC2FF; color: #08131F; }
+.st-dark .st-gate-on.hot { background: #2A1518; border-color: #7A2C31; }
+.st-dark .st-gate-on.hot .st-gate-state { background: #E5484D; color: #ffffff; }
+
+/* 口径说明 */
+.st-dark .st-note { background: #101E30; border-color: #1E3650; }
+.st-dark .st-note h3 { color: #D7E3F0; }
+.st-dark .st-note li { color: #AFC0D2; }
+.st-dark .st-note b { color: #D7E3F0; }
+.st-dark .st-note a { color: #4CC2FF; }
+
+@media (max-width: 900px) {
+    .g-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+    .g-grid { grid-template-columns: 1fr; }
+    .g-card-meta { white-space: normal; text-align: right; }
 }

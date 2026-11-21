@@ -1846,6 +1846,25 @@ def _pct_text(pct: Optional[float], n: int = 0) -> str:
     return "%.1f" % pct
 
 
+def _component_context(key: str, detail: dict) -> str:
+    """分项卡片里读数后面的一句上下文（涨跌家数、成交额环比），没有就留空。"""
+    if key == "breadth":
+        up, down, flat = detail.get("上涨家数"), detail.get("下跌家数"), detail.get("平盘")
+        if up is not None and down is not None:
+            text = "%s涨/%s跌" % (up, down)
+            if flat is not None:
+                text += "/%s平" % flat
+            return text
+    if key == "turnover_amt":
+        chg = detail.get("较前一日%")
+        if chg is not None:
+            try:
+                return "较前一日 %+.2f%%" % float(chg)
+            except (TypeError, ValueError):
+                return "较前一日 %s" % chg
+    return ""
+
+
 def build_greed(items: Dict[str, Dict[str, Any]],
                 series_map: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     """市场贪婪指数：情绪 ×88% + 估值 ×12%，分位统一取近 15 个交易日。
@@ -1876,6 +1895,7 @@ def build_greed(items: Dict[str, Dict[str, Any]],
             "weight_pct": round(weight * 100, 1),
             "value": value,
             "reading": _fmt_reading(item),
+            "context": _component_context(key, item.get("detail") or {}),
             "unit": item.get("unit") or "",
             "digits": item.get("digits", 1),
             "as_of": item.get("as_of") or "—",

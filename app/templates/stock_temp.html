@@ -7,6 +7,7 @@
 {% endblock %}
 
 {% block content %}
+<div class="st-dark">
 <div class="page-header st-header">
     <div class="st-header-text">
         <h1>股市热度 · 市场贪婪指数</h1>
@@ -38,11 +39,14 @@
 <div class="st-crosslink">
     <a href="/stock-trend">历史曲线与走势图在这里：热度趋势 →</a>
 </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 /* ==================== 页面渲染：市场贪婪指数 0-100 ==================== */
+document.body.classList.add("st-dark-body");
+
 const LOCAL_TONES = {
     blue: "#3b82f6", cyan: "#06b6d4", green: "#22c55e", lime: "#84cc16",
     amber: "#f59e0b", orange: "#f97316", red: "#ef4444", violet: "#8b5cf6", slate: "#64748b"
@@ -64,21 +68,16 @@ function pctText(p, n) {
     return Number(p).toFixed(1);
 }
 
-function scoreColor(score, zones) {
-    const s = num(score);
-    if (s === null) return "#9ca3af";
-    for (let i = 0; i < (zones || []).length; i++) {
-        const z = zones[i];
-        if (s >= z.lo && s < z.hi) return z.color;
-    }
-    return (zones && zones.length) ? zones[zones.length - 1].color : "#9ca3af";
+function fmtScore(score) {
+    if (score === null) return "—";
+    return Number.isInteger(score) ? String(score) : Number(score).toFixed(1);
 }
 
 /* ---------------- 顶部：读数 + 五档刻度 ---------------- */
 function heroHtml(g) {
     const v = num(g.value);
     const zones = g.zones || [];
-    const color = g.color || (v === null ? "#9ca3af" : scoreColor(v, zones));
+    const color = g.color || (v === null ? "#9ca3af" : "#4CC2FF");
     const marker = v === null ? "" :
         "<div class=\"st-gauge-marker\" style=\"left:" + Math.max(0, Math.min(100, v)) + "%\">"
         + "<div class=\"st-gauge-pin\"></div>"
@@ -126,78 +125,68 @@ function summaryHtml(g) {
         + warn + "</section>";
 }
 
-/* ---------------- 贪婪指数分项表 ---------------- */
-function componentRows(g) {
-    const zones = g.zones || [];
-    const list = g.components || [];
-    const groups = [
-        { key: "sentiment", title: "情绪", weight: "88%", note: "三项等权 · 各 1/3" },
-        { key: "valuation", title: "估值", weight: "12%", note: "沪深300 PE-TTM" }
-    ];
-    return groups.map(function (grp) {
-        const members = list.filter(function (c) { return c.category === grp.key; });
-        if (!members.length) return "";
-        let groupNote = grp.note;
-        if (grp.key === "sentiment" && g.sentiment && g.sentiment.covered < g.sentiment.total) {
-            groupNote = "市场宽度样本不足，按可用 " + g.sentiment.covered + " 项等权重算";
+/* ---------------- 贪婪指数分项：四列卡片 ---------------- */
+function cardHtml(opt) {
+    const fill = opt.fill === null || opt.fill === undefined ? 0 : Math.max(0, Math.min(100, opt.fill));
+    return "<div class=\"g-card\">"
+        + "<div class=\"g-card-head\"><span class=\"g-card-name\">" + escapeHtml(opt.name) + "</span>"
+        + "<span class=\"g-card-meta\">" + escapeHtml(opt.meta || "") + "</span></div>"
+        + "<div class=\"g-card-score\" style=\"color:" + opt.color + "\">" + opt.scoreText
+        + "<span class=\"g-card-denom\">" + escapeHtml(opt.unit) + "</span></div>"
+        + "<div class=\"g-card-bar\"><span style=\"width:" + fill + "%;background:" + opt.color + "\"></span></div>"
+        + (opt.lines || []).map(function (line) {
+            return "<div class=\"g-card-line\">" + line + "</div>";
+        }).join("")
+        + "</div>";
+}
+
+function componentCards(g) {
+    return (g.components || []).map(function (c) {
+        const score = num(c.score);
+        const color = score === null ? "#7C93AB" : (score >= 90 ? "#E5484D" : "#4CC2FF");
+        const cat = c.category === "valuation" ? "估值 12%" : "情绪 88%";
+        const weight = (c.excluded || !c.weight_pct) ? "权重—" : "权重" + c.weight_pct.toFixed(1) + "%";
+        const lines = [];
+        const context = c.context ? "（" + escapeHtml(c.context) + "）" : "";
+        lines.push("读数：" + escapeHtml(c.reading) + context);
+        if (score === null) {
+            lines.push("分位：" + escapeHtml(pctText(c.percentile, c.sample_n)));
+            lines.push("<span class=\"g-muted\">样本不足，不参与合成</span>");
+        } else {
+            lines.push("分位：" + score.toFixed(1) + "%（样本内分位 " + c.sample_n + "/" + (g.sample_days || 15) + "）");
+            lines.push("贪婪分 = 分位 " + score.toFixed(1) + " = " + score.toFixed(1)
+                + " · 贡献 " + score.toFixed(1) + "×" + c.weight_pct.toFixed(1) + "% = "
+                + Number(c.contribution).toFixed(2));
         }
-        let html = "<tr class=\"st-ov-start\"><td colspan=\"7\" class=\"st-greed-row-group\">"
-            + escapeHtml(grp.title) + " <span>" + grp.weight + " · " + escapeHtml(groupNote) + "</span></td></tr>";
-        html += members.map(function (c) {
-            const color = scoreColor(c.score, zones);
-            const score = num(c.score);
-            const bar = score === null ? "" :
-                "<div class=\"st-greed-bar\"><span style=\"width:" + Math.max(0, Math.min(100, score))
-                + "%;background:" + color + "\"></span></div>";
-            const sample = c.percentile === null || c.percentile === undefined
-                ? "<span class=\"st-ov-dash\">" + escapeHtml(pctText(c.percentile, c.sample_n)) + "</span>"
-                : "<b style=\"color:" + color + "\">" + Number(c.percentile).toFixed(1) + "</b>"
-                  + "<span class=\"st-greed-sample\">n=" + c.sample_n + "/15</span>";
-            const weight = c.excluded ? "<span class=\"st-ov-dash\">—</span>" : c.weight_pct.toFixed(1) + "%";
-            return "<tr>"
-                + "<td><div class=\"st-greed-comp-name\">" + escapeHtml(c.name) + "</div>"
-                + (c.detail_text ? "<div class=\"st-greed-comp-detail\">" + escapeHtml(c.detail_text) + "</div>" : "")
-                + "</td>"
-                + "<td class=\"st-greed-weight\">" + weight + "</td>"
-                + "<td class=\"st-ov-val\" style=\"color:" + color + "\">" + escapeHtml(c.reading) + "</td>"
-                + "<td>" + sample + "</td>"
-                + "<td class=\"st-greed-score-cell\"><span style=\"color:" + color + "\">"
-                + (score === null ? "—" : score.toFixed(1)) + "</span>" + bar + "</td>"
-                + "<td class=\"st-greed-contrib\">" + (num(c.contribution) === null ? "—" : Number(c.contribution).toFixed(2)) + "</td>"
-                + "<td class=\"st-ov-date\">" + escapeHtml(c.as_of || "—") + "</td></tr>";
-        }).join("");
-        return html;
+        return cardHtml({
+            name: c.name, meta: cat + " · " + weight,
+            scoreText: fmtScore(score), unit: "/100 贪婪分",
+            color: color, fill: score, lines: lines
+        });
+    }).join("");
+}
+
+function confirmCards(g) {
+    return (g.confirm || []).map(function (c) {
+        const pct = num(c.percentile);
+        const lines = [];
+        const side = pct === null
+            ? "样本不足 " + c.sample_n + " 期"
+            : "冷侧分位≈" + pct.toFixed(1);
+        lines.push("读数：" + escapeHtml(c.reading) + "（" + side + "）");
+        lines.push(pct === null
+            ? "分位：样本不足（" + c.sample_n + " 期）"
+            : "分位：" + pct.toFixed(1) + "%（全历史 · " + c.sample_n + " 期）");
+        lines.push("<span class=\"g-muted\">确认层不加权，只用于极端区闸门</span>");
+        return cardHtml({
+            name: c.name + "（确认层）", meta: "确认层 · 不加权 · 权重—",
+            scoreText: pct === null ? "—" : "≈ " + pct.toFixed(1), unit: "/100 分位",
+            color: pct === null ? "#7C93AB" : "#9D7BFF", fill: pct, lines: lines
+        });
     }).join("");
 }
 
 function componentsHtml(g) {
-    return "<section class=\"st-overview\">"
-        + "<h2 class=\"st-group-title\">贪婪指数分项<span class=\"st-group-sub\">"
-        + "4 个主指标加权合成（情绪 88% + 估值 12%）；分位与贪婪分都是近 15 个交易日样本内分位</span></h2>"
-        + "<div class=\"st-table-wrap\"><table class=\"st-table st-greed-table\">"
-        + "<thead><tr><th>分项</th><th>权重</th><th>当前读数</th><th>样本分位</th><th>贪婪分</th><th>贡献</th><th>数据日期</th></tr></thead>"
-        + "<tbody>" + componentRows(g) + "</tbody></table></div></section>";
-}
-
-/* ---------------- 确认层 + 闸门 ---------------- */
-function confirmHtml(g) {
-    const confirms = g.confirm || [];
-    const cards = confirms.map(function (c) {
-        const pct = num(c.percentile);
-        const color = pct === null ? "#9ca3af" : (pct >= 80 ? "#5B8FC7" : (pct <= 20 ? "#EA6668" : "#94a3b8"));
-        return "<div class=\"st-confirm-card\" style=\"border-top-color:" + color + "\">"
-            + "<div class=\"st-confirm-head\"><span class=\"st-confirm-name\">" + escapeHtml(c.name) + "</span>"
-            + "<span class=\"st-confirm-tag\">确认层 · 不加权</span></div>"
-            + "<div class=\"st-confirm-value\" style=\"color:" + color + "\">"
-            + (pct === null ? "—" : "≈ " + pct.toFixed(1)) + "<span>/100 分位</span></div>"
-            + "<div class=\"st-confirm-reading\">读数：" + escapeHtml(c.reading) + "（" + escapeHtml(c.side || "冷侧分位")
-            + "≈" + pctText(c.percentile, c.sample_n) + "）</div>"
-            + "<div class=\"st-confirm-window\">分位窗口：" + escapeHtml(c.window || "全历史") + "</div>"
-            + (c.detail_text ? "<div class=\"st-confirm-detail\">" + escapeHtml(c.detail_text) + "</div>" : "")
-            + "<div class=\"st-confirm-date\">数据日期 " + escapeHtml(c.as_of || "—") + "</div>"
-            + "</div>";
-    }).join("");
-
     const gates = g.gates || {};
     const gate = function (item, kind) {
         if (!item) return "";
@@ -209,13 +198,14 @@ function confirmHtml(g) {
             + "<div class=\"st-gate-text\">" + escapeHtml(item.text) + "</div></div>";
     };
 
-    return "<section class=\"st-overview\">"
-        + "<h2 class=\"st-group-title\">确认层与极端区闸门<span class=\"st-group-sub\">"
-        + "ERP / 破净率不参与加权，只在极端区确认「冷 + 便宜」或「热 + 贵」</span></h2>"
-        + "<div class=\"st-confirm-grid\">" + cards + "</div>"
+    return "<section class=\"st-overview st-greed-section\">"
+        + "<h2 class=\"st-group-title\">贪婪指数分项<span class=\"st-group-sub\">"
+        + "4 主指标加权合成（情绪 88% + 估值 12%），ERP / 破净率为确认层</span></h2>"
+        + "<div class=\"g-grid\">" + componentCards(g) + confirmCards(g) + "</div>"
         + "<div class=\"st-gate-row\">" + gate(gates.deep_fear, "cold") + gate(gates.bubble, "hot") + "</div>"
         + "</section>";
 }
+
 
 /* ---------------- 口径说明 ---------------- */
 function notesHtml(g) {
@@ -269,7 +259,6 @@ function render(data) {
     document.getElementById("stRoot").innerHTML = heroHtml(g)
         + summaryHtml(g)
         + componentsHtml(g)
-        + confirmHtml(g)
         + notesHtml(g);
 }
 
