@@ -21,8 +21,6 @@ class ValuationInput(BaseModel):
     base_profit: float  # 基期净利润（亿元）
     forecast_years: int  # 高增长期年限（年）
     growth_forecast: float  # 高增长期增长率（%）
-    transition_years: int  # 放缓期年限（年）
-    growth_transition: float  # 放缓期增长率（%）
     growth_perpetual: float  # 永续增长率（%）
     discount_rate: float  # 折现率（%）
     current_market_value: Optional[float] = None  # 当前市值（亿元），仅用于记录展示，不参与计算
@@ -35,7 +33,7 @@ class ValuationInput(BaseModel):
             raise ValueError("企业名称不能为空")
         return v
 
-    @field_validator("base_profit", "growth_forecast", "growth_transition", "growth_perpetual", "discount_rate")
+    @field_validator("base_profit", "growth_forecast", "growth_perpetual", "discount_rate")
     @classmethod
     def _valid_number(cls, v):
         return float(v)
@@ -48,27 +46,16 @@ class ValuationInput(BaseModel):
             raise ValueError("高增长期年限需大于 0")
         return v
 
-    @field_validator("transition_years")
-    @classmethod
-    def _valid_transition_years(cls, v):
-        v = int(v)
-        if v < 0:
-            raise ValueError("放缓期年限不能为负")
-        return v
-
 
 def _compute_valuation(input: ValuationInput) -> float:
-    """三阶段 DCF 估值：净利润替代 FCFF。
+    """两阶段 DCF 估值：净利润替代 FCFF。
 
-    高增长期（forecast_years 年，增速 growth_forecast）→ 放缓期（transition_years 年，
-    增速 growth_transition）→ 永续期（增速 growth_perpetual）。逐年预测净利润并折现加总，
-    终值为放缓期末净利润按永续增长率折现。
+    高增长期（forecast_years 年，增速 growth_forecast）→ 永续期（增速 growth_perpetual）。
+    逐年预测净利润并折现加总，终值为高增长期末净利润按永续增长率折现。
     """
     base_profit = input.base_profit
     high_years = input.forecast_years
-    transition_years = input.transition_years
     growth_high = input.growth_forecast / 100.0
-    growth_transition = input.growth_transition / 100.0
     growth_perpetual = input.growth_perpetual / 100.0
     discount_rate = input.discount_rate / 100.0
 
@@ -83,17 +70,10 @@ def _compute_valuation(input: ValuationInput) -> float:
         profit_year = base_profit * (1 + growth_high) ** year
         total_pv += profit_year / (1 + discount_rate) ** year
 
-    # 阶段二：放缓期，从高增长期末净利润起按 growth_transition 逐年增长
+    # 阶段二：永续期，以高增长期末净利润为基准按永续增长率折现
     profit_end_high = base_profit * (1 + growth_high) ** high_years
-    profit = profit_end_high
-    for year in range(1, transition_years + 1):
-        profit = profit_end_high * (1 + growth_transition) ** year
-        total_pv += profit / (1 + discount_rate) ** (high_years + year)
-
-    # 阶段三：永续期，以放缓期末净利润为基准按永续增长率折现
-    last_profit = profit
-    terminal_value = last_profit * (1 + growth_perpetual) / (discount_rate - growth_perpetual)
-    terminal_pv = terminal_value / (1 + discount_rate) ** (high_years + transition_years)
+    terminal_value = profit_end_high * (1 + growth_perpetual) / (discount_rate - growth_perpetual)
+    terminal_pv = terminal_value / (1 + discount_rate) ** high_years
     return total_pv + terminal_pv
 
 
@@ -113,8 +93,6 @@ async def calculate_valuation(
                 base_profit=round(input.base_profit, 2),
                 forecast_years=input.forecast_years,
                 growth_forecast=round(input.growth_forecast, 2),
-                transition_years=input.transition_years,
-                growth_transition=round(input.growth_transition, 2),
                 growth_perpetual=round(input.growth_perpetual, 2),
                 discount_rate=round(input.discount_rate, 2),
                 current_market_value=(
