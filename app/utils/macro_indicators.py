@@ -202,7 +202,7 @@ INDICATORS: List[Dict[str, Any]] = [
     },
     {
         "key": "m1_m2",
-        "group": GROUP_STRUCTURE,
+        "group": GROUP_HEAT,
         "name": "M1 − M2 剪刀差",
         "subtitle": "资金活化程度",
         "unit": "pp",
@@ -216,7 +216,7 @@ INDICATORS: List[Dict[str, Any]] = [
         "guide": (
             "剪刀差回升（负值收窄）= 资金活化、经济热度上行，通常领先于企业与权益市场"
             "预期改善；持续为负且扩大 = 资金淤积、需求偏弱。"
-            "本维度要和分部门存贷款一起读：钱的\"总量\"没变但换了口袋，也算结构变化。"
+            "本维度要和「部门结构」的分部门存贷款一起读：钱的\"总量\"没变但换了口袋，也算结构变化。"
         ),
         "bands": [
             {"range": "> 0", "state": "资金活化强、经济热度高", "note": "2016–17 牛市区间", "tone": "red"},
