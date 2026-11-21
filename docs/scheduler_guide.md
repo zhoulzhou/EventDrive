@@ -3,26 +3,23 @@
 ## 定时任务
 
 ### 新闻抓取
-每 3 小时一次：`00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00`
+每日 `08:00, 12:00, 16:00, 20:00`（JST，Asia/Tokyo）
 
 ### 市场行情
 每日 `08:00, 12:00, 16:00, 20:00`（JST，Asia/Tokyo）
 
-## 新闻源顺序（4个源串行执行）
+## 新闻源（仅东方财富）
 
 | 顺序 | 新闻源 | Crawler | 飞书推送函数 | 大模型分析 | 提示语 |
 |------|--------|---------|-------------|-----------|--------|
-| 1 | 东方财富 | `EastmoneyDepthCrawler` | `dfcf_feishu_notify` | DeepSeek+豆包 | 中文 |
-| 2 | 财联社 | `CLSDepthCrawler` | `cls_feishu_notify` | 豆包 | 中文 |
-| 3 | 纽约时报 | `NYTDepthCrawler` | `nyt_feishu_notify` | OpenRouter | **英文** |
-| 4 | BBC | `BBCCrawler` | `bbc_feishu_notify` | OpenRouter | **英文** |
+| 1 | 东方财富 | `EastmoneyDepthCrawler`（新闻列表接口） | `dfcf_feishu_notify` | DeepSeek+豆包 | 中文 |
 
 ## 每个新闻源的执行流程
 
 ```
 for each 新闻源:
     1. crawl_single_source(crawler_class)           # 抓取新闻
-    2. xxx_feishu_notify(saved_news[:5])             # 飞书推送原始新闻（前5条）
+    2. dfcf_feishu_notify(saved_news[:5])            # 飞书推送原始新闻（前5条）
     3. 如果分析器可用:
         for news in saved_news[:2]:                  # 大模型分析（每源取前2条）
             - analyze_only(title, summary, source)   # 传入标题+摘要进行分析
@@ -47,10 +44,10 @@ for each 新闻源:
 
 ### 大模型分析器（在 scheduler.py full_crawl 中）
 - 豆包分析器：使用 `KB_API_KEY`, `KB_MODEL_ID`, `KB_REGION` 配置
-- OpenRouter分析器：使用 `OPENROUTER_API_KEY` 配置，`model="openrouter/free"` 自动路由免费模型
+- DeepSeek 分析器：使用 `DEEPSEEK_API_KEY` 配置
 
 ### 飞书推送（在 main.py 启动时）
-- `init_all_notifiers()` — 统一初始化所有飞书推送（feishu, nyt, bbc, em, index）
+- `init_all_notifiers()` — 统一初始化所有飞书推送（东方财富、知识库豆包、深度分析、X）
 
 ## 关键文件
 
@@ -59,7 +56,7 @@ for each 新闻源:
 | `app/scheduler.py` | 主编排逻辑 |
 | `app/utils/feishu_notifier.py` | 所有飞书推送 |
 | `app/utils/doubao_analyzer.py` | 豆包分析（只分析不推送） |
-| `app/utils/openrouter_analyzer.py` | OpenRouter 分析（只分析不推送） |
+| `app/utils/deepseek_analyzer.py` | DeepSeek 分析（只分析不推送） |
 | `app/crawlers/market_data.py` | 市场行情获取（FRED） |
 | `app/main.py` | 启动时统一初始化飞书 |
 
@@ -67,12 +64,9 @@ for each 新闻源:
 
 | 通道 | 函数 | 用途 |
 |------|------|------|
-| 豆包飞书 | `doubao_feishu_notify` | 东方财富、财联社分析结果推送 |
-| OpenRouter飞书 | `openrouter_feishu_notify` | 纽约时报、BBC分析结果推送 |
+| 豆包飞书 | `doubao_feishu_notify` | 东方财富分析结果推送 |
+| DeepSeek飞书 | `deepseek_feishu_notify` | 东方财富分析结果推送 |
 | 东方财富飞书 | `dfcf_feishu_notify` | 东方财富原始新闻推送 |
-| 财联社飞书 | `cls_feishu_notify` | 财联社原始新闻推送 |
-| 纽约时报飞书 | `nyt_feishu_notify` | 纽约时报原始新闻推送 |
-| BBC飞书 | `bbc_feishu_notify` | BBC原始新闻推送 |
 
 ## 大模型分析
 
@@ -85,12 +79,6 @@ for each 新闻源:
 - 关键影响（宏观/行业/资本市场）
 - 市场情绪判断
 - 风险提示
-
-### OpenRouter分析（英文，使用 DeepSeek 风格提示词）
-- Core Event Summary
-- Key Impact (Macro / Industry / Capital Market)
-- Market Sentiment Analysis
-- Risk Warning
 
 ## 常见问题排查
 

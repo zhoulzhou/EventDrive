@@ -1,6 +1,6 @@
 # EventDrive - 新闻抓取应用
 
-一个基于Python的新闻抓取应用，支持从5大权威网站自动抓取新闻，通过Web界面查看和管理。
+一个基于Python的新闻抓取应用，自动抓取东方财富新闻，通过Web界面查看和管理。
 
 ## 技术栈
 
@@ -10,16 +10,12 @@
 | 数据库 | SQLite | 轻量，无需额外安装 |
 | 模板引擎 | Jinja2 | FastAPI自带 |
 | 定时任务 | APScheduler | Python定时任务库 |
-| 反爬虫方案 | Playwright | 轻量自动化浏览器 + 请求头伪装 + 延时 |
+| 反爬虫方案 | httpx + 请求头伪装 | 直接请求数据接口，不启动浏览器 |
 | 前端 | HTML + CSS + JavaScript | 配合Jinja2模板 |
 
 ## 数据来源
 
-1. 财联社
-2. 新华网
-3. 东方财富
-4. 36氪
-5. 巨潮资讯（A股公告）
+1. 东方财富（财经导读，新闻列表接口 `np-listapi.eastmoney.com/comm/web/getNewsByColumns`）
 
 ## 项目结构
 
@@ -43,11 +39,9 @@ EventDrive/
 │   ├── crawlers/
 │   │   ├── __init__.py
 │   │   ├── base.py             # 爬虫基类
-│   │   ├── cls.py              # 财联社爬虫
-│   │   ├── xinhua.py           # 新华网爬虫
-│   │   ├── eastmoney.py        # 东方财富爬虫
-│   │   ├── kr36.py             # 36氪爬虫
-│   │   └── cninfo.py           # 巨潮资讯爬虫
+│   │   ├── eastmoney_depth.py  # 东方财富新闻爬虫（接口版）
+│   │   ├── market_data.py      # 市场行情抓取
+│   │   └── x_twitter.py        # X 推文抓取（已停用）
 │   ├── scheduler.py            # 定时任务
 │   ├── utils/
 │   │   ├── __init__.py
@@ -183,7 +177,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## 功能特性
 
-- **自动抓取**：每6小时自动从5大网站抓取新闻
+- **自动抓取**：每天 4 次（JST 8/12/16/20）自动抓取东方财富新闻
 - **手动抓取**：支持通过Web界面手动触发抓取
 - **新闻管理**：查看、搜索和筛选新闻
 - **筛选规则**：自定义包含和排除关键词筛选新闻
