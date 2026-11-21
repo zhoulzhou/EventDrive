@@ -19,12 +19,11 @@ from app.utils.stock_temp_refresh import refresh_snapshot as refresh_stock_temp_
 
 logger = logging.getLogger(__name__)
 
-TOKYO_TZ = ZoneInfo("Asia/Tokyo")
-# 数据抓取任务（市场行情 / 宏观指标 / 股票指标）统一用**北京时间**，
-# 时刻由 start_scheduler() 指定；新闻抓取保持原有的 JST 节奏。
+# 新闻抓取与数据抓取任务统一用**北京时间**，
+# 时刻由 start_scheduler() 指定（周一至周五 08:13 抓新闻、21:34 抓指标）。
 CN_TZ = ZoneInfo("Asia/Shanghai")
 
-scheduler = AsyncIOScheduler(timezone=TOKYO_TZ)
+scheduler = AsyncIOScheduler(timezone=CN_TZ)
 
 crawl_progress_callback: Optional[Callable] = None
 
@@ -211,46 +210,47 @@ async def full_crawl():
 
 def start_scheduler():
     if not scheduler.running:
-        # 新闻抓取：保持原有节奏（JST 8/12/16/20）
+        # 新闻抓取：周一至周五 北京时间 08:13，只抓东方财富
         scheduler.add_job(
             full_crawl,
-            trigger=CronTrigger(hour='8,12,16,20', minute=0, timezone=TOKYO_TZ),
-            id='crawl_job_daily_4_times',
-            name='Crawl at 8,12,16,20 JST',
+            trigger=CronTrigger(day_of_week='mon-fri', hour='8', minute=13, timezone=CN_TZ),
+            id='crawl_job_weekday_morning',
+            name='Crawl Eastmoney news at 08:13 CST (Mon-Fri)',
             replace_existing=True
         )
         # ---- 数据抓取三件套：市场行情 / 宏观指标 / 股票指标 ----
-        # 统一在**北京时间 20:30**（2026-09-22 用户要求），每天各跑一次。
+        # 周一至周五北京时间 21:34 各跑一次（新闻列表不在此任务内）。
         # · 市场行情原先还挂在 full_crawl 末尾（跟着新闻一天跑 8 次），已摘出，只由这里触发；
         # · 宏观 / 股票只抓「当前读数」（顺带把读数变化记进历史表）；趋势页的长历史序列由页面
         #   「补齐历史数据」按钮触发（POST /api/*/backfill），不在定时任务里回溯；
-        # · 20:30 在 A 股收盘之后，当日日频数据（成交额 / 换手率 / 两融 / 估值）都已落地；
+        # · 21:34 在 A 股收盘之后，当日日频数据（成交额 / 换手率 / 两融 / 估值）都已落地，
+        #   美股盘前也能拿到前一交易日收盘的纳指 / VIX / 国债收益率；
         # · 三者同一时刻触发，会并发打外部接口（akshare / 交易所官网 / 央行），需要错开就改 minute。
         scheduler.add_job(
             crawl_market_data,
-            trigger=CronTrigger(hour='20', minute=30, timezone=CN_TZ),
+            trigger=CronTrigger(day_of_week='mon-fri', hour='21', minute=34, timezone=CN_TZ),
             id='market_crawl_job',
-            name='Crawl market data at 20:30 CST',
+            name='Crawl market data at 21:34 CST (Mon-Fri)',
             replace_existing=True
         )
         scheduler.add_job(
             refresh_macro_indicators,
-            trigger=CronTrigger(hour='20', minute=30, timezone=CN_TZ),
+            trigger=CronTrigger(day_of_week='mon-fri', hour='21', minute=34, timezone=CN_TZ),
             id='macro_snapshot_job',
-            name='Refresh macro indicators at 20:30 CST',
+            name='Refresh macro indicators at 21:34 CST (Mon-Fri)',
             replace_existing=True
         )
         scheduler.add_job(
             refresh_stock_temp,
-            trigger=CronTrigger(hour='20', minute=30, timezone=CN_TZ),
+            trigger=CronTrigger(day_of_week='mon-fri', hour='21', minute=34, timezone=CN_TZ),
             id='stock_temp_snapshot_job',
-            name='Refresh stock temperature at 20:30 CST',
+            name='Refresh stock temperature at 21:34 CST (Mon-Fri)',
             replace_existing=True
         )
         scheduler.start()
         logger.info(
-            "Scheduler started. News crawl at 8,12,16,20 JST; "
-            "market data + macro + stock indicators at 20:30 CST "
+            "Scheduler started. News crawl (东方财富) at 08:13 CST Mon-Fri; "
+            "market data + macro + stock indicators at 21:34 CST Mon-Fri "
             "(Asia/Shanghai). "
             "History backfill is manual only (页面「补齐历史数据」按钮 / POST /api/*/backfill)."
         )
