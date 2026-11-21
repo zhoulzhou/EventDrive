@@ -95,16 +95,10 @@ def _series_map(db: Session, keys, limit: int = 60) -> Dict[str, list]:
     }
 
 
-def _greed_history_shortage(db: Session) -> bool:
-    """日频序列不足 15 个交易日时，本次刷新需要多取一段交易所日频数据。"""
-    grouped = _series_map(db, ["turnover_amt"], limit=st.GREED_SAMPLE_DAYS + 5)
-    return len(grouped.get("turnover_amt") or []) < st.GREED_SAMPLE_DAYS + 2
+def _recent_series_records(fetched: Dict[str, Dict[str, Any]], n: int = 1) -> list:
+    """把贪婪指数与确认层各序列的当期读数写进历史表（幂等）。
 
-
-def _recent_series_records(fetched: Dict[str, Dict[str, Any]], n: int = 40) -> list:
-    """把贪婪指数与确认层各序列的近端 n 个点写进历史表（幂等）。
-
-    定时任务只抓当前读数，若不补写，首次部署时 15 日样本分位会一直算不出来。
+    只写最新一期，不做历史回溯：趋势页展示的就是从开始记录起逐日累积的数据。
     """
     records = []
     for key in st.GREED_KEYS + st.GREED_CONFIRM_KEYS:
@@ -189,9 +183,8 @@ def refresh_snapshot(db: Optional[Session] = None) -> Tuple[int, Dict[str, str],
         db = SessionLocal()
     try:
         prev = _snapshot_records(db)
-        # 贪婪指数要用近 15 个交易日样本分位；历史还不够时，本次顺带多取一段日频数据
-        exchange_days = (st.GREED_SAMPLE_DAYS + 5) if _greed_history_shortage(db) else 0
-        fetched = st.fetch_all(exchange_days=exchange_days, industry_months=1, prev=prev)
+        # 只抓当期读数与当日序列，不做历史回溯（趋势页展示逐日累积的数据）
+        fetched = st.fetch_all(exchange_days=0, industry_months=1, prev=prev)
 
         records = []
         errors: Dict[str, str] = {}

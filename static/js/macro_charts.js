@@ -264,7 +264,7 @@ function lineSeries(name, vals, color, o) {
 /* ---------------- ① 资金松紧：DR001 偏离 ---------------- */
 function drawDr001(bag, steps) {
     const rows = pick(bag, "dr001_spread");
-    if (rows.length < 2) { chartEmpty("mpDr007", "暂无日度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (rows.length < 2) { chartEmpty("mpDr007", "暂无日度序列，随每日刷新继续累积"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const ma5 = movingAvg(vals, 5);
@@ -316,7 +316,7 @@ function drawDr001(bag, steps) {
 /* ---------------- ① 资金松紧：R001 − DR001 ---------------- */
 function drawR001(bag) {
     const rows = pick(bag, "r001_dr001");
-    if (rows.length < 2) { chartEmpty("mpR001", "暂无日度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (rows.length < 2) { chartEmpty("mpR001", "暂无日度序列，随每日刷新继续累积"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -364,7 +364,7 @@ function drawR001(bag) {
 /* ---------------- ① 资金松紧：1Y AAA 同业存单（银行负债成本） ---------------- */
 function drawNcd(bag) {
     const rows = pick(bag, "ncd_1y_aaa");
-    if (rows.length < 2) { chartEmpty("mpER", "暂无同业存单序列，点右上角「补齐历史数据」回溯"); return; }
+    if (rows.length < 2) { chartEmpty("mpER", "暂无同业存单序列，随每日刷新继续累积"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -410,7 +410,7 @@ function drawNcd(bag) {
 /* ---------------- ② 信用扩张：社融存量同比 ---------------- */
 function drawTsf(bag) {
     const rows = pick(bag, "tsf_yoy");
-    if (rows.length < 2) { chartEmpty("mpTsf", "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (rows.length < 2) { chartEmpty("mpTsf", "暂无月度序列，随每月数据继续累积"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -449,12 +449,12 @@ function drawTsf(bag) {
 function drawM1M2(bag) {
     const m1 = pick(bag, "m1_yoy"), m2 = pick(bag, "m2_yoy"), sp = pick(bag, "m1_m2");
     const axis = (m1.length >= 2 ? m1 : m2).map(function (r) { return r.as_of; });
-    if (axis.length < 2) { chartEmpty("mpM1M2", "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (axis.length < 2) { chartEmpty("mpM1M2", "暂无月度序列，随每月数据继续累积"); return; }
 
     const a1 = alignTo(axis, m1), a2 = alignTo(axis, m2), asp = alignTo(axis, sp);
     const pairs = axis.map(function (_, i) { return [a1[i], a2[i]]; });
     const both = pairs.filter(function (p) { return p[0] !== null && p[1] !== null; });
-    if (both.length < 2) { chartEmpty("mpM1M2", "M1 / M2 序列不足，点右上角「补齐历史数据」回溯"); return; }
+    if (both.length < 2) { chartEmpty("mpM1M2", "M1 / M2 序列不足，随每月数据继续累积"); return; }
 
     const flat = both.reduce(function (a, p) { return a.concat(p); }, []);
     const yMin = Math.floor(Math.min.apply(null, flat) - 1);
@@ -531,7 +531,7 @@ function drawM1M2(bag) {
 /* ---------------- ③ 景气温度：PMI ---------------- */
 function drawPmi(bag) {
     const rows = pick(bag, "pmi");
-    if (rows.length < 2) { chartEmpty("mpPmi", "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (rows.length < 2) { chartEmpty("mpPmi", "暂无月度序列，随每月数据继续累积"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -575,7 +575,7 @@ function drawPmi(bag) {
 /* ---------------- ③ 景气温度：PPI 同比 ---------------- */
 function drawPpi(bag) {
     const rows = pick(bag, "ppi_yoy");
-    if (rows.length < 2) { chartEmpty("mpPpi", "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (rows.length < 2) { chartEmpty("mpPpi", "暂无月度序列，随每月数据继续累积"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -620,7 +620,7 @@ function drawPpi(bag) {
 /* ---------------- 归一化叠加（z-score，滚动 12 月） ---------------- */
 function drawZScore(bag, months) {
     const pmiRows = pick(bag, "pmi");
-    if (pmiRows.length < 8) { chartEmpty("mpZscore", "月度序列不足，点右上角「补齐历史数据」回溯"); return; }
+    if (pmiRows.length < 8) { chartEmpty("mpZscore", "月度序列不足，随每月数据继续累积"); return; }
     const axis = pmiRows.slice(-months).map(function (r) { return r.as_of; });
 
     const defs = [
@@ -698,7 +698,7 @@ function drawZScore(bag, months) {
 function drawQuadrant(bag) {
     const drM = monthlyAvg(pick(bag, "dr001_spread"));
     const pmiRows = pick(bag, "pmi");
-    if (drM.length < 3 || pmiRows.length < 3) { chartEmpty("mpQuad", "日度/月度序列不足，点右上角「补齐历史数据」回溯"); return; }
+    if (drM.length < 3 || pmiRows.length < 3) { chartEmpty("mpQuad", "日度/月度序列不足，随数据继续累积"); return; }
     const pmiMap = {};
     pmiRows.forEach(function (r) { pmiMap[r.as_of] = Number(r.value); });
 
@@ -797,7 +797,7 @@ function drawQuadrant(bag) {
 /* ---------------- ④ 部门结构：信贷流向 ---------------- */
 function drawDept(bag, key, id, color, label, unit, note) {
     const rows = pick(bag, key);
-    if (rows.length < 2) { chartEmpty(id, note || "暂无月度序列，点右上角「补齐历史数据」回溯"); return; }
+    if (rows.length < 2) { chartEmpty(id, note || "暂无月度序列，随每月数据继续累积"); return; }
     const dates = rows.map(function (r) { return r.as_of; });
     const vals = rows.map(function (r) { return Number(r.value); });
     const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
@@ -958,28 +958,6 @@ async function loadSeries(force) {
     }
 }
 
-async function runBackfill() {
-    const btn = document.getElementById("macroBackfill");
-    if (!window.confirm("将回溯补齐各指标的历史数据（日度逐月请求 + 央行社融/信贷逐期解析，首次约需 2~3 分钟）。\n已存在的记录按「指标 + 数据日期」覆盖更新，不会产生重复行。\n\n继续？")) return;
-    btn.disabled = true;
-    btn.textContent = "回溯中…（约 3~4 分钟）";
-    try {
-        const response = await fetchWithAuth("/api/macro/backfill", { method: "POST" });
-        const d = await response.json();
-        if (d.status !== "ok") throw new Error(d.message || "回溯失败");
-        const lines = Object.keys(d.counts || {}).map(function (k) { return "  " + k + "：" + d.counts[k] + " 条"; });
-        alert("回溯完成\n生成 " + d.generated + " 条（新增 " + d.added + " / 更新 " + d.updated + "）\n"
-            + lines.join("\n")
-            + (Object.keys(d.errors || {}).length ? "\n\n未完成：" + JSON.stringify(d.errors) : ""));
-        await loadSeries(true);
-    } catch (error) {
-        alert("回溯失败：" + error.message);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "补齐历史数据";
-    }
-}
-
 /* ==================== 页面装配（宏观趋势） ==================== */
 
 function seriesStats(d) {
@@ -1003,7 +981,7 @@ function nowClock() {
     return p(n.getHours()) + ":" + p(n.getMinutes()) + ":" + p(n.getSeconds());
 }
 
-// 顶部时间戳 + 历史偏少时的「补齐历史数据」提示
+// 顶部时间戳；历史偏少时只做提示，不再提供回溯入口
 function setTrendMeta(d, failed) {
     const meta = document.getElementById("trendUpdated");
     if (!meta) return;
@@ -1013,7 +991,7 @@ function setTrendMeta(d, failed) {
     const notice = document.getElementById("trendNotice");
     if (!notice) return;
     notice.innerHTML = s.total < 200
-        ? '<div class="macro-alert">历史序列偏少（' + s.total + ' 条），曲线可能很短。可点「补齐历史数据」回溯：日度逐月请求 + 央行社融/信贷逐期解析，首次约 2~3 分钟；一律按「指标 + 数据日期」覆盖写入，不会堆重复行。</div>'
+        ? '<div class="macro-alert">历史序列目前只有 ' + s.total + ' 条，曲线较短。本页只展示数据库中已累计的数据，后续随每日/每月刷新继续累积。</div>'
         : "";
 }
 
@@ -1025,7 +1003,6 @@ function trendBoot() {
     loadSeries(false);
 }
 
-document.getElementById("macroBackfill").addEventListener("click", runBackfill);
 document.getElementById("macroTrendReload").addEventListener("click", function () { loadSeries(true); });
 
 window.addEventListener("resize", debounce(function () {

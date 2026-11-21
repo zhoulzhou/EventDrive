@@ -114,7 +114,7 @@ function tipAxis(unit) {
 /* ---------------- 各图 ---------------- */
 function drawPE(bag) {
     const pe = pts(bag.hs300_pe), pb = pts(bag.hs300_pb);
-    if (!pe.length) return chartEmpty("stPE", "暂无 PE 历史数据，请点「补齐历史数据」");
+    if (!pe.length) return chartEmpty("stPE", "暂无 PE 历史数据，随每日刷新继续累积");
     const cats = pe.map(function (p) { return p[0]; });
     mount("stPE", {
         grid: baseGrid(),
@@ -133,7 +133,7 @@ function drawPE(bag) {
 
 function drawERP(bag) {
     const erp = pts(bag.erp);
-    if (!erp.length) return chartEmpty("stERP", "暂无 ERP 历史数据，请点「补齐历史数据」");
+    if (!erp.length) return chartEmpty("stERP", "暂无 ERP 历史数据，随每日刷新继续累积");
     const vals = erp.map(function (p) { return p[1]; });
     const mu = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
     const sd = Math.sqrt(vals.reduce(function (a, b) { return a + (b - mu) * (b - mu); }, 0) / vals.length);
@@ -155,7 +155,7 @@ function drawERP(bag) {
 
 function drawBelowNa(bag) {
     const d = pts(bag.below_na);
-    if (!d.length) return chartEmpty("stBelowNa", "暂无破净率历史数据，请点「补齐历史数据」");
+    if (!d.length) return chartEmpty("stBelowNa", "暂无破净率历史数据，随每日刷新继续累积");
     const tail = d.length > 2600 ? d.slice(-2600) : d;
     mount("stBelowNa", {
         grid: baseGrid(), tooltip: tipAxis("%"),
@@ -173,7 +173,7 @@ function drawBelowNa(bag) {
 
 function drawTurnover(bag) {
     const amt = pts(bag.turnover_amt), rate = pts(bag.turnover_rate);
-    if (!amt.length) return chartEmpty("stTurnover", "暂无成交额历史数据（日频需回填，请点「补齐历史数据」）");
+    if (!amt.length) return chartEmpty("stTurnover", "暂无成交额历史数据，随每日刷新继续累积");
     const cats = amt.map(function (p) { return p[0]; });
     // 下限压到 5000 亿（或更低），保证 7000 亿地量线也能画出来
     const lo = Math.min(5000, Math.floor(Math.min.apply(null, amt.map(function (p) { return p[1]; })) / 1000) * 1000);
@@ -418,7 +418,7 @@ function trendNotesHtml() {
         + "<ul>"
         + "<li><b>贪婪指数</b>每日收盘后打卡一次，曲线从开始记录那天画起。</li>"
         + "<li><b>市场宽度</b>数据源只提供当日快照，历史只能按日累积。</li>"
-        + "<li>成交额 / 换手率 / PE / ERP / 破净率可用「补齐历史数据」回溯。</li>"
+        + "<li>成交额 / 换手率 / PE / ERP / 破净率都按每日刷新持续累积，只展示已累计的数据。</li>"
         + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
         + "</ul></div>"
         + "</div></section>";
@@ -449,33 +449,6 @@ async function loadSeries(force) {
     }
 }
 
-async function runBackfill() {
-    const btn = document.getElementById("stBackfill");
-    if (!window.confirm(
-        "将回溯补齐各指标的历史数据。\n\n"
-        + "· 乐咕乐股 / 东财 / 新浪自带历史的指标（PE、PB、ERP、破净率、两融、公募仓位、新基金）几乎瞬时完成；\n"
-        + "· 交易所日频数据（成交额、换手率、流通市值）需逐日请求，按最近 60 个交易日补齐，约需 5 分钟；\n"
-        + "· 产业资本按月回溯 24 个月。\n\n"
-        + "已存在的记录按「指标 + 数据日期」覆盖更新，不会产生重复行。\n继续？")) return;
-    btn.disabled = true;
-    btn.textContent = "回溯中…（约 5 分钟）";
-    try {
-        const response = await fetchWithAuth("/api/stock-temp/backfill", { method: "POST" });
-        const d = await response.json();
-        if (d.status !== "ok") throw new Error(d.message || "回溯失败");
-        const lines = Object.keys(d.counts || {}).map(function (k) { return "  " + k + "：" + d.counts[k] + " 条"; });
-        alert("回溯完成\n生成 " + d.generated + " 条（新增 " + d.added + " / 更新 " + d.updated + "）\n"
-            + lines.join("\n")
-            + (Object.keys(d.errors || {}).length ? "\n\n未完成：" + JSON.stringify(d.errors) : ""));
-        await loadSeries(true);
-    } catch (error) {
-        alert("回溯失败：" + error.message);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "补齐历史数据";
-    }
-}
-
 /* ==================== 页面装配（股票趋势） ==================== */
 function seriesStats(d) {
     const bag = (d || {}).series || {};
@@ -496,7 +469,7 @@ function nowClock() {
     return p(n.getHours()) + ":" + p(n.getMinutes()) + ":" + p(n.getSeconds());
 }
 
-// 顶部时间戳 + 历史偏少时的「补齐历史数据」提示
+// 顶部时间戳；历史偏少时只做提示，不再提供回溯入口
 function setTrendMeta(d, failed) {
     const meta = document.getElementById("stTrendUpdated");
     if (!meta) return;
@@ -506,9 +479,8 @@ function setTrendMeta(d, failed) {
     const notice = document.getElementById("stTrendNotice");
     if (!notice) return;
     notice.innerHTML = s.total < 300
-        ? "<div class=\"st-alert\">历史序列偏少（" + s.total + " 条），曲线可能很短。可点「补齐历史数据」回溯："
-          + "自带历史的指标瞬时完成，交易所日频数据按最近 60 个交易日逐日请求（约 5 分钟）；"
-          + "一律按「指标 + 数据日期」覆盖写入，不会堆重复行。</div>"
+        ? "<div class=\"st-alert\">历史序列目前只有 " + s.total + " 条，曲线较短。"
+          + "本页只展示数据库中已累计的数据，后续随每日刷新继续累积。</div>"
         : "";
 }
 
@@ -520,7 +492,6 @@ function trendBoot() {
     loadSeries(false);
 }
 
-document.getElementById("stBackfill").addEventListener("click", runBackfill);
 document.getElementById("stTrendReload").addEventListener("click", function () { loadSeries(true); });
 window.addEventListener("resize", debounce(function () {
     Object.keys(chartReg).forEach(function (k) { if (chartReg[k]) chartReg[k].resize(); });

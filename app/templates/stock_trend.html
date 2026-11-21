@@ -13,7 +13,7 @@
         <p class="form-hint">
             与 <a href="/stock-temp">股市热度</a> 页一一对应：<strong>贪婪指数</strong> + 情绪层（市场宽度 / 全A换手率 / 两市成交额）
             + 估值层（沪深300 PE-TTM）+ 确认层（ERP / 破净率）。每张图都带阈值线与末端最新读数。
-            曲线的长短取决于「补齐历史数据」的回溯窗口；本页与定时任务都不做历史回溯，需要更新时手动点一次。
+            曲线只显示数据库中已经累计的数据（含此前回填的历史），后续按日累积，不再回溯。
             各指标的<strong>当前读数、分位与判读</strong>见 <a href="/stock-temp">股市热度</a>。
         </p>
         <p class="form-hint st-src-line">
@@ -23,7 +23,6 @@
     </div>
     <div class="st-toolbar">
         <span id="stTrendUpdated" class="st-updated">加载中…</span>
-        <button id="stBackfill" class="btn btn-secondary">补齐历史数据</button>
         <button id="stTrendReload" class="btn btn-primary">刷新图表</button>
     </div>
 </div>
