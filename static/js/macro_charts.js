@@ -178,6 +178,41 @@ function shortPpi(v) {
     if (v > 9) return "过热"; if (v >= 6) return "偏热"; if (v >= 3) return "温和涨价";
     if (v >= 0) return "弱修复"; if (v >= -2) return "通缩阴影"; return "深度通缩";
 }
+// 信用/部门三项（企业中长贷、住户中长贷、财政存款）：状态词与后端 INDICATORS.bands 同源
+function corpLoanState(v) {
+    if (v >= 4000) return ["显著多增，扩产明确", CH.red];
+    if (v >= 2000) return ["同比多增", CH.amber];
+    if (v >= -2000) return ["基本持平", CH.green];
+    if (v >= -4000) return ["明显少增", CH.cyan];
+    return ["大幅少增，资本开支收缩", CH.blue];
+}
+function shortCorpLoan(v) {
+    if (v >= 4000) return "显著多增"; if (v >= 2000) return "多增";
+    if (v >= -2000) return "持平"; if (v >= -4000) return "少增"; return "大幅少增";
+}
+function householdLoanState(v) {
+    if (v >= 3000) return ["显著多增，居民加杠杆", CH.red];
+    if (v >= 1500) return ["同比多增", CH.amber];
+    if (v >= -1500) return ["基本持平", CH.green];
+    if (v >= -3000) return ["明显少增", CH.cyan];
+    return ["大幅少增，提前还贷/缩表", CH.blue];
+}
+function shortHouseholdLoan(v) {
+    if (v >= 3000) return "显著多增"; if (v >= 1500) return "多增";
+    if (v >= -1500) return "持平"; if (v >= -3000) return "少增"; return "大幅少增";
+}
+// 财政存款方向相反：减少（负）才是投放、加分；增加（正）是回笼、抽离实体
+function fiscalState(v) {
+    if (v <= -3000) return ["财政大幅投放", CH.red];
+    if (v <= -1500) return ["投放加快", CH.amber];
+    if (v <= 1500) return ["中性", CH.green];
+    if (v <= 3000) return ["资金回笼", CH.cyan];
+    return ["大幅上缴，抽离实体", CH.blue];
+}
+function shortFiscal(v) {
+    if (v <= -3000) return "大幅投放"; if (v <= -1500) return "投放加快";
+    if (v <= 1500) return "中性"; if (v <= 3000) return "资金回笼"; return "大幅上缴";
+}
 
 /* ---------------- ECharts 通用骨架 ---------------- */
 function mount(id, option) {
@@ -781,6 +816,143 @@ function drawPpi(bag) {
     mount("mpPpi", opt);
 }
 
+/* ---------------- ④ 信用/部门：企业中长贷同比多增 ---------------- */
+function drawCorpLoan(bag) {
+    const rows = pick(bag, "corp_ml_loan_yoy");
+    if (!rows.length) { chartEmpty("mpCorpLoan", "暂无历史序列，等待定时任务每月写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
+    const dates = rows.map(function (r) { return r.as_of; });
+    const vals = rows.map(function (r) { return Number(r.value); });
+    const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    const pad = Math.max(500, (hi - lo) * 0.2);
+    const yMin = Math.floor((lo - pad) / 1000) * 1000;
+    const yMax = Math.ceil((hi + pad) / 1000) * 1000;
+    const x0 = dates[0], x1 = dates[dates.length - 1];
+    const bands = [];
+    pushBand(bands, x0, x1, yMin, -4000, yMin, yMax, CH.blue, "大幅少增");
+    pushBand(bands, x0, x1, -4000, -2000, yMin, yMax, CH.cyan, "明显少增");
+    pushBand(bands, x0, x1, -2000, 2000, yMin, yMax, CH.green, "基本持平 ±2000亿");
+    pushBand(bands, x0, x1, 2000, 4000, yMin, yMax, CH.amber, "同比多增");
+    pushBand(bands, x0, x1, 4000, yMax, yMin, yMax, CH.red, "显著多增");
+
+    const opt = baseOption(dates, {
+        yName: "亿元", yMin: yMin, yMax: yMax,
+        tooltip: function (p) {
+            const i = p[0].dataIndex, v = vals[i], st = corpLoanState(v);
+            return "<b>" + escapeHtml(dates[i]) + "</b><br>"
+                + '<span style="color:' + CH.green + '">●</span> 企业中长贷同比多增：<b>' + signed(v, 0) + " 亿</b><br>"
+                + '<span style="color:' + st[1] + '">状态：' + escapeHtml(st[0]) + "</span>";
+        },
+        series: [Object.assign(lineSeries("企业中长贷同比多增", vals, CH.green), {
+            areaStyle: { color: withAlpha(CH.green, 0.10) },
+            markArea: { silent: true, data: bands },
+            markLine: {
+                silent: true, symbol: "none",
+                lineStyle: { color: CH.slate, width: 1.1 },
+                label: { position: "insideStartTop", color: CH.slate, textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5, fontSize: 10, formatter: "0 轴" },
+                data: [{ yAxis: 0 }]
+            },
+            markPoint: marksFor(
+                dates, vals, CH.green,
+                shortCorpLoan(vals[vals.length - 1]) + " " + signed(vals[vals.length - 1], 0) + "亿",
+                function (tag, v) { return tag + " " + signed(v, 0) + "亿"; }
+            )
+        })]
+    });
+    mount("mpCorpLoan", opt);
+}
+
+/* ---------------- ④ 信用/部门：住户中长贷同比多增 ---------------- */
+function drawHouseholdLoan(bag) {
+    const rows = pick(bag, "household_ml_loan_yoy");
+    if (!rows.length) { chartEmpty("mpHouseholdLoan", "暂无历史序列，等待定时任务每月写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
+    const dates = rows.map(function (r) { return r.as_of; });
+    const vals = rows.map(function (r) { return Number(r.value); });
+    const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    const pad = Math.max(400, (hi - lo) * 0.2);
+    const yMin = Math.floor((lo - pad) / 500) * 500;
+    const yMax = Math.ceil((hi + pad) / 500) * 500;
+    const x0 = dates[0], x1 = dates[dates.length - 1];
+    const bands = [];
+    pushBand(bands, x0, x1, yMin, -3000, yMin, yMax, CH.blue, "大幅少增/缩表");
+    pushBand(bands, x0, x1, -3000, -1500, yMin, yMax, CH.cyan, "明显少增");
+    pushBand(bands, x0, x1, -1500, 1500, yMin, yMax, CH.green, "基本持平 ±1500亿");
+    pushBand(bands, x0, x1, 1500, 3000, yMin, yMax, CH.amber, "同比多增");
+    pushBand(bands, x0, x1, 3000, yMax, yMin, yMax, CH.red, "显著多增/加杠杆");
+
+    const opt = baseOption(dates, {
+        yName: "亿元", yMin: yMin, yMax: yMax,
+        tooltip: function (p) {
+            const i = p[0].dataIndex, v = vals[i], st = householdLoanState(v);
+            return "<b>" + escapeHtml(dates[i]) + "</b><br>"
+                + '<span style="color:' + CH.amber + '">●</span> 住户中长贷同比多增：<b>' + signed(v, 0) + " 亿</b><br>"
+                + '<span style="color:' + st[1] + '">状态：' + escapeHtml(st[0]) + "</span>";
+        },
+        series: [Object.assign(lineSeries("住户中长贷同比多增", vals, CH.amber), {
+            areaStyle: { color: withAlpha(CH.amber, 0.10) },
+            markArea: { silent: true, data: bands },
+            markLine: {
+                silent: true, symbol: "none",
+                lineStyle: { color: CH.slate, width: 1.1 },
+                label: { position: "insideStartTop", color: CH.slate, textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5, fontSize: 10, formatter: "0 轴" },
+                data: [{ yAxis: 0 }]
+            },
+            markPoint: marksFor(
+                dates, vals, CH.amber,
+                shortHouseholdLoan(vals[vals.length - 1]) + " " + signed(vals[vals.length - 1], 0) + "亿",
+                function (tag, v) { return tag + " " + signed(v, 0) + "亿"; }
+            )
+        })]
+    });
+    mount("mpHouseholdLoan", opt);
+}
+
+/* ---------------- ④ 信用/部门：财政存款当月环比 ---------------- */
+// 量级远大于另两项（可达 ±1.8 万亿），单独一张图、Y 轴自适应。
+// 方向相反：减少（负）是投放、加分；增加（正）是回笼。
+function drawFiscalDeposit(bag) {
+    const rows = pick(bag, "fiscal_deposit_mom");
+    if (!rows.length) { chartEmpty("mpFiscalDeposit", "暂无历史序列，等待定时任务每月写入（可到「宏观指标」页点「刷新数据」立即抓一次）"); return; }
+    const dates = rows.map(function (r) { return r.as_of; });
+    const vals = rows.map(function (r) { return Number(r.value); });
+    const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    const pad = Math.max(1000, (hi - lo) * 0.15);
+    const yMin = Math.floor((lo - pad) / 3000) * 3000;
+    const yMax = Math.ceil((hi + pad) / 3000) * 3000;
+    const x0 = dates[0], x1 = dates[dates.length - 1];
+    const bands = [];
+    pushBand(bands, x0, x1, yMin, -3000, yMin, yMax, CH.red, "大幅投放");
+    pushBand(bands, x0, x1, -3000, -1500, yMin, yMax, CH.amber, "投放加快");
+    pushBand(bands, x0, x1, -1500, 1500, yMin, yMax, CH.green, "中性 ±1500亿");
+    pushBand(bands, x0, x1, 1500, 3000, yMin, yMax, CH.cyan, "资金回笼");
+    pushBand(bands, x0, x1, 3000, yMax, yMin, yMax, CH.blue, "大幅上缴/抽离实体");
+
+    const opt = baseOption(dates, {
+        yName: "亿元", yMin: yMin, yMax: yMax,
+        tooltip: function (p) {
+            const i = p[0].dataIndex, v = vals[i], st = fiscalState(v);
+            return "<b>" + escapeHtml(dates[i]) + "</b><br>"
+                + '<span style="color:' + CH.violet + '">●</span> 财政存款当月环比：<b>' + signed(v, 0) + " 亿</b><br>"
+                + '<span style="color:' + st[1] + '">状态：' + escapeHtml(st[0]) + "（减少=投放，增加=回笼）</span>";
+        },
+        series: [Object.assign(lineSeries("财政存款当月环比", vals, CH.violet), {
+            areaStyle: { color: withAlpha(CH.violet, 0.10) },
+            markArea: { silent: true, data: bands },
+            markLine: {
+                silent: true, symbol: "none",
+                lineStyle: { color: CH.slate, width: 1.1 },
+                label: { position: "insideStartTop", color: CH.slate, textBorderColor: "rgba(255,255,255,0.95)", textBorderWidth: 2.5, fontSize: 10, formatter: "0 轴" },
+                data: [{ yAxis: 0 }]
+            },
+            markPoint: marksFor(
+                dates, vals, CH.violet,
+                shortFiscal(vals[vals.length - 1]) + " " + signed(vals[vals.length - 1], 0) + "亿",
+                function (tag, v) { return tag + " " + signed(v, 0) + "亿"; }
+            )
+        })]
+    });
+    mount("mpFiscalDeposit", opt);
+}
+
 /* ---------------- 面板骨架与说明文字 ---------------- */
 function panelChart(title, note, id) {
     return '<div class="mp-fig">'
@@ -821,7 +993,12 @@ function panelHtml() {
             panelChart("主图 · 社融存量同比", "阈值带：<8 收缩 / 8~10 中性 / >12 宽信用", "mpTsf"),
             panelChart("辅图 · M1、M2 同比 + 剪刀差", "M1>M2 绿、M1<M2 红（面积填充）", "mpM1M2")
         ], "社融回升 + 剪刀差收窄 = 宽信用落地")
-        + panelCard("mp-heat", "③ 景气温度", "月度 · 同步", [
+        + panelCard("mp-structure", "③ 信用 / 部门结构", "月度 · 同比多增 / 环比", [
+            panelChart("企业中长贷 · 同比多增", "企业资本开支意愿；±2000 / ±4000 亿分档带", "mpCorpLoan"),
+            panelChart("住户中长贷 · 同比多增", "居民杠杆 / 地产需求；±1500 / ±3000 亿分档带", "mpHouseholdLoan"),
+            panelChart("财政存款 · 当月环比", "政府投放节奏；减少=投放（加分）、增加=回笼；量级独用一轴", "mpFiscalDeposit")
+        ], "企业中长贷转多增 = 企业真扩产；只有财政发力 = 托底型弱复苏；住户持续少增 = 居民缩表")
+        + panelCard("mp-heat", "④ 景气温度", "月度 · 同步", [
             panelChart("主图 · 制造业 PMI", "折线 + 50 荣枯线 + 48/50/52 分档带", "mpPmi"),
             panelChart("辅图 · PPI 同比", "0 轴 + −3/−2/0/2/5% 分档带", "mpPpi")
         ], "PMI 上穿 50 且 PPI 连续回升 = 复苏确认")
@@ -836,7 +1013,7 @@ function notesHtml() {
         + '<div class="mp-note">'
         + "<h3>一、组合三原则</h3>"
         + "<ol>"
-        + "<li><b>频率对齐</b>：日频（DR001 / R001 / 1Y 存单）一张图，月频（社融 / PMI / PPI / M1）一张图。混频率 = 看不清。</li>"
+        + "<li><b>频率对齐</b>：日频（DR001 / R001 / 1Y 存单）一组，月频（社融 / M1−M2 / 信贷结构 / PMI / PPI）一组。混频率 = 看不清。</li>"
         + "<li><b>量纲配对</b>：同量纲直接叠（DR001 vs 政策利率）；不同量纲先转成利差 / 偏离度 / 剪刀差再叠。</li>"
         + "<li><b>领先验证</b>：信用（社融、M1−M2）领先实体 2-3 个季度，用于<b>预判</b>；PMI / PPI 是<b>同步确认</b>。两者背离时，以信用为方向、以景气验证。</li>"
         + "</ol></div>"
@@ -874,13 +1051,17 @@ function drawCharts(d) {
     drawNcd(bag);
     drawTsf(bag);
     drawM1M2(bag);
+    drawCorpLoan(bag);
+    drawHouseholdLoan(bag);
+    drawFiscalDeposit(bag);
     drawPmi(bag);
     drawPpi(bag);
     Object.keys(chartReg).forEach(function (k) { chartReg[k].resize(); });
 }
 
 /** 本页全部图表容器 id（兜底时统一提示）。 */
-const MP_CHART_IDS = ["mpThermo", "mpDr001", "mpR001", "mpNcd", "mpTsf", "mpM1M2", "mpPmi", "mpPpi"];
+const MP_CHART_IDS = ["mpThermo", "mpDr001", "mpR001", "mpNcd", "mpTsf", "mpM1M2",
+    "mpCorpLoan", "mpHouseholdLoan", "mpFiscalDeposit", "mpPmi", "mpPpi"];
 
 /** 图表库（ECharts，本地 /static/js/echarts.min.js）是否可用。 */
 function echartsReady() {

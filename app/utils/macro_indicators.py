@@ -463,7 +463,14 @@ NAME_OF_KEY[THERMOMETER_KEY] = "宏观温度计"
 # 图表面板「三组一定位」用到的序列键（供 /api/macro/series 组装）
 # NCD（1Y AAA 存单）是日频，与 DR001 / R001 同属资金面日频组
 CHART_DAILY_KEYS = ["dr001_spread", "r001_dr001", "ncd_1y_aaa"]
-CHART_MONTHLY_KEYS = ["pmi", "ppi_yoy", "tsf_yoy", "m1_yoy", "m2_yoy", "m1_m2"]
+# 月频序列：三组一定位的全部宏观指标（宏观指标页 10 项里除利率锚外的 9 项）。
+# m1_yoy/m2_yoy 库里通常只存剪刀差 m1_m2，仍保留供双线图按需取用。
+# corp/household/fiscal 是「③ 信用/部门」三项，2026-11-22 补进趋势页曲线，
+# 与宏观指标页口径同源（bands 定义见 INDICATORS）。
+CHART_MONTHLY_KEYS = [
+    "pmi", "ppi_yoy", "tsf_yoy", "m1_yoy", "m2_yoy", "m1_m2",
+    "corp_ml_loan_yoy", "household_ml_loan_yoy", "fiscal_deposit_mom",
+]
 CHART_KEYS = CHART_DAILY_KEYS + CHART_MONTHLY_KEYS
 
 # ---------------------------------------------------------------- 状态判定

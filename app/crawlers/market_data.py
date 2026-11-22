@@ -16,6 +16,13 @@
     1. ``treasury``      美国财政部每日收益率 CSV（含最近 30 个交易日）
     2. ``em_bond``       东财「中美国债收益率」（一次拿 2Y/10Y 两列，与财政部一致）
     3. ``fred``          FRED DGS2 / DGS10
+- COMEX 黄金（美元/盎司）
+    1. ``gold_sina``     新浪外盘日K（历史骨架）+ 新浪实时报价（最新价）
+    黄金 7x24 走近连续交易，不用美股的「最近已收盘交易日」判新鲜，
+    每次刷新都抓最新价并按日期落库。
+- 比特币（BTC/USD，美元）
+    1. ``btc_sina``      新浪 btc_btcbtcusd 实时报价
+    同样 7x24，每天落一个点，历史随每日抓取逐步累积。
 
 为什么要降级链（2026-10-31 排查结论）：
   原先 NDX 只有 api.nasdaq.com + FRED 两条腿，两条腿同时不通时 NDX 会**连续多日停更**
@@ -34,7 +41,9 @@ import asyncio
 import calendar
 import csv
 import io
+import json
 import logging
+import re
 import time
 from datetime import datetime, date, timedelta, time as dtime
 from zoneinfo import ZoneInfo
@@ -68,6 +77,8 @@ JSON_HEADERS = {
 TENCENT_HEADERS = {"User-Agent": USER_AGENT, "Referer": "https://gu.qq.com/"}
 EM_HEADERS = {"User-Agent": USER_AGENT, "Referer": "https://quote.eastmoney.com/"}
 EM_DATA_HEADERS = {"User-Agent": USER_AGENT, "Referer": "https://data.eastmoney.com/"}
+# 新浪外盘/比特币行情同样要带 Referer，否则返回空串
+SINA_HQ_HEADERS = {"User-Agent": USER_AGENT, "Referer": "https://finance.sina.com.cn"}
 
 # 各数据源端点
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -89,6 +100,12 @@ EM_QUOTE_URL = "https://push2.eastmoney.com/api/qt/stock/get"
 # 东财：中美国债收益率（美国 2Y = EMG00001306，10Y = EMG00001310）
 EM_BOND_URL = "https://datacenter.eastmoney.com/api/data/get"
 EM_BOND_TOKEN = "894050c76af8597a853f5b408b759f5d"
+# 新浪：外盘期货日K（COMEX 黄金 GC）+ 实时快照（hf_GC / btc_btcbtcusd）
+SINA_GOLD_KLINE_URL = (
+    "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_t=/"
+    "GlobalFuturesService.getGlobalFuturesDailyKLine"
+)
+SINA_HQ_URL = "https://hq.sinajs.cn/list={symbols}"
 
 # 单次抓取每个来源最多取多少个交易日（够补一周多的缺口，也不会把历史表灌爆）
 HISTORY_POINTS = 30
@@ -103,6 +120,8 @@ SOURCE_NAMES = {
     "cboe_json": "CBOE(延时报价)",
     "fred": "FRED",
     "treasury": "美国财政部",
+    "gold_sina": "新浪财经(外盘黄金)",
+    "btc_sina": "新浪财经(BTC/USD)",
 }
 
 
@@ -465,6 +484,76 @@ async def _f_em_bond(series: Dict[str, Any], limit: int) -> List[Dict[str, Any]]
     return _trim(points, limit)
 
 
+async def _f_gold_sina(series: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    """COMEX 黄金：新浪外盘日K做历史骨架，新浪实时快照补最新价。
+
+    日K返回 JSONP：``var _t=([{"date":"2026-11-20","close":"3538.500"}, ...]);``
+    实时 ``hf_GC`` 字段：0=现价, 6=时间, 12=日期(北京), 13=名称。
+    两路按日期去重，实时价排在后面会覆盖同日日K收盘价（_trim 后写覆盖前写）。
+    任一路失败不影响另一路：只有两路都失败才判该指标本轮失败。
+    """
+    points: List[Dict[str, Any]] = []
+    errors: List[str] = []
+
+    try:
+        response = await _get_limited(
+            SINA_GOLD_KLINE_URL,
+            params={"symbol": "GC", "_": "1"},
+            headers=SINA_HQ_HEADERS,
+        )
+        m = re.search(r"\(\s*(\[.*\])\s*\)", response.text, re.S)
+        if not m:
+            raise ValueError(f"日K返回格式异常: {response.text[:80]!r}")
+        for row in json.loads(m.group(1)):
+            p = _point(row.get("date"), row.get("close"))
+            if p:
+                points.append(p)
+        if not points:
+            raise ValueError("日K解析后为空")
+    except Exception as e:  # noqa: BLE001 - 单路失败只记日志，另一路继续
+        errors.append(f"日K: {type(e).__name__}: {e}")
+
+    try:
+        response = await _get_limited(
+            SINA_HQ_URL.format(symbols="hf_GC"), headers=SINA_HQ_HEADERS
+        )
+        text = response.content.decode("gbk", errors="ignore")
+        body = text.split('"')[1] if '"' in text else ""
+        fields = body.split(",")
+        if len(fields) < 14:
+            raise ValueError(f"实时快照字段不足({len(fields)})：{text[:80]!r}")
+        p = _point(fields[12].strip(), fields[0].strip())
+        if not p:
+            raise ValueError(f"实时快照不可解析: {body[:120]!r}")
+        points.append(p)
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"实时: {type(e).__name__}: {e}")
+
+    if not points:
+        raise ValueError("黄金新浪两路均无数据: " + "; ".join(errors))
+    return _trim(points, limit)
+
+
+async def _f_btc_sina(series: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    """BTC/USD：新浪 btc_btcbtcusd 实时快照。
+
+    字段：0=时间, 3=现价, 6=最高, 7=最低, 9=名称, 11=日期(北京)。
+    比特币 7x24 交易，每天落一个点，历史随每日抓取逐步累积。
+    """
+    response = await _get_limited(
+        SINA_HQ_URL.format(symbols="btc_btcbtcusd"), headers=SINA_HQ_HEADERS
+    )
+    text = response.content.decode("gbk", errors="ignore")
+    body = text.split('"')[1] if '"' in text else ""
+    fields = body.split(",")
+    if len(fields) < 12:
+        raise ValueError(f"比特币快照字段不足({len(fields)})：{text[:80]!r}")
+    p = _point(fields[11].strip(), fields[3].strip())
+    if not p:
+        raise ValueError(f"比特币快照不可解析: {body[:120]!r}")
+    return [p]
+
+
 FETCHERS: Dict[str, Callable[..., Any]] = {
     "nasdaq_api": _f_nasdaq_api,
     "tencent_quote": _f_tencent_quote,
@@ -475,6 +564,8 @@ FETCHERS: Dict[str, Callable[..., Any]] = {
     "cboe_json": _f_vix_json,
     "treasury": _f_treasury,
     "em_bond": _f_em_bond,
+    "gold_sina": _f_gold_sina,
+    "btc_sina": _f_btc_sina,
 }
 
 # 每个指标的数据源降级链（顺序 = 优先级）
@@ -499,7 +590,21 @@ SERIES = [
         "describe": "U.S. Treasury 10-Year Yield", "fred_id": "DGS10", "column": "10 Yr",
         "sources": ["treasury", "em_bond", "fred"],
     },
+    {
+        "key": "gold", "name": "COMEX黄金", "symbol": "GOLD", "unit": "$/oz",
+        "describe": "COMEX Gold Futures", "fred_id": None, "column": None,
+        "sources": ["gold_sina"],
+    },
+    {
+        "key": "btc", "name": "比特币", "symbol": "BTC", "unit": "$",
+        "describe": "Bitcoin / USD", "fred_id": None, "column": None,
+        "sources": ["btc_sina"],
+    },
 ]
+
+# 7x24 / 近连续交易的品种：不受美股「最近 5 个交易日已齐」跳过逻辑约束，
+# 每次刷新都抓最新价（历史点按日期落库，重复日期会被覆盖为最新价）。
+LIVE_QUOTE_SYMBOLS = {"GOLD", "BTC"}
 
 # 单次抓取任务要预留的开始标记（重置每个 host 的单次请求计数）
 _ALL_SOURCE_URLS = {
@@ -512,6 +617,9 @@ _ALL_SOURCE_URLS = {
     "cboe_json": VIX_JSON_URL,
     "treasury": TREASURY_URL,
     "fred": FRED_URL,
+    "gold_sina": SINA_GOLD_KLINE_URL,
+    "gold_sina_hq": SINA_HQ_URL.format(symbols="hf_GC"),
+    "btc_sina": SINA_HQ_URL.format(symbols="btc_btcbtcusd"),
 }
 
 
@@ -567,14 +675,21 @@ async def _collect_points(
     return points, trail
 
 
-async def fetch_market_points(expected: Optional[str] = None) -> List[Dict[str, Any]]:
-    """并发抓取全部指标（原始数据，不落库）。"""
+async def fetch_market_points(
+    expected: Optional[str] = None, only_symbols: Optional[set] = None,
+) -> List[Dict[str, Any]]:
+    """并发抓取指标（原始数据，不落库）。
+
+    only_symbols 用于「美股指标已齐、只刷黄金/比特币实时价」的场景，
+    避免为了两个 7x24 品种把十几个美股来源也重跑一遍。
+    """
     expected = expected or latest_closed_session()
+    selected = [s for s in SERIES if not only_symbols or s["symbol"] in only_symbols]
     results = await asyncio.gather(
-        *(_collect_points(s, expected) for s in SERIES), return_exceptions=True
+        *(_collect_points(s, expected) for s in selected), return_exceptions=True
     )
     items: List[Dict[str, Any]] = []
-    for series, res in zip(SERIES, results):
+    for series, res in zip(selected, results):
         if isinstance(res, Exception):
             logger.error(f"{series['name']}: 抓取整体失败: {res}", exc_info=res)
             points, trail = [], [{"source": "all", "error": str(res)}]
@@ -722,6 +837,9 @@ async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
     sessions = recent_sessions(expected, 5)
     oldest = min(sessions)
 
+    # 美股指标按「最近 5 个交易日是否齐」决定是否抓；黄金/比特币 7x24 交易，
+    # 每次都刷最新价，但只在核心指标已齐时单独抓，避免把美股来源也重跑一遍。
+    live_only = False
     if not force:
         try:
             have = await _db_dates_since(oldest)
@@ -730,25 +848,23 @@ async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
             have = {}
         missing = [
             s["symbol"] for s in SERIES
-            if not set(sessions) <= (have.get(s["symbol"]) or set())
+            if s["symbol"] not in LIVE_QUOTE_SYMBOLS
+            and not set(sessions) <= (have.get(s["symbol"]) or set())
         ]
         if not missing:
-            logger.info(f"市场行情最近 5 个交易日已齐（{oldest}~{expected}），跳过抓取")
-            return {
-                "items": [],
-                "skipped": True,
-                "reason": f"最近 5 个交易日（{oldest}~{expected}）已齐",
-                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "source": f"跳过(已最新 {expected})",
-            }
-        logger.info(f"市场行情待补: {', '.join(missing)}（目标 {expected}）")
+            live_only = True
+            logger.info(f"核心指标最近 5 个交易日已齐（{oldest}~{expected}），仅刷新黄金/比特币")
+        else:
+            logger.info(f"市场行情待补: {', '.join(missing)}（目标 {expected}）")
 
     # 标记一次完整抓取任务：重置各 host 的单次计数
     limiter = get_limiter()
     for url in _ALL_SOURCE_URLS.values():
         limiter.begin_run(url)
 
-    items = await fetch_market_points(expected)
+    items = await fetch_market_points(
+        expected, only_symbols=LIVE_QUOTE_SYMBOLS if live_only else None
+    )
     summary = await asyncio.to_thread(save_market_prices, items)
     return {
         "items": items,

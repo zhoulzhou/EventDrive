@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 固定的卡片显示顺序，独立于抓取列表 SERIES；后续新增指数在此追加，不影响历史顺序
-DISPLAY_ORDER = ["NASDAQ100", "VIXCLS", "DGS2", "DGS10"]
+# GOLD/BTC 为 7x24 品种，同页展示但不受美股交易日约束
+DISPLAY_ORDER = ["NASDAQ100", "VIXCLS", "DGS2", "DGS10", "GOLD", "BTC"]
+
+# 各指标的实际数据源文案（_to_item 里原本写死 FRED，黄金/比特币来自新浪）
+SOURCE_LABELS = {"GOLD": "新浪财经", "BTC": "新浪财经"}
 
 
 def _to_item(latest: dict) -> dict:
@@ -35,7 +39,7 @@ def _to_item(latest: dict) -> dict:
         "change": change,
         "change_percent": change_percent,
         "date": row.date,
-        "source": "FRED",
+        "source": SOURCE_LABELS.get(row.symbol, "FRED"),
     }
 
 
@@ -125,7 +129,7 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
             "status": "ok",
             "items": items,
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "source": "Nasdaq / CBOE / 美国财政部（腾讯·东财·FRED 兜底）",
+            "source": "Nasdaq / CBOE / 美国财政部 / COMEX黄金 / 比特币（腾讯·东财·新浪·FRED 兜底）",
         }
     except Exception as e:
         logger.error(f"获取市场数据失败: {e}", exc_info=True)

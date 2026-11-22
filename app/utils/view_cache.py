@@ -54,7 +54,7 @@ from app import cloud_db as _cdb
 logger = logging.getLogger(__name__)
 
 T_VIEW = "view_snapshots"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 11-22 宏观趋势 series 补入信用/部门 3 项（corp/household/fiscal），旧快照须失效
 MAX_AGE_HOURS = 30
 
 # ETag 指纹的进程内短缓存（秒）。一次开页会连发多个接口请求、各算一次 ETag，

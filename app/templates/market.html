@@ -15,7 +15,7 @@
     <div class="chart-header">
         <h2>历史走势</h2>
         <div style="display:flex;align-items:center;gap:12px;">
-            <span class="chart-sub">X 轴统一时间 · Y 轴对齐 · 三面板联动</span>
+            <span class="chart-sub">X 轴统一时间 · Y 轴对齐 · 五面板联动</span>
             <button id="cleanupBtn" type="button" class="cleanup-btn">清洗数据</button>
         </div>
     </div>
@@ -134,9 +134,9 @@ function renderCard(item) {
 // ECharts 的 axisPointer.link 就是为这个场景设计的：多个 grid 共用一套
 // category 轴，指示器与竖线由库统一计算，**天然像素级对齐**，无需手算。
 // ============================================================================
-const HISTORY_H = 348;          // 三面板总高度（须与 CSS .history-wrap 的 height 一致）
-const PANEL_GAP = 34;           // 面板间距：需容下每行上方的指标名标题
-const AXIS_LABEL_W = 74;         // 固定 Y 轴标签宽度，保证三个 grid 左边界一致
+const HISTORY_H = 560;          // 五面板总高度（须与 CSS .history-wrap 的 height 一致）
+const PANEL_GAP = 30;           // 面板间距：需容下每行上方的指标名标题
+const AXIS_LABEL_W = 74;         // 固定 Y 轴标签宽度，保证五个 grid 左边界一致
 
 const historySync = { allDates: [], valMap: {}, nameMap: {}, colorOf: {}, syms: [], chart: null, idx: -1 };
 
@@ -236,23 +236,28 @@ async function renderAllHistory(items) {
     const vix = mk('VIXCLS', '#ef4444', false);
     const dgs2 = mk('DGS2', '#059669', false);
     const dgs10 = mk('DGS10', '#f59e0b', false);
+    const gold = mk('GOLD', '#b8860b', false);
+    const btc = mk('BTC', '#f7931a', true);
 
     Object.assign(historySync, {
         allDates,
         valMap,
         nameMap,
-        colorOf: { NASDAQ100: '#2563eb', VIXCLS: '#ef4444', DGS2: '#059669', DGS10: '#f59e0b' },
-        syms: ['NASDAQ100', 'VIXCLS', 'DGS2', 'DGS10'],
+        colorOf: {
+            NASDAQ100: '#2563eb', VIXCLS: '#ef4444', DGS2: '#059669', DGS10: '#f59e0b',
+            GOLD: '#b8860b', BTC: '#f7931a',
+        },
+        syms: ['NASDAQ100', 'VIXCLS', 'DGS2', 'DGS10', 'GOLD', 'BTC'],
         idx: -1,
     });
 
-    // ---- 三个 grid 的纵向布局：等高，底部留出 X 轴标签空间 ----
-    // ⚠️ 三个 grid 的 left 必须完全相同，绘图区左边界才会严格对齐；
+    // ---- 五个 grid 的纵向布局：等高，底部留出 X 轴标签空间 ----
+    // ⚠️ 五个 grid 的 left 必须完全相同，绘图区左边界才会严格对齐；
     //    固定留出 AXIS_LABEL_W 给 Y 轴数值，标签有无都不影响曲线起点。
     const topPad = 22;           // 顶部留白：第一行标题要放在 grid 上方
     const xAxisH = 20;
-    const panelH = (HISTORY_H - topPad - xAxisH - PANEL_GAP * 2) / 3;
-    const grids = [0, 1, 2].map(i => ({
+    const panelH = (HISTORY_H - topPad - xAxisH - PANEL_GAP * 4) / 5;
+    const grids = [0, 1, 2, 3, 4].map(i => ({
         left: AXIS_LABEL_W,
         right: 26,
         // 每行网格再下移一点，给标题让位
@@ -260,7 +265,7 @@ async function renderAllHistory(items) {
         height: panelH,
     }));
     // 每个 grid 一套 category 轴，但都指向**同一份** allDates；
-    // axisPointer.link 让三者的指示器联动，竖线由库保证对齐。
+    // axisPointer.link 让五者的指示器联动，竖线由库保证对齐。
     const mkCatAxis = (gridIndex, showLabels) => ({
         type: 'category',
         gridIndex,
@@ -302,9 +307,11 @@ async function renderAllHistory(items) {
         xAxisIndex: gridIndex,
         yAxisIndex: gridIndex,
         data: s.data,
-        showSymbol: false,
+        // 比特币刚上线只有一个点，showSymbol:false 会画不出任何东西；
+        // 数据点少（<=2）时强制显示圆点，历史积累后自动回到细线。
+        showSymbol: s.data.filter(v => v != null).length <= 2,
         symbol: 'circle',
-        symbolSize: 5,
+        symbolSize: 7,
         smooth: 0.3,
         connectNulls: false,
         lineStyle: { width: 1.6, color: s.color },
@@ -316,7 +323,7 @@ async function renderAllHistory(items) {
     const option = {
         animation: false,
         backgroundColor: 'transparent',
-        // ★ 核心：三个 grid 的 X 轴指示器联动，竖线必然连成一条
+        // ★ 核心：五个 grid 的 X 轴指示器联动，竖线必然连成一条
         axisPointer: {
             link: [{ xAxisIndex: 'all' }],
             label: { show: false },
@@ -337,31 +344,34 @@ async function renderAllHistory(items) {
             textStyle: { color: 'transparent' },
         },
         grid: grids,
-        // 每行左侧的指标名，让三个面板一眼可辨（原来只有图例在下方，脱离上下文看不知道谁是谁）
+        // 每行左侧的指标名，让五个面板一眼可辨（原来只有图例在下方，脱离上下文看不知道谁是谁）
         title: [
-            {
-                text: '纳斯达克100',
-                left: 6, top: grids[0].top - 2,
-                textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' },
-            },
-            {
-                text: 'VIX 恐慌指数',
-                left: 6, top: grids[1].top - 2,
-                textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' },
-            },
-            {
-                text: '美债收益率 2年 / 10年',
-                left: 6, top: grids[2].top - 2,
-                textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' },
-            },
+            { text: '纳斯达克100', left: 6, top: grids[0].top - 2,
+              textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' } },
+            { text: 'VIX 恐慌指数', left: 6, top: grids[1].top - 2,
+              textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' } },
+            { text: '美债收益率 2年 / 10年', left: 6, top: grids[2].top - 2,
+              textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' } },
+            { text: 'COMEX黄金（美元/盎司）', left: 6, top: grids[3].top - 2,
+              textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' } },
+            { text: '比特币（美元）', left: 6, top: grids[4].top - 2,
+              textStyle: { fontSize: 11, fontWeight: 'bold', color: '#5b6570' } },
         ],
-        xAxis: [mkCatAxis(0, false), mkCatAxis(1, false), mkCatAxis(2, true)],
-        yAxis: [mkValAxis(0, '', nasdaq.label), mkValAxis(1, '', vix.label), mkValAxis(2, '%', dgs2.label)],
+        xAxis: [0, 1, 2, 3, 4].map(i => mkCatAxis(i, i === 4)),
+        yAxis: [
+            mkValAxis(0, '', nasdaq.label),
+            mkValAxis(1, '', vix.label),
+            mkValAxis(2, '%', dgs2.label),
+            mkValAxis(3, '', gold.label),
+            mkValAxis(4, '', btc.label),
+        ],
         series: [
             lineSeries(nasdaq, 0),
             lineSeries(vix, 1),
             lineSeries(dgs2, 2),
             lineSeries(dgs10, 2),
+            lineSeries(gold, 3),
+            lineSeries(btc, 4),
         ],
     };
 
@@ -428,7 +438,7 @@ async function renderAllHistory(items) {
     // 容器尺寸变化时重绘（左右面板布局在响应式下会变）
     window.addEventListener('resize', () => chart.resize());
 
-    buildLegend([nasdaq, vix, dgs2, dgs10]);
+    buildLegend([nasdaq, vix, dgs2, dgs10, gold, btc]);
 }
 
 let currentMousePos = [-1, -1];
@@ -634,11 +644,11 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
     border-radius: 10px;
     overflow: hidden;
 }
-/* ECharts 单实例三 grid：容器高度须与 JS 里的 HISTORY_H 一致，
+/* ECharts 单实例五 grid：容器高度须与 JS 里的 HISTORY_H 一致，
    否则 grid 布局与容器不匹配。改高度时两处同步改。 */
 .panel .history-wrap {
     position: relative;
-    height: 348px;
+    height: 560px;
     width: 100%;
 }
 .chart-legend {
