@@ -74,10 +74,12 @@ const FAST = ['macro', 'lhb', 'a_share'];
 // 宽度 / 温度，以及 a_share 的指数收盘、news 的当日新闻 —— 它在 close_session 里
 // 排在 stock_temp **之后**串行执行。放进 FAST 会让云函数以为它和宏观并发跑完了，
 // 实际要等 stock_temp（260s）结束才开始，最后误判「缺失」并重复补跑。
-// **theme_capital 放 SLOW**（2026-11-17 新增）：主题资金快照要抓 40+ 次成分股
-// 资金历史 + 两轮 AI 归因，在 close_session 里排在 hotspot 之后串行执行，和 stock_temp
-// 一样慢。放进 FAST 会让云函数误判它已并发跑完、实际还没落库就提前收工。
-const SLOW = ['stock_temp', 'hotspot', 'theme_capital'];
+// **theme_capital 已拆出**（2026-11-22）：主题资金单跑约 113s，原先排在 close_session
+// 最后一步，经常跑到一半被沙箱回收、连 failed 日志都不留（11-18~20 连续缺数）。
+// 现改由独立云函数 eventdrive-theme-capital 在 22:10 单独点火，本函数不再等待它，
+// 否则会像 11-19/20 那样空等到 818s deadline 再报「预算不足跳过补跑」。
+// 放进 FAST 更不对——它根本不在本轮执行。
+const SLOW = ['stock_temp', 'hotspot'];
 const NEED = [...FAST, ...SLOW];
 
 const POLL_MS = 20 * 1000;

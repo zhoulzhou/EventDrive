@@ -154,12 +154,18 @@ _daily_refresh_state = {
 # **含 hotspot**（2026-11-02 新增）：今日热点日报。它**依赖** stock_temp / a_share /
 # news 的当日结果，所以在 close_session 里排最后一步串行执行（见 scheduler.close_session），
 # 不要把它挪进并发的快域组，否则定调条会读到昨天的成交额与指数。
-CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp", "hotspot", "theme_capital")
+#
+# **不含 theme_capital**（2026-11-22 拆出）：主题资金单跑约 113s（50 只成分股历史资金流
+# + 两轮 AI 归因），排在收盘轮最后时进程常在它跑完前被沙箱回收、连 failed 日志都不留
+# （11-18~20 连续缺数）。改由独立云函数 eventdrive-theme-capital 在 22:10 单独点火。
+# 单域补跑入口仍保留在 _DOMAIN_TASKS，?domains=theme_capital 可手动补。
+CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp", "hotspot")
 # 可单独补跑的域集合（含 news / market —— 这两域由上午那轮负责，失败时手动补；
-# hotspot_llm 是收盘轮里紧跟日报的串行步骤，整轮已包含，但也可以单独补一次解读）。
+# hotspot_llm 是收盘轮里紧跟日报的串行步骤，整轮已包含，但也可以单独补一次解读；
+# theme_capital 已拆成独立云函数定时跑）。
 # 故意**不放进 CLOSE_DOMAINS**：它不是与其它域并发的一格，而是 hotspot 内部的第二步。
 # 放进去会让「显式传全量 domains」的判断和云函数 NEED 的语义都变复杂，且无收益。
-ALL_DOMAINS = ("news", "market", "hotspot_llm") + CLOSE_DOMAINS
+ALL_DOMAINS = ("news", "market", "hotspot_llm", "theme_capital") + CLOSE_DOMAINS
 
 # 单个数据域的补跑入口：key -> 协程工厂。
 # 为什么需要它：close_session 里各域并发，其中 legulegu 串行 6s 间隔，

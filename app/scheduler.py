@@ -688,9 +688,13 @@ async def close_session():
 
     **不含财务指标**：财务是按股票代码逐只查询的（无法全市场抓取），
     耗时且低频，改为在财务页面手动抓取（POST /api/finance/fetch）。
+
+    **不含主题资金**（2026-11-22 拆出）：单跑约 113s，排在最后时进程常被沙箱
+    回收、日志都不留（11-18~20 连续缺数）。改由独立云函数
+    `eventdrive-theme-capital` 在 22:10 单独点火。
     """
     log_crawl("#" * 50)
-    log_crawl("### 收盘轮次 21:34：宏观 / 龙虎榜 / A股指数 / 股市热度（不含新闻、不含市场行情） ###")
+    log_crawl("### 收盘轮次 21:34：宏观 / 龙虎榜 / A股指数 / 股市热度（不含新闻/行情/主题资金） ###")
     log_crawl("#" * 50)
     t0 = datetime.now()
 
@@ -743,15 +747,12 @@ async def close_session():
         _write_crawl_log(task="hotspot", session=SESSION_CLOSE, source="hotspot",
                          item_count=0, status="failed", error_message=str(e)[:500])
 
-    # 主题资金（算力 / 人形机器人产业链）：排在热点之后独占跑。它要抓成分股资金历史
-    # （40+ 次 HTTP，30~50s）并做两轮 AI 归因，放最后不拖累其它域；AI 失败只记自己的
-    # 日志，不影响快照本身。同样写英文域键，云函数 NEED 才能识别。
-    try:
-        await refresh_theme_capital(session=SESSION_CLOSE)
-    except Exception as e:  # noqa: BLE001 —— 主题资金失败不能影响整轮收尾
-        log_crawl(f"  ! 主题资金 生成异常: {e}")
-        _write_crawl_log(task="theme_capital", session=SESSION_CLOSE, source="theme_capital",
-                         item_count=0, status="failed", error_message=str(e)[:500])
+    # 主题资金（算力 / 人形机器人产业链）已于 2026-11-22 从收盘轮拆出，改由独立云函数
+    # eventdrive-theme-capital 在 22:10 单独点火。原因：它要抓 50 只成分股历史资金流
+    # （40+ 次 HTTP + 限流间隔，单跑约 113s）再做两轮 AI 归因，排在收盘轮最后时，
+    # 进程常在它跑完前就被沙箱回收——连 failed 日志都来不及写（11-18~20 连续缺数）。
+    # 拆出后独立进程、独立时间窗，不再受收盘轮 800s deadline 收尾调度影响。
+    # 单域补跑入口仍保留在 crawl.py:_DOMAIN_TASKS（?domains=theme_capital）。
 
     log_crawl("#" * 50)
     log_crawl(f"收盘轮次完成，总耗时 {int((datetime.now() - t0).total_seconds())} 秒")

@@ -1,0 +1,12 @@
+{
+  "_comment": "主题资金独立定时（2026-11-22 从收盘轮拆出）。Timeout 300 秒（单跑约 113 秒），内部 deadline 260 秒。环境变量 EVENTDRIVE_SESSION_TOKEN / EVENTDRIVE_CLOUD_DB_KEY / EVENTDRIVE_SHARECODE 与 eventdrive-refresh 相同。cron 为北京时间七段式：0 10 22 * * 1-5 * = 周一至周五 22:10:00。",
+  "name": "eventdrive-theme-capital",
+  "timeout": 300,
+  "triggers": [
+    {
+      "name": "theme-capital-2210",
+      "type": "timer",
+      "config": "0 10 22 * * 1-5 *"
+    }
+  ]
+}
