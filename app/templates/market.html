@@ -48,18 +48,21 @@ async function loadMarket() {
 
         const meta = document.getElementById('metaInfo');
         meta.textContent = `数据来源：${data.source} · 更新时间：${data.updated_at}`
-            + ` · 纳指100 卡片按整段区间最高/最低点判定 ±10% 摆动、不随事件重置（与股市行情同口径）；曲线仍逐档标出每档回撤事件`;
+            + ` · 行色阈值：纳指100 按整段区间高低点 ±10% 摆动（不重置）、VIX 按 20/30 绝对值，`
+            + `其余按当日涨跌幅绝对值（≥2% 红 / ≥1% 黄）；曲线仍逐档标出每档回撤事件`;
 
-        grid.innerHTML = data.items.map(item => renderCard(item)).join('');
+        const head = `<div class="market-list-head"><span>指标</span><span>最新值</span>`
+            + `<span>较前一日</span><span>阈值状态</span><span>数据日期</span></div>`;
+        grid.innerHTML = head + data.items.map(item => renderRow(item)).join('');
         renderAllHistory(data.items);
     } catch (error) {
         grid.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
     }
 }
 
-// 纳指100 摆动说明行：与 /a-share 的 asSwingHtml 同构。
-// 基准是整段区间最高/最低点（不重置），所以只要当前还处在深度回撤里，
-// 卡片就一直红着；曲线上的每档事件标记仍由 /market/history 独立负责。
+// 纳指100 摆动说明：基准是整段区间最高/最低点（不重置），只要还在深度回撤里
+// 行就一直红着；曲线上每档事件仍由 /market/history 独立负责。
+// 列表里只占一格，用紧凑「标签 + 基准 + 偏离」文字，不再像卡片那样单起大块。
 function swingHtml(item) {
     const sw = item.swing;
     if (!sw || !sw.current) return '';
@@ -68,8 +71,8 @@ function swingHtml(item) {
     const fmt = v => formatValue(v, false);
     const signed = v => (v > 0 ? '+' : '') + Number(v).toFixed(2);
     if (!c.direction) {
-        return `<div class="market-swing ok"><span class="market-swing-tag">阈值监测</span>`
-            + `<span>区间内点位无偏离，±${pct}% 阈值未接近</span></div>`;
+        return `<span class="market-swing ok"><span class="market-swing-tag">阈值监测</span>`
+            + `区间内无偏离，±${pct}% 未接近</span>`;
     }
     const sign = c.direction === 'rally' ? '+' : '-';
     const ref = c.ref_date && c.ref_value != null
@@ -77,50 +80,55 @@ function swingHtml(item) {
     let tag, txt;
     if (c.level === 'danger') {
         tag = '阈值触发';
-        txt = `当前较${ref}${c.direction === 'rally' ? ' 高出 ' : ' 回撤 '}`
-            + `${signed(c.deviation_percent)}%，越过 ${sign}${pct}% 阈值 `
-            + `${fmt(Math.max(0, Math.abs(c.deviation_percent) - pct))} 个百分点`;
+        txt = `较${ref}${c.direction === 'rally' ? ' 高出 ' : ' 回撤 '}`
+            + `${signed(c.deviation_percent)}%，越过 ${sign}${pct}%`;
     } else {
         tag = c.level === 'warn' ? '接近阈值' : '阈值监测';
-        txt = `当前较${ref} ${signed(c.deviation_percent)}%，距 ${sign}${pct}% 阈值还有 `
-            + `${fmt(c.remaining_percent)} 个百分点`;
+        txt = `较${ref} ${signed(c.deviation_percent)}%，距 ${sign}${pct}% 还有 `
+            + `${fmt(c.remaining_percent)} 个点`;
     }
-    return `<div class="market-swing ${c.level}"><span class="market-swing-tag">${tag}</span>`
-        + `<span>${escapeHtml(txt)}</span></div>`;
+    return `<span class="market-swing ${c.level}"><span class="market-swing-tag">${tag}</span>${escapeHtml(txt)}</span>`;
 }
 
-function renderCard(item) {
+function renderRow(item) {
     const isYield = item.unit === '%';
     const value = item.value != null ? formatValue(item.value, isYield) : '--';
-    const date = item.date ? `数据日期：${item.date}` : '';
 
-    let changeHtml = '';
+    let changeHtml = '<span class="market-change flat">--</span>';
     if (item.change != null) {
         const cls = item.change >= 0 ? 'up' : 'down';
         const sign = item.change >= 0 ? '+' : '';
         const changeText = `${sign}${formatValue(item.change, isYield)}${item.unit}`;
         const pct = item.change_percent != null ? ` (${sign}${item.change_percent.toFixed(2)}%)` : '';
-        changeHtml = `<div class="market-change ${cls}">${changeText}${pct}</div>`;
+        changeHtml = `<span class="market-change ${cls}">${changeText}${pct}</span>`;
     }
 
-    // 纳指100 已改用「整段区间高低点」口径，不再展示运行峰值行——
-    // 那个峰值回撤触发后会被重置，与新基准并排显示会互相矛盾。其它指标保留。
-    let peakHtml = '';
-    if (!item.swing && item.peak_value != null) {
+    // 阈值状态：纳指100 用摆动说明；其余保留峰值的仍展示峰值；
+    // 按涨跌幅分级的四项把阈值写进行内，便于看懂这一行为什么被染色。
+    let note = swingHtml(item);
+    if (!note && !item.swing && item.peak_value != null) {
         const sign = item.peak_change_percent >= 0 ? '+' : '';
-        peakHtml = `<div class="market-peak">当前峰值 ${formatValue(item.peak_value, false)}（${item.peak_date}） · 较峰值 ${sign}${item.peak_change_percent.toFixed(2)}%</div>`;
+        note = `<span class="market-swing ok"><span class="market-swing-tag">峰值回撤</span>`
+            + `峰值 ${formatValue(item.peak_value, false)}（${item.peak_date}） · 较峰值 ${sign}${item.peak_change_percent.toFixed(2)}%</span>`;
     }
+    if (!note && item.level_thresholds) {
+        const [warn, red] = item.level_thresholds;
+        note = `<span class="market-swing ${item.drawdown_level}">`
+            + `<span class="market-swing-tag">绝对阈值</span>≥${red} 红 / ≥${warn} 黄</span>`;
+    }
+    if (!note && item.change_thresholds) {
+        const [warn, red] = item.change_thresholds;
+        note = `<span class="market-change-note">当日涨跌绝对值 ≥${red}% 红 / ≥${warn}% 黄</span>`;
+    }
+    if (!note) note = '<span class="market-change-note">—</span>';
 
-    return `
-        <div class="market-card${item.drawdown_level && item.drawdown_level !== 'normal' ? ' ' + item.drawdown_level : ''}">
-            <div class="market-name">${escapeHtml(item.name)}</div>
-            <div class="market-value">${value}<span class="market-unit">${item.unit}</span></div>
-            ${changeHtml}
-            ${peakHtml}
-            ${swingHtml(item)}
-            <div class="market-date">${date}</div>
-        </div>
-    `;
+    return `<div class="market-row ${item.drawdown_level || 'normal'}">`
+        + `<span class="mr-name">${escapeHtml(item.name)}</span>`
+        + `<span class="market-value">${value}<span class="market-unit">${item.unit}</span></span>`
+        + changeHtml
+        + `<span class="mr-note">${note}</span>`
+        + `<span class="market-date">${item.date || '--'}</span>`
+        + `</div>`;
 }
 
 // ============================================================================
@@ -485,28 +493,39 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
 </script>
 
 <style>
-/* 6 张行情卡片强制一行：基础 .sources-grid 用 auto-fit 会在窄屏换行，
-   黄金/比特币卡片掉到第二行。这里固定 6 列，窄屏缩小内边距与字号，
-   极窄屏（手机）才允许横向滚动，保证一行看全。 */
-#marketGrid.sources-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+/* 六个指标用紧凑列表，不再是占空间的大卡片。
+   基础 .sources-grid 是 auto-fit 网格，这里覆盖为块级，行内再按列对齐。 */
+#marketGrid.sources-grid { display: block; }
+.market-list-head, .market-row {
+    display: grid;
+    grid-template-columns: minmax(108px, 1.1fr) minmax(112px, 1fr) minmax(136px, 1.1fr) minmax(210px, 2fr) 84px;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
 }
-@media (max-width: 1100px) {
-    #marketGrid.sources-grid { gap: 0.5rem; }
-    #marketGrid .market-card { padding: 0.85rem 0.5rem; }
-    #marketGrid .market-value { font-size: 1.5rem; }
-    #marketGrid .market-name { font-size: 0.85rem; margin-bottom: 0.5rem; }
-    #marketGrid .market-swing { font-size: 0.7rem; padding: 0.3rem 0.35rem; }
-    #marketGrid .market-date { font-size: 0.72rem; }
+.market-list-head {
+    background: #f7f9fb;
+    border-radius: 8px 8px 0 0;
+    color: #8a94a0;
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+.market-list-head span:last-child { text-align: right; }
+@media (max-width: 1000px) {
+    .market-list-head, .market-row {
+        grid-template-columns: minmax(92px, 1fr) minmax(96px, 1fr) minmax(112px, 1.1fr) minmax(150px, 1.5fr) 76px;
+        gap: 6px;
+        padding: 8px 10px;
+    }
 }
 @media (max-width: 700px) {
-    #marketGrid.sources-grid {
-        display: flex;
-        overflow-x: auto;
-        flex-wrap: nowrap;
-        -webkit-overflow-scrolling: touch;
+    .market-list-head { display: none; }
+    .market-row {
+        grid-template-columns: minmax(78px, 1fr) minmax(88px, 1fr) minmax(96px, 1.1fr) 64px;
+        gap: 6px;
+        padding: 8px 10px;
     }
-    #marketGrid .market-card { flex: 0 0 150px; }
+    .market-row .mr-note { display: none; }
 }
 .history-tip {
     position: fixed;
@@ -554,91 +573,45 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
 }
 .cleanup-btn:hover { border-color: #2563eb; color: #2563eb; }
 .cleanup-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.market-card {
-    background: white;
-    border-radius: 12px;
-    padding: 1.5rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    text-align: center;
-    transition: transform 0.2s, box-shadow 0.2s;
+.market-row {
+    background: #fff;
+    border-bottom: 1px solid #eef1f4;
+    border-left: 3px solid transparent;
 }
-.market-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-}
-.market-name {
-    font-weight: 500;
-    color: #666;
-    margin-bottom: 0.75rem;
-}
-.market-value {
-    font-size: 2rem;
-    font-weight: 700;
-    color: #333;
-}
-.market-unit {
-    font-size: 1rem;
-    font-weight: 400;
-    color: #888;
-    margin-left: 0.25rem;
-}
-.market-change {
-    font-size: 1rem;
-    font-weight: 500;
-    margin-top: 0.5rem;
-}
+.market-row:last-child { border-bottom: none; }
+/* 整行按阈值染色：红=触发、黄=接近、绿=安全、常态=无阈值偏离。
+   左侧色条 + 淡底色保留原来的分级语义，但不再像卡片那样占大块空间。 */
+.market-row.ok { background: #f0faf4; border-left-color: #28a745; }
+.market-row.warn { background: #fffbeb; border-left-color: #eab308; }
+.market-row.danger { background: #fff1f2; border-left-color: #dc2626; }
+.mr-name { font-weight: 600; color: #374151; font-size: 0.9rem; }
+.market-value { font-size: 1.05rem; font-weight: 700; color: #333; white-space: nowrap; }
+.market-unit { font-size: 0.75rem; font-weight: 400; color: #888; margin-left: 0.2rem; }
+.market-row.ok .market-value { color: #16a34a; }
+.market-row.warn .market-value { color: #d97706; }
+.market-row.danger .market-value { color: #b91c1c; }
+.market-change { font-size: 0.85rem; font-weight: 500; white-space: nowrap; }
 .market-change.up { color: #28a745; }
 .market-change.down { color: #dc3545; }
-.market-peak {
-    margin-top: 0.5rem;
-    font-size: 0.85rem;
-    color: #888;
-}
-/* 摆动分级：偏离 <5% 绿 / 5%~10% 黄 / >=10% 红。
-   纳指100 的 level 来自整段区间高低点（双向、不重置），VIX 仍按绝对值分级。 */
-.market-card.ok {
-    border: 2px solid #28a745;
-    background: #f0faf4;
-}
-.market-card.ok .market-value { color: #16a34a; }
-.market-card.ok .market-peak { color: #16a34a; }
-.market-card.warn {
-    border: 2px solid #eab308;
-    background: #fffbeb;
-}
-.market-card.warn .market-value { color: #d97706; }
-.market-card.warn .market-peak { color: #d97706; }
-/* 红底与 /a-share 的 .as-alert-danger 保持一致，一眼能看出触发 */
-.market-card.danger {
-    border: 2px solid #dc2626;
-    background: #fff1f2;
-    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.10), 0 2px 8px rgba(0, 0, 0, 0.08);
-}
-.market-card.danger .market-value { color: #b91c1c; }
-.market-card.danger .market-peak { color: #b91c1c; }
-/* 摆动说明行：与 /a-share 的 .as-swing 同构（标签 + 基准点位 + 偏离幅度） */
+.market-change.flat { color: #999; }
+.mr-note { font-size: 0.76rem; line-height: 1.5; color: #64748b; }
+.market-change-note { color: #94a3b8; }
+/* 紧凑阈值标签（纳指100 摆动 / VIX 绝对阈值共用） */
 .market-swing {
-    display: flex; align-items: center; justify-content: center;
-    gap: 0.5rem; flex-wrap: wrap;
-    margin-top: 0.6rem; padding: 0.42rem 0.6rem;
-    border-radius: 8px; font-size: 0.8rem; line-height: 1.5;
-    text-align: left;
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    flex-wrap: wrap; line-height: 1.5;
 }
-.market-swing.ok { background: #f1f5f9; color: #64748b; }
-.market-swing.warn { background: #fffbeb; color: #92400e; }
-.market-swing.danger { background: #fee2e2; color: #b91c1c; font-weight: 600; }
+.market-swing.ok { color: #64748b; }
+.market-swing.warn { color: #92400e; }
+.market-swing.danger { color: #b91c1c; font-weight: 600; }
 .market-swing-tag {
-    flex: none; padding: 0.06rem 0.45rem; border-radius: 4px;
-    font-size: 0.72rem; font-weight: 700;
+    flex: none; padding: 0.05rem 0.32rem; border-radius: 4px;
+    font-size: 0.7rem; font-weight: 700;
 }
 .market-swing.ok .market-swing-tag { background: rgba(100, 116, 139, 0.14); }
 .market-swing.warn .market-swing-tag { background: rgba(217, 119, 6, 0.16); }
 .market-swing.danger .market-swing-tag { background: rgba(220, 38, 38, 0.16); }
-.market-date {
-    margin-top: 0.75rem;
-    font-size: 0.85rem;
-    color: #888;
-}
+.market-date { font-size: 0.78rem; color: #94a3b8; text-align: right; white-space: nowrap; }
 .chart-section {
     position: relative;
     margin-top: 2rem;

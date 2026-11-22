@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,24 @@ DISPLAY_ORDER = ["NASDAQ100", "VIXCLS", "DGS2", "DGS10", "GOLD", "BTC"]
 
 # 各指标的实际数据源文案（_to_item 里原本写死 FRED，黄金/比特币来自新浪）
 SOURCE_LABELS = {"GOLD": "新浪财经", "BTC": "新浪财经"}
+
+# 未配置策略阈值的四项（美债2Y/10Y、黄金、比特币）按当日涨跌幅绝对值分级，
+# 只用于列表行着色，不改变已有的峰值/摆动/回撤口径。
+CHANGE_LEVEL_SYMBOLS = {"DGS2", "DGS10", "GOLD", "BTC"}
+CHANGE_LEVEL_WARN_PCT = 1.0
+CHANGE_LEVEL_RED_PCT = 2.0
+
+
+def _change_level(pct: Optional[float]) -> str:
+    """|涨跌幅| >=2% 红、>=1% 黄、其余常态；无前值（如新上线首日）为常态。"""
+    if pct is None:
+        return "normal"
+    a = abs(pct)
+    if a >= CHANGE_LEVEL_RED_PCT:
+        return "danger"
+    if a >= CHANGE_LEVEL_WARN_PCT:
+        return "warn"
+    return "normal"
 
 
 def _to_item(latest: dict) -> dict:
@@ -116,6 +135,7 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
             if it["symbol"] == "VIXCLS":
                 strategy = get_strategy(it["symbol"])
                 thresholds = strategy.get("thresholds", [20, 30]) if strategy else [20, 30]
+                it["level_thresholds"] = thresholds
                 info = compute_level(it["value"], thresholds)
             else:
                 state = strategy_states.get(it["symbol"])
@@ -124,6 +144,9 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
             if it["symbol"] == "NASDAQ100" and nasdaq_swing:
                 it["swing"] = nasdaq_swing
                 it["drawdown_level"] = nasdaq_swing["current"]["level"]
+            if it["symbol"] in CHANGE_LEVEL_SYMBOLS:
+                it["drawdown_level"] = _change_level(it.get("change_percent"))
+                it["change_thresholds"] = [CHANGE_LEVEL_WARN_PCT, CHANGE_LEVEL_RED_PCT]
 
         return {
             "status": "ok",
