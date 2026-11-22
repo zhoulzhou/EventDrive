@@ -13,8 +13,6 @@
         <div class="tc-toolbar">
             <span id="tcUpdated" class="tc-updated">加载中…</span>
             <button id="tcRefresh" class="tc-btn tc-btn-primary" type="button">刷新数据</button>
-            <button id="tcGenLlm" class="tc-btn" type="button">生成解读</button>
-            <button id="tcCfgBtn" class="tc-btn tc-btn-link" type="button">设置 Key</button>
         </div>
     </div>
     <p class="form-hint">
@@ -28,19 +26,10 @@
         <strong>口径提醒</strong>：成分股是人工维护的观察样本，<strong>不是官方行业统计、也不是全市场</strong>；
         涨跌与资金均为<strong>收盘快照</strong>，非实时。净流入趋势由篮内个股各自的历史主力净额按日求和，
         篮子固定所以跨日可比。「涨停龙头」只统计篮内当日进入涨停池的个股。
-        AI 归因基于全量证据 + 近几日档案两轮自检，是<strong>基于当日数据的推断，非事实陈述，不构成投资建议</strong>。
     </p>
 </div>
 
 <div id="tcNotice"></div>
-
-<div id="tcCfg" class="tc-cfg" style="display:none">
-    <input id="tcKey" type="password" autocomplete="off" spellcheck="false"
-           placeholder="粘贴 DeepSeek API Key（sk-…）">
-    <button id="tcKeySave" class="tc-btn tc-btn-primary" type="button">保存并生效</button>
-    <button id="tcKeyCancel" class="tc-btn tc-btn-link" type="button">取消</button>
-    <span class="tc-cfg-hint" id="tcCfgHint"></span>
-</div>
 
 <div id="tcRefreshBar" class="tc-refresh-bar" style="display:none">
     <span class="tc-spin"></span><span id="tcRefreshMsg">正在后台抓取，约需 1 分钟…</span>

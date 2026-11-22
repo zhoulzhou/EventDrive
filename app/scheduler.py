@@ -537,17 +537,10 @@ def _refresh_theme_capital_sync() -> dict:
             pass
 
 
-def _theme_capital_llm_sync(force: bool = False) -> dict:
-    from app.utils import theme_capital_llm as tc_llm
-    return tc_llm.generate_for_date(None, force=force)
-
-
 async def refresh_theme_capital(session: str = "manual"):
     """生成主题资金快照（算力 / 人形机器人两条链），落 theme_capital_snapshots。
 
-    排在 close_session 热点之后：抓成分股历史约需 30~50s，是慢活，单独成域、
-    失败记 failed 不影响其它域。AI 归因同样串行紧跟快照，排在 ok 日志之前，
-    让云函数等到快照 + 归因都完成（同 refresh_hotspot_llm 的理由）。
+    抓成分股历史约需 30~50s，是慢活，单独成域、失败记 failed 不影响其它域。
     """
     if not check_task_allowed("theme_capital"):
         log_crawl("主题资金：已达今日配额或正在运行，跳过")
@@ -572,16 +565,6 @@ async def refresh_theme_capital(session: str = "manual"):
         )
         for gap in summary.get("gaps") or []:
             log_crawl(f"  ! {gap}")
-        if saved:
-            try:
-                llm_result = await asyncio.to_thread(_theme_capital_llm_sync)
-                if llm_result.get("status") == "ok":
-                    log_crawl("主题资金 AI 归因完成%s"
-                              % ("（命中缓存）" if llm_result.get("cached") else ""))
-                else:
-                    log_crawl(f"  ! 主题资金 AI 归因跳过/失败：{llm_result.get('message') or llm_result.get('status')}")
-            except Exception as e:  # noqa: BLE001 —— AI 失败不影响快照
-                log_crawl(f"  ! 主题资金 AI 归因异常（不影响快照）: {e}")
         _write_crawl_log(
             task="theme_capital", session=session, source="eastmoney:theme_capital",
             item_count=int(summary.get("item_count") or 0),
@@ -689,7 +672,7 @@ async def close_session():
     **不含财务指标**：财务是按股票代码逐只查询的（无法全市场抓取），
     耗时且低频，改为在财务页面手动抓取（POST /api/finance/fetch）。
 
-    **不含主题资金**（2026-11-22 拆出）：单跑约 113s，排在最后时进程常被沙箱
+    **不含主题资金**（2026-11-22 拆出）：单跑约 40~50s，排在最后时进程常被沙箱
     回收、日志都不留（11-18~20 连续缺数）。改由独立云函数
     `eventdrive-theme-capital` 在 22:10 单独点火。
     """
@@ -749,7 +732,7 @@ async def close_session():
 
     # 主题资金（算力 / 人形机器人产业链）已于 2026-11-22 从收盘轮拆出，改由独立云函数
     # eventdrive-theme-capital 在 22:10 单独点火。原因：它要抓 50 只成分股历史资金流
-    # （40+ 次 HTTP + 限流间隔，单跑约 113s）再做两轮 AI 归因，排在收盘轮最后时，
+    # （40+ 次 HTTP + 限流间隔，单跑约 40~50s），排在收盘轮最后时，
     # 进程常在它跑完前就被沙箱回收——连 failed 日志都来不及写（11-18~20 连续缺数）。
     # 拆出后独立进程、独立时间窗，不再受收盘轮 800s deadline 收尾调度影响。
     # 单域补跑入口仍保留在 crawl.py:_DOMAIN_TASKS（?domains=theme_capital）。

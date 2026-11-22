@@ -5,7 +5,7 @@
      .tc-header-top          两层页头（h1 + 工具栏）
      .tc-overview            两条链概览卡
      #tcTrendChart           净流入趋势（ECharts，两链双 series）
-     #tcChains > .tc-chain    每条链详情：分环节 / 个股榜 / 涨停龙头 / 新闻 / AI 归因
+     #tcChains > .tc-chain    每条链详情：分环节 / 个股榜 / 涨停龙头 / 新闻
    ⚠ 正文与说明不加 max-width（用户要求文字顶满再换行）。
    ⚠ 颜色遵守 A 股习惯：红=涨/净流入，绿=跌/净流出。
    ========================================================================== */
@@ -59,17 +59,6 @@
 .tc-notice.ok { background: #eef7f1; border: 1px solid #cde9d9; color: #30684a; }
 .tc-notice.warn { background: #fff8e8; border: 1px solid #f2dfae; color: #8a6415; }
 .tc-notice.error { background: #fdf0f0; border: 1px solid #f0c9c9; color: #9b3535; }
-
-.tc-cfg {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    background: var(--tc-soft); border: 1px solid var(--tc-line);
-    border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;
-}
-.tc-cfg input {
-    flex: 1 1 320px; font-size: 0.86rem; padding: 7px 10px;
-    border: 1px solid var(--tc-line); border-radius: 6px;
-}
-.tc-cfg-hint { font-size: 0.8rem; color: var(--tc-sub); flex: 1 1 100%; }
 
 .tc-refresh-bar {
     display: flex; align-items: center; gap: 10px;
@@ -215,42 +204,9 @@
 .tc-news a { color: var(--tc-ink); text-decoration: none; }
 .tc-news a:hover { color: #667eea; text-decoration: underline; }
 
-/* ------------------------------------------------------------ AI 归因卡片 */
-.tc-llm { margin-top: 16px; border-top: 1px solid var(--tc-line); padding-top: 14px; }
-.tc-llm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.tc-llm-title { font-size: 0.92rem; font-weight: 700; color: var(--tc-ink); }
-.tc-llm-title .tc-llm-mark { color: #7c5cff; margin-right: 4px; }
-.tc-llm-badge { font-size: 0.7rem; color: var(--tc-sub); border: 1px solid var(--tc-line); border-radius: 8px; padding: 1px 7px; margin-left: 6px; }
-.tc-llm-meta { font-size: 0.78rem; color: var(--tc-sub); }
-.tc-llm-anomaly { background: #faf7ff; border: 1px solid #e6defc; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
-.tc-llm-label { display: inline-block; font-size: 0.72rem; color: #7c5cff; font-weight: 700; margin-bottom: 4px; }
-.tc-llm-anomaly-signal { color: var(--tc-ink); font-size: 0.86rem; line-height: 1.55; }
-.tc-llm-anomaly-why { color: var(--tc-sub); font-size: 0.8rem; margin-top: 4px; line-height: 1.55; }
-.tc-llm-block { margin-bottom: 10px; }
-.tc-llm-hyps { display: flex; flex-direction: column; gap: 8px; }
-.tc-llm-hyp { background: var(--tc-soft); border-radius: 8px; padding: 9px 12px; }
-.tc-llm-hyp-claim { font-size: 0.84rem; color: var(--tc-ink); line-height: 1.5; }
-.tc-llm-hyp-no { color: #7c5cff; font-weight: 700; margin-right: 4px; }
-.tc-llm-conf { font-size: 0.7rem; color: var(--tc-sub); margin-left: 6px; white-space: nowrap; }
-.tc-llm-evidence { margin: 6px 0 0 18px; font-size: 0.78rem; color: #5b6070; }
-.tc-llm-evidence li { margin-bottom: 2px; }
-.tc-llm-counter { font-size: 0.78rem; color: #9b6a15; margin-top: 6px; }
-.tc-llm-counter b { color: #8a6415; }
-.tc-llm-notes { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; margin-bottom: 10px; }
-.tc-llm-note { background: var(--tc-soft); border-radius: 8px; padding: 8px 11px; font-size: 0.8rem; color: var(--tc-ink); }
-.tc-llm-note span { display: block; font-size: 0.72rem; color: var(--tc-sub); margin-bottom: 3px; }
-.tc-llm-checks { display: flex; flex-direction: column; gap: 6px; }
-.tc-llm-check { font-size: 0.8rem; color: var(--tc-ink); background: var(--tc-soft); border-radius: 6px; padding: 7px 11px; }
-.tc-llm-check b { color: #4f5fc0; }
-.tc-llm-link { font-size: 0.82rem; color: var(--tc-ink); background: #faf7ff; border: 1px solid #e6defc; border-radius: 8px; padding: 8px 12px; margin-top: 8px; }
-.tc-llm-foot { font-size: 0.72rem; color: #a6abb5; margin-top: 10px; line-height: 1.5; }
-.tc-llm-empty { font-size: 0.84rem; color: var(--tc-sub); background: var(--tc-soft); border-radius: 8px; padding: 14px; line-height: 1.6; }
-.tc-llm-loading { font-size: 0.84rem; color: var(--tc-sub); padding: 14px 0; }
-.tc-llm-error { font-size: 0.84rem; color: #9b3535; }
-
 /* ------------------------------------------------------------ 响应式 */
 @media (max-width: 900px) {
-    .tc-overview, .tc-subgrid, .tc-two-lists, .tc-llm-notes { grid-template-columns: 1fr; }
+    .tc-overview, .tc-subgrid, .tc-two-lists { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
     .tc-ov-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

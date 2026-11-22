@@ -1,8 +1,8 @@
-"""主题资金接口：算力 / 人形机器人产业链的每日快照 + AI 归因。
+"""主题资金接口：算力 / 人形机器人产业链的每日快照。
 
-页面只发一个 GET 拿整份快照（双链明细 + 趋势 + 归因），走 view_cache + ETag。
-刷新是重活（40+ 次历史请求 + 两轮模型调用，约 40~70s），走后台线程点火后立即
-返回，绝不放在请求里撞反代 60s 超时 —— 与 /api/crawl/daily-refresh 同一套路。
+页面只发一个 GET 拿整份快照（双链明细 + 趋势），走 view_cache + ETag。
+刷新是重活（40+ 次历史请求，约 30~50s），走后台线程点火后立即返回，
+绝不放在请求里撞反代 60s 超时 —— 与 /api/crawl/daily-refresh 同一套路。
 """
 
 import logging
@@ -10,14 +10,11 @@ import threading
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BaseModel
 
 from app import crud
 from app.api.login import require_auth
 from app.utils import http_cache
-from app.utils import llm_summary as llm_mod
 from app.utils import theme_capital as tc_mod
-from app.utils import theme_capital_llm as tc_llm
 from app.utils import view_cache
 
 logger = logging.getLogger(__name__)
@@ -35,15 +32,11 @@ _refresh_state = {
 }
 
 
-class _ApiKeyBody(BaseModel):
-    api_key: str
-
-
 @router.get("/theme-capital/snapshot")
 def get_snapshot(request: Request, response: Response,
                  date: Optional[str] = Query(None, description="交易日 YYYY-MM-DD，空取最新"),
                  auth: bool = Depends(require_auth)):
-    """取主题资金快照（双链明细 + 趋势 + AI 归因）。整份响应走 view_cache + ETag。
+    """取主题资金快照（双链明细 + 趋势）。整份响应走 view_cache + ETag。
 
     date 纳入 view_key，指定历史日与最新日不共用快照。
     """
@@ -86,7 +79,7 @@ def get_snapshot(request: Request, response: Response,
 
 
 def _refresh_worker(date: Optional[str]) -> None:
-    """后台线程：抓快照落库 → 两轮 AI 归因回填。独占锁由调用方持有到结束。"""
+    """后台线程：抓快照落库。独占锁由调用方持有到结束。"""
     from datetime import datetime
     from app.database import SessionLocal
     from app.scheduler import _write_crawl_log
@@ -95,12 +88,6 @@ def _refresh_worker(date: Optional[str]) -> None:
     try:
         summary = tc_mod.refresh_theme_capital(db, date)
         _refresh_state["last_result"] = summary
-        if summary.get("status") == "ok":
-            llm_result = tc_llm.generate_for_date(summary.get("market_date"))
-            _refresh_state["last_result"]["llm"] = {
-                "status": llm_result.get("status"),
-                "message": llm_result.get("message"),
-            }
         status = "ok" if summary.get("status") == "ok" else "empty"
         _write_crawl_log(task="theme_capital", session="manual",
                          source="eastmoney:theme_capital",
@@ -131,7 +118,7 @@ def _refresh_worker(date: Optional[str]) -> None:
 @router.post("/theme-capital/refresh")
 def refresh_snapshot(date: Optional[str] = Query(None, description="交易日，空取今天"),
                      auth: bool = Depends(require_auth)):
-    """后台点火：抓一条新快照并生成 AI 归因。立即返回，前端轮询 status。"""
+    """后台点火：抓一条新快照。立即返回，前端轮询 status。"""
     if not _refresh_lock.acquire(blocking=False):
         return {"status": "running",
                 "message": "正在刷新中，请稍候",
@@ -154,27 +141,3 @@ def refresh_snapshot(date: Optional[str] = Query(None, description="交易日，
 def refresh_status(auth: bool = Depends(require_auth)):
     """刷新进度：前端每 3s 轮询，running 由 true 变 false 即结束。"""
     return {**_refresh_state}
-
-
-# ================================================================ AI 归因
-# Key 配置与今日热点共用（同一把运行时 Key），这里直接复用 llm_summary 的入口。
-@router.get("/theme-capital/llm-config")
-def llm_config(auth: bool = Depends(require_auth)):
-    return llm_mod.config_view()
-
-
-@router.post("/theme-capital/llm-config")
-def llm_set_config(body: _ApiKeyBody, auth: bool = Depends(require_auth)):
-    try:
-        view = llm_mod.set_api_key(body.api_key)
-    except llm_mod.LlmError as exc:
-        return {"status": "error", "message": str(exc)}
-    return {"status": "ok", **view}
-
-
-@router.post("/theme-capital/llm-summary")
-def make_llm_summary(date: Optional[str] = Query(None, description="交易日，空取最新"),
-                     force: bool = Query(False, description="已有归因时是否强制重算"),
-                     auth: bool = Depends(require_auth)):
-    """两轮生成两条链的归因并落库。锁 + 缓存判定与收盘轮共用，不重复烧 token。"""
-    return tc_llm.generate_for_date(date, force=force)

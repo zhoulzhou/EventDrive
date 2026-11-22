@@ -86,8 +86,7 @@ _STAMP_SOURCES: Dict[str, tuple] = {
         ("daily_hotspots", "updated_at"),
         ("daily_hotspots", "market_date"),
     ),
-    # 主题资金：快照表重写（抓新数据）或 AI 归因回填都会改 updated_at，一次抓取内
-    # 双写（快照 + llm 回填）靠 updated_at 变化即可捕获，单源足够。
+    # 主题资金：快照表重写（抓新数据）会改 updated_at，单源足够。
     "theme_capital": (("theme_capital_snapshots", "updated_at"),),
 }
 

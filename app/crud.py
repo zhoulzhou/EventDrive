@@ -2148,30 +2148,6 @@ def save_theme_capital_snapshot(db: Session, market_date: str, payload: dict,
     return True
 
 
-def save_theme_capital_llm(db: Session, market_date: str, llm: dict) -> bool:
-    """把两条链的 AI 归因写回快照 payload（只改 payload 一列，不动 generated_at）。"""
-    record = get_theme_capital_snapshot(db, market_date)
-    if not record or not isinstance(record.get("payload"), dict):
-        return False
-    payload = record["payload"]
-    payload["llm_summary"] = llm
-    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    if _USE_CLOUD:
-        rows = _cdb.upsert(T_THEME_CAPITAL, [{
-            "market_date": market_date,
-            "payload": text,
-        }], on_conflict="market_date", context="save_theme_capital_llm")
-        return bool(rows)
-    row = db.query(models.ThemeCapitalSnapshot).filter(
-        models.ThemeCapitalSnapshot.market_date == market_date).first()
-    if row is None:
-        return False
-    row.payload = text
-    row.updated_at = datetime.now()
-    db.commit()
-    return True
-
-
 def get_theme_capital_snapshot(db: Session, market_date: Optional[str] = None) -> Optional[dict]:
     """取主题资金快照；market_date 为空取最新一份。返回结构同 get_daily_hotspot。"""
     if _USE_CLOUD:

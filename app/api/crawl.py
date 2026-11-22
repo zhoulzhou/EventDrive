@@ -155,9 +155,9 @@ _daily_refresh_state = {
 # news 的当日结果，所以在 close_session 里排最后一步串行执行（见 scheduler.close_session），
 # 不要把它挪进并发的快域组，否则定调条会读到昨天的成交额与指数。
 #
-# **不含 theme_capital**（2026-11-22 拆出）：主题资金单跑约 113s（50 只成分股历史资金流
-# + 两轮 AI 归因），排在收盘轮最后时进程常在它跑完前被沙箱回收、连 failed 日志都不留
-# （11-18~20 连续缺数）。改由独立云函数 eventdrive-theme-capital 在 22:10 单独点火。
+# **不含 theme_capital**（2026-11-22 拆出）：主题资金单跑约 40~50s（50 只成分股历史资金流），
+# 排在收盘轮最后时进程常在它跑完前被沙箱回收、连 failed 日志都不留（11-18~20 连续缺数）。
+# 改由独立云函数 eventdrive-theme-capital 在 22:10 单独点火。
 # 单域补跑入口仍保留在 _DOMAIN_TASKS，?domains=theme_capital 可手动补。
 CLOSE_DOMAINS = ("macro", "lhb", "a_share", "stock_temp", "hotspot")
 # 可单独补跑的域集合（含 news / market —— 这两域由上午那轮负责，失败时手动补；
@@ -180,7 +180,7 @@ _DOMAIN_TASKS = {
     "a_share": lambda: refresh_a_share_index(session="close"),
     "stock_temp": lambda: refresh_stock_temp(session="close"),
     "hotspot": lambda: refresh_hotspot(session="close"),
-    # 主题资金：算力 / 人形机器人产业链快照 + AI 归因（慢域，单独补跑用）
+    # 主题资金：算力 / 人形机器人产业链快照（慢域，单独补跑用）
     "theme_capital": lambda: refresh_theme_capital(session="close"),
     # 只补 AI 归因、不重抓日报：日报错了用 hotspot，解读失败/被清掉用这一格
     "hotspot_llm": lambda: refresh_hotspot_llm(session="close"),

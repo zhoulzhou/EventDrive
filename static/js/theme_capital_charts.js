@@ -2,11 +2,9 @@
    主题资金（/theme-capital）渲染 + 图表
    --------------------------------------------------------------------------
    请求：
-     GET  /api/theme-capital/snapshot?date=  整份快照（双链明细 + 趋势 + 归因），带 ETag
+     GET  /api/theme-capital/snapshot?date=  整份快照（双链明细 + 趋势），带 ETag
      POST /api/theme-capital/refresh          后台点火，立即返回
      GET  /api/theme-capital/refresh-status   轮询刷新进度
-     POST /api/theme-capital/llm-summary      生成/重算两条链归因
-     GET/POST /api/theme-capital/llm-config   Key 配置（与今日热点共用同一把 Key）
    配色：红=涨/净流入，绿=跌/净流出（A 股习惯）。
    ========================================================================== */
 (function () {
@@ -21,10 +19,8 @@
 
     var state = {
         data: null,        // 当前显示的 {status,date,payload,dates}
-        llmCfg: null,
         chart: null,
-        polling: null,
-        genBusy: false
+        polling: null
     };
 
     function $(id) { return document.getElementById(id); }
@@ -197,7 +193,6 @@
     // ------------------------------------------------------------ 链详情
     function renderChains(payload) {
         var chains = payload.chains || {};
-        var llm = payload.llm_summary || {};
         $("tcChains").innerHTML = CHAINS.map(function (m) {
             var c = chains[m.key] || {};
             return '<div class="tc-chain ' + m.key + '">'
@@ -210,7 +205,6 @@
                     + '<div class="tc-block">' + stocksBlock(c) + "</div>"
                     + '<div class="tc-block">' + newsBlock(c) + "</div>"
                 + "</div>"
-                + llmBlock(m, llm[m.key])
                 + "</div>";
         }).join("");
     }
@@ -293,61 +287,6 @@
         return html;
     }
 
-    // ------------------------------------------------------------ AI 归因卡片
-    function llmBlock(meta, s) {
-        var head = '<div class="tc-llm-head"><div class="tc-llm-title">'
-            + '<span class="tc-llm-mark">✦</span> AI 归因 · ' + esc(meta.name)
-            + '<span class="tc-llm-badge">DeepSeek Flash</span></div>'
-            + (s && s.generated_at ? '<span class="tc-llm-meta">归因于 ' + esc(s.generated_at) + "</span>" : "")
-            + "</div>";
-        if (!s || (s.status === "error" && !s.hypotheses)) {
-            return '<div class="tc-llm">' + head
-                + '<div class="tc-llm-empty">这一条链还没有 AI 归因。点页头「生成解读」，'
-                + "模型会读成分股资金榜、分环节净流入、涨停龙头、相关新闻与近几日趋势，"
-                + "两轮自检后给出反常信号、带证据链与反证的假设、可证伪的验证清单。</div></div>";
-        }
-        var html = '<div class="tc-llm">' + head;
-        if (s.signal) {
-            html += '<div class="tc-llm-anomaly"><span class="tc-llm-label">最反常的信号</span>'
-                + '<div class="tc-llm-anomaly-signal">' + esc(s.signal) + "</div>"
-                + (s.why ? '<div class="tc-llm-anomaly-why">' + esc(s.why) + "</div>" : "") + "</div>";
-        }
-        var hyps = s.hypotheses || [];
-        if (hyps.length) {
-            html += '<div class="tc-llm-block"><span class="tc-llm-label">归因假设 · 证据链与反证</span><div class="tc-llm-hyps">';
-            hyps.forEach(function (h, i) {
-                var conf = { high: "较高", medium: "中", low: "偏低" }[String(h.confidence || "").toLowerCase()] || "中";
-                html += '<div class="tc-llm-hyp"><div class="tc-llm-hyp-claim">'
-                    + '<span class="tc-llm-hyp-no">' + ["①", "②", "③"][i] + "</span>" + esc(h.claim)
-                    + '<span class="tc-llm-conf">置信 ' + esc(conf) + "</span></div>";
-                var ev = (h.evidence || []).map(function (e) { return "<li>" + esc(e) + "</li>"; }).join("");
-                if (ev) html += '<ul class="tc-llm-evidence">' + ev + "</ul>";
-                if (h.counter) html += '<div class="tc-llm-counter"><b>反证</b> ' + esc(h.counter) + "</div>";
-                html += "</div>";
-            });
-            html += "</div></div>";
-        }
-        if (s.overlooked || s.cycle) {
-            html += '<div class="tc-llm-notes">';
-            if (s.overlooked) html += '<div class="tc-llm-note"><span>被忽略的信号</span>' + esc(s.overlooked) + "</div>";
-            if (s.cycle) html += '<div class="tc-llm-note"><span>周期定位</span>' + esc(s.cycle) + "</div>";
-            html += "</div>";
-        }
-        var checks = s.checks || [];
-        if (checks.length) {
-            html += '<div class="tc-llm-block"><span class="tc-llm-label">验证清单</span><div class="tc-llm-checks">';
-            checks.forEach(function (c) {
-                html += '<div class="tc-llm-check"><b>若</b> ' + esc(c["if"]) + " <b>则</b> " + esc(c.then) + "</div>";
-            });
-            html += "</div></div>";
-        }
-        html += '<div class="tc-llm-foot">基于当日数据的推断，非事实陈述，不构成投资建议'
-            + (s.total_tokens ? " · " + esc(String(s.total_tokens)) + " tokens" : "")
-            + (s.reviewed === false ? " · 审稿轮降级" : "") + "</div>";
-        html += "</div>";
-        return html;
-    }
-
     // ------------------------------------------------------------ 提示条
     function showNotice(kind, msg) {
         $("tcNotice").innerHTML = '<div class="tc-notice ' + kind + '">' + esc(msg) + "</div>";
@@ -377,7 +316,7 @@
             fetchWithAuth("/api/theme-capital/refresh-status").then(function (r) { return r.json(); })
                 .then(function (st) {
                     $("tcRefreshMsg").textContent = st.running
-                        ? "正在后台抓取并生成归因，约需 1 分钟…"
+                        ? "正在后台抓取，约需 1 分钟…"
                         : "刷新已结束，正在载入新数据…";
                     if (!st.running) {
                         $("tcRefreshBar").style.display = "none";
@@ -397,76 +336,10 @@
         }, 3000);
     }
 
-    // ------------------------------------------------------------ AI 归因生成
-    function loadLlmConfig() {
-        fetchWithAuth("/api/theme-capital/llm-config").then(function (r) { return r.json(); })
-            .then(function (cfg) {
-                state.llmCfg = cfg;
-                var hint = $("tcCfgHint");
-                if (cfg.configured) hint.textContent = "已配置（" + (cfg.key_hint || "") + "）"
-                    + "，保存在服务端，与今日热点共用同一把 Key。";
-                else hint.textContent = "尚未配置。填入后点「保存并生效」，即可生成归因。";
-            }).catch(function () {});
-    }
-
-    function genLlm() {
-        if (state.genBusy) return;
-        state.genBusy = true;
-        var btn = $("tcGenLlm");
-        var old = btn.textContent;
-        btn.textContent = "生成中…";
-        btn.disabled = true;
-        fetchWithAuth("/api/theme-capital/llm-summary", { method: "POST" })
-            .then(function (r) { return r.json(); }).then(function (data) {
-                if (data.status === "ok") {
-                    showNotice("ok", (data.cached ? "已有归因，直接显示" : "归因已生成")
-                        + "：" + (data.market_date || ""));
-                    load(data.market_date || null);
-                } else if (data.status === "unconfigured") {
-                    toggleCfg(true);
-                    showNotice("warn", data.message || "请先配置 DeepSeek API Key");
-                } else {
-                    showNotice("error", data.message || "生成失败");
-                }
-            }).catch(function (err) {
-                showNotice("error", "生成请求失败：" + err.message);
-            }).finally(function () {
-                state.genBusy = false;
-                btn.textContent = old;
-                btn.disabled = false;
-            });
-    }
-
-    function toggleCfg(show) { $("tcCfg").style.display = show ? "flex" : "none"; }
-
-    function saveKey() {
-        var key = $("tcKey").value.trim();
-        if (!key) { showNotice("warn", "请先粘贴 API Key"); return; }
-        fetchWithAuth("/api/theme-capital/llm-config", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ api_key: key })
-        }).then(function (r) { return r.json(); }).then(function (data) {
-            if (data.status === "ok") {
-                $("tcKey").value = "";
-                toggleCfg(false);
-                loadLlmConfig();
-                showNotice("ok", "API Key 已保存并生效");
-            } else {
-                showNotice("error", data.message || "保存失败");
-            }
-        }).catch(function (err) { showNotice("error", "保存失败：" + err.message); });
-    }
-
     // ------------------------------------------------------------ 事件绑定
     document.addEventListener("DOMContentLoaded", function () {
         load(null);
-        loadLlmConfig();
         $("tcRefresh").addEventListener("click", startRefresh);
-        $("tcGenLlm").addEventListener("click", genLlm);
-        $("tcCfgBtn").addEventListener("click", function () { toggleCfg(true); });
-        $("tcKeyCancel").addEventListener("click", function () { toggleCfg(false); });
-        $("tcKeySave").addEventListener("click", saveKey);
         window.addEventListener("resize", function () {
             if (state.chart) { try { state.chart.resize(); } catch (e) {} }
         });
