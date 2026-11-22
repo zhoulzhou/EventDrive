@@ -22,23 +22,46 @@ DISPLAY_ORDER = ["NASDAQ100", "VIXCLS", "DGS2", "DGS10", "GOLD", "BTC"]
 # 各指标的实际数据源文案（_to_item 里原本写死 FRED，黄金/比特币来自新浪）
 SOURCE_LABELS = {"GOLD": "新浪财经", "BTC": "新浪财经"}
 
-# 未配置策略阈值的四项（美债2Y/10Y、黄金、比特币）按当日涨跌幅绝对值分级，
-# 只用于列表行着色，不改变已有的峰值/摆动/回撤口径。
-CHANGE_LEVEL_SYMBOLS = {"DGS2", "DGS10", "GOLD", "BTC"}
-CHANGE_LEVEL_WARN_PCT = 1.0
-CHANGE_LEVEL_RED_PCT = 2.0
+# 列表行着色口径：当前值距「区间最高点」的回撤幅度（百分数）。
+# 阈值取自各指标近 1~3 个月历史回撤的 P25/P10 并取整，纳指100 沿用已有策略 5%/10%。
+# 写死在配置里、不随每次新数据重算分位，避免颜色来回漂移；每月复核一次即可。
+# VIX 是恐慌指数，回撤语义相反（回撤=恐慌缓解），继续走绝对值 20/30，不在此表。
+DRAWDOWN_LEVELS = {
+    "NASDAQ100": (5.0, 10.0),
+    "DGS2": (3.0, 6.0),
+    "DGS10": (4.0, 7.0),
+    "GOLD": (7.0, 11.0),
+    "BTC": (20.0, 50.0),
+}
 
 
-def _change_level(pct: Optional[float]) -> str:
-    """|涨跌幅| >=2% 红、>=1% 黄、其余常态；无前值（如新上线首日）为常态。"""
-    if pct is None:
-        return "normal"
-    a = abs(pct)
-    if a >= CHANGE_LEVEL_RED_PCT:
-        return "danger"
-    if a >= CHANGE_LEVEL_WARN_PCT:
-        return "warn"
-    return "normal"
+def _valid_points(rows) -> list:
+    """过滤 date 为空的历史残留行，返回 [(date, value), ...]。"""
+    out = []
+    for r in rows or []:
+        d = str(r.date)[:10] if r.date is not None else ""
+        if r.value is not None and len(d) == 10 and d[4:5] == "-":
+            out.append((d, float(r.value)))
+    return out
+
+
+def _drawdown_from_peak(value: Optional[float], rows) -> dict:
+    """当前值相对区间最高点的回撤幅度与峰值信息。
+
+    历史不足 2 个点（如 BTC 刚上线）时不下结论，保持常态——
+    只有一个点时峰值就是当前值，回撤恒为 0，会把「无数据」误判成「安全」。
+    """
+    result = {"drawdown_pct": None, "drawdown_peak": None, "drawdown_peak_date": None}
+    pts = _valid_points(rows)
+    if value is None or len(pts) < 2:
+        return result
+    peak_date, peak = max(pts, key=lambda x: x[1])
+    if peak <= 0:
+        return result
+    result["drawdown_pct"] = (peak - float(value)) / peak * 100
+    result["drawdown_peak"] = peak
+    result["drawdown_peak_date"] = peak_date
+    return result
 
 
 def _to_item(latest: dict) -> dict:
@@ -64,13 +87,12 @@ def _to_item(latest: dict) -> dict:
 
 @router.get("/market")
 async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(require_auth)):
-    """返回纳斯达克指数、VIX、美债2年期/10年期收益率的当前值（从数据库读取）。
+    """返回纳斯达克指数、VIX、美债2年期/10年期、黄金、比特币的当前值。
 
-    纳指100 卡片的着色口径（2026-11-10）：当前值相对**整段区间最高/最低点**
-    的双向偏离，达 red_pct 红底、达到 green_pct 琥珀，且**不随事件重置**——
-    与 /a-share 共用 index_swing.compute_swing()。旧的运行峰值
-    （market_strategy_state，回撤触发后会重置）仍作为 peak_* 字段返回供排障，
-    但不再决定卡片颜色；曲线上的每档回撤事件仍走 /market/history。
+    列表行着色口径（2026-11-22 用户确认）：当前值相对**区间最高点的回撤**，
+    各指标阈值见 DRAWDOWN_LEVELS；VIX 是恐慌指数，回撤语义相反，仍按绝对值
+    20/30 分级。旧的 peak_* 字段与纳指100 的 swing 说明保留供排障，但不再
+    决定行色；曲线上的每档回撤事件仍走 /market/history。
     """
     try:
         latest = crud.get_latest_market_prices(db)
@@ -90,31 +112,22 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
         items = [it for it in items if it["symbol"] in order]
         items.sort(key=lambda it: order[it["symbol"]])
 
-        # 分级着色：VIX 按绝对值分级（<20 绿 / 20~30 黄 / >=30 红），其余指标按回撤幅度分级（附峰值信息）
-        #
-        # 策略状态**一次性批量取**（云库下逐个取是 N 次往返，每次 0.25~0.9s）
+        # 历史一次性批量取（云库下逐个取是 N 次往返，每次 0.25~0.9s）：
+        # 既用于区间高点回撤分级，也用于纳指100 的区间摆动说明。
+        hist_map = crud.get_market_history_multi(db, [it["symbol"] for it in items])
+        # 旧的运行峰值状态仍批量取，peak_* 字段保留供排障，但不再决定行色。
         strategy_states = crud.get_market_strategy_states(
             db, [it["symbol"] for it in items if it["symbol"] != "VIXCLS"]
         )
 
-        # 纳指100 卡片：整段区间高低点、双向、不重置。
-        # 旧口径读的是 advance() 维护的运行峰值，回撤触发当天就被重置成低点，
-        # 于是「明明还在 -10% 回撤里、卡片却是绿色」。这里改为与 /a-share
-        # 同一份 compute_swing()，阈值仍由 NASDAQ100 策略的 red_pct / green_pct 驱动，
-        # 只是标签换成「区间最高/最低」（那边展示的是今年以来）。
-        # 曲线事件不动：/market/history 仍用 compute_drawdown_events 每档留痕。
+        # 纳指100 的区间摆动说明保留（双向、不重置），供列表里看相对高/低点偏离；
+        # 但行色统一改由「距区间高点回撤」决定——否则上涨偏离也会被染成红色。
         nasdaq_swing = None
         nd_strategy = get_strategy("NASDAQ100")
         if nd_strategy and nd_strategy.get("red_pct") is not None:
             red_pct = float(nd_strategy["red_pct"])
             green_pct = float(nd_strategy.get("green_pct", red_pct / 2))
-            hist = crud.get_market_history(db, "NASDAQ100")
-            pts = []
-            for r in hist:
-                d = str(r.date)[:10] if r.date is not None else ""
-                # 库里存在一条 date 为空的残留行，不能参与区间高低点计算
-                if r.value is not None and len(d) == 10 and d[4:5] == "-":
-                    pts.append({"date": d, "value": float(r.value)})
+            pts = [{"date": d, "value": v} for d, v in _valid_points(hist_map.get("NASDAQ100"))]
             if pts and red_pct > 0:
                 full = compute_swing(
                     pts, red_pct,
@@ -132,21 +145,36 @@ async def get_market_data(db: Session = Depends(get_db), auth: bool = Depends(re
             if it["value"] is None:
                 it["drawdown_level"] = "normal"
                 continue
+            # 旧的运行峰值信息（peak_*）保留供排障，但不决定行色
+            if it["symbol"] != "VIXCLS":
+                state = strategy_states.get(it["symbol"])
+                it.update(compute_drawdown(it["symbol"], it["value"], state,
+                                           current_date=it["date"]))
+
             if it["symbol"] == "VIXCLS":
                 strategy = get_strategy(it["symbol"])
                 thresholds = strategy.get("thresholds", [20, 30]) if strategy else [20, 30]
                 it["level_thresholds"] = thresholds
-                info = compute_level(it["value"], thresholds)
-            else:
-                state = strategy_states.get(it["symbol"])
-                info = compute_drawdown(it["symbol"], it["value"], state, current_date=it["date"])
-            it.update(info)
+                it.update(compute_level(it["value"], thresholds))
+                continue
+
             if it["symbol"] == "NASDAQ100" and nasdaq_swing:
                 it["swing"] = nasdaq_swing
-                it["drawdown_level"] = nasdaq_swing["current"]["level"]
-            if it["symbol"] in CHANGE_LEVEL_SYMBOLS:
-                it["drawdown_level"] = _change_level(it.get("change_percent"))
-                it["change_thresholds"] = [CHANGE_LEVEL_WARN_PCT, CHANGE_LEVEL_RED_PCT]
+
+            if it["symbol"] in DRAWDOWN_LEVELS:
+                warn, red = DRAWDOWN_LEVELS[it["symbol"]]
+                dd_info = _drawdown_from_peak(it["value"], hist_map.get(it["symbol"]))
+                it.update(dd_info)
+                it["drawdown_thresholds"] = [warn, red]
+                dd = dd_info["drawdown_pct"]
+                if dd is None:          # 历史点不足（如 BTC 首日）：不下结论，保持常态
+                    it["drawdown_level"] = "normal"
+                elif dd >= red:
+                    it["drawdown_level"] = "danger"
+                elif dd >= warn:
+                    it["drawdown_level"] = "warn"
+                else:
+                    it["drawdown_level"] = "ok"
 
         return {
             "status": "ok",

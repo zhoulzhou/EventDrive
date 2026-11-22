@@ -48,8 +48,8 @@ async function loadMarket() {
 
         const meta = document.getElementById('metaInfo');
         meta.textContent = `数据来源：${data.source} · 更新时间：${data.updated_at}`
-            + ` · 行色阈值：纳指100 按整段区间高低点 ±10% 摆动（不重置）、VIX 按 20/30 绝对值，`
-            + `其余按当日涨跌幅绝对值（≥2% 红 / ≥1% 黄）；曲线仍逐档标出每档回撤事件`;
+            + ` · 行色阈值：当前值距区间最高点的回撤（纳指100 5/10%、美债2Y 3/6%、10Y 4/7%、黄金 7/11%、比特币 20/50%），`
+            + `VIX 恐慌指数按 20/30 绝对值；曲线仍逐档标出每档回撤事件`;
 
         const head = `<div class="market-list-head"><span>指标</span><span>最新值</span>`
             + `<span>较前一日</span><span>阈值状态</span><span>数据日期</span></div>`;
@@ -58,36 +58,6 @@ async function loadMarket() {
     } catch (error) {
         grid.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
     }
-}
-
-// 纳指100 摆动说明：基准是整段区间最高/最低点（不重置），只要还在深度回撤里
-// 行就一直红着；曲线上每档事件仍由 /market/history 独立负责。
-// 列表里只占一格，用紧凑「标签 + 基准 + 偏离」文字，不再像卡片那样单起大块。
-function swingHtml(item) {
-    const sw = item.swing;
-    if (!sw || !sw.current) return '';
-    const c = sw.current;
-    const pct = sw.threshold_pct;
-    const fmt = v => formatValue(v, false);
-    const signed = v => (v > 0 ? '+' : '') + Number(v).toFixed(2);
-    if (!c.direction) {
-        return `<span class="market-swing ok"><span class="market-swing-tag">阈值监测</span>`
-            + `区间内无偏离，±${pct}% 未接近</span>`;
-    }
-    const sign = c.direction === 'rally' ? '+' : '-';
-    const ref = c.ref_date && c.ref_value != null
-        ? `${c.ref_type} ${fmt(c.ref_value)}（${String(c.ref_date).slice(5)}）` : '—';
-    let tag, txt;
-    if (c.level === 'danger') {
-        tag = '阈值触发';
-        txt = `较${ref}${c.direction === 'rally' ? ' 高出 ' : ' 回撤 '}`
-            + `${signed(c.deviation_percent)}%，越过 ${sign}${pct}%`;
-    } else {
-        tag = c.level === 'warn' ? '接近阈值' : '阈值监测';
-        txt = `较${ref} ${signed(c.deviation_percent)}%，距 ${sign}${pct}% 还有 `
-            + `${fmt(c.remaining_percent)} 个点`;
-    }
-    return `<span class="market-swing ${c.level}"><span class="market-swing-tag">${tag}</span>${escapeHtml(txt)}</span>`;
 }
 
 function renderRow(item) {
@@ -103,22 +73,27 @@ function renderRow(item) {
         changeHtml = `<span class="market-change ${cls}">${changeText}${pct}</span>`;
     }
 
-    // 阈值状态：纳指100 用摆动说明；其余保留峰值的仍展示峰值；
-    // 按涨跌幅分级的四项把阈值写进行内，便于看懂这一行为什么被染色。
-    let note = swingHtml(item);
-    if (!note && !item.swing && item.peak_value != null) {
-        const sign = item.peak_change_percent >= 0 ? '+' : '';
-        note = `<span class="market-swing ok"><span class="market-swing-tag">峰值回撤</span>`
-            + `峰值 ${formatValue(item.peak_value, false)}（${item.peak_date}） · 较峰值 ${sign}${item.peak_change_percent.toFixed(2)}%</span>`;
+    // 阈值状态：按「当前值距区间最高点的回撤」展示实际幅度与档位阈值。
+    // VIX 是恐慌指数——回撤意味着恐慌缓解，语义相反，单独展示绝对值阈值。
+    let note = '';
+    if (item.drawdown_thresholds) {
+        const [warn, red] = item.drawdown_thresholds;
+        const lv = item.drawdown_level || 'normal';
+        const tag = lv === 'danger' ? '回撤触发' : lv === 'warn' ? '回撤接近'
+            : lv === 'ok' ? '回撤监测' : '历史不足';
+        const peak = item.drawdown_peak != null
+            ? `高 ${formatValue(item.drawdown_peak, false)} · ` : '';
+        // 历史点不足时明确写「待积累」，别让 BTC 的阈值列空着看不懂为何没颜色
+        const ddText = item.drawdown_pct == null
+            ? '待积累' : (item.drawdown_pct > 0 ? '-' + item.drawdown_pct.toFixed(2) + '%' : '0.00%');
+        note = `<span class="market-swing ${lv}"><span class="market-swing-tag">${tag}</span>`
+            + `${peak}${ddText}（黄${warn}/红${red}）</span>`;
     }
     if (!note && item.level_thresholds) {
         const [warn, red] = item.level_thresholds;
+        const cur = item.value != null ? Number(item.value).toFixed(2) : '--';
         note = `<span class="market-swing ${item.drawdown_level}">`
-            + `<span class="market-swing-tag">绝对阈值</span>≥${red} 红 / ≥${warn} 黄</span>`;
-    }
-    if (!note && item.change_thresholds) {
-        const [warn, red] = item.change_thresholds;
-        note = `<span class="market-change-note">当日涨跌绝对值 ≥${red}% 红 / ≥${warn}% 黄</span>`;
+            + `<span class="market-swing-tag">绝对阈值</span>当前 ${cur} · ≥${red} 红 / ≥${warn} 黄</span>`;
     }
     if (!note) note = '<span class="market-change-note">—</span>';
 
