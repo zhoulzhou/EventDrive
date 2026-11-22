@@ -52,7 +52,7 @@ async function loadMarket() {
             + `VIX 恐慌指数按 20/30 绝对值；曲线仍逐档标出每档回撤事件`;
 
         const head = `<div class="market-list-head"><span>指标</span><span>最新值</span>`
-            + `<span>较前一日</span><span>阈值状态</span><span>数据日期</span></div>`;
+            + `<span>较上一记录</span><span>阈值状态</span><span>数据日期</span></div>`;
         grid.innerHTML = head + data.items.map(item => renderRow(item)).join('');
         renderAllHistory(data.items);
     } catch (error) {
