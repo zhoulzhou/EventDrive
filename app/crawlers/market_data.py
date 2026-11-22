@@ -17,12 +17,13 @@
     2. ``em_bond``       东财「中美国债收益率」（一次拿 2Y/10Y 两列，与财政部一致）
     3. ``fred``          FRED DGS2 / DGS10
 - COMEX 黄金（美元/盎司）
-    1. ``gold_sina``     新浪外盘日K（历史骨架）+ 新浪实时报价（最新价）
-    黄金 7x24 走近连续交易，不用美股的「最近已收盘交易日」判新鲜，
-    每次刷新都抓最新价并按日期落库。
+    1. ``gold_sina``     新浪外盘日K（只含交易日，收盘价口径）
 - 比特币（BTC/USD，美元）
-    1. ``btc_sina``      新浪 btc_btcbtcusd 实时报价
-    同样 7x24，每天落一个点，历史随每日抓取逐步累积。
+    1. ``btc_sina``      新浪 btc_btcbtcusd 实时报价，日期归一到最近已收盘交易日
+
+黄金/比特币与其它指标同页展示，统一按美股交易日历落库：黄金只走日K
+（新浪实时快照的日期是北京时间，周五盘后价会被标成周六，故不用）；
+比特币虽 7x24 交易，但日期也归到 ``latest_closed_session()``，周末不产生新日期。
 
 为什么要降级链（2026-10-31 排查结论）：
   原先 NDX 只有 api.nasdaq.com + FRED 两条腿，两条腿同时不通时 NDX 会**连续多日停更**
@@ -485,60 +486,42 @@ async def _f_em_bond(series: Dict[str, Any], limit: int) -> List[Dict[str, Any]]
 
 
 async def _f_gold_sina(series: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-    """COMEX 黄金：新浪外盘日K做历史骨架，新浪实时快照补最新价。
+    """COMEX 黄金：只走新浪外盘日K，按交易日落库。
 
     日K返回 JSONP：``var _t=([{"date":"2026-11-20","close":"3538.500"}, ...]);``
-    实时 ``hf_GC`` 字段：0=现价, 6=时间, 12=日期(北京), 13=名称。
-    两路按日期去重，实时价排在后面会覆盖同日日K收盘价（_trim 后写覆盖前写）。
-    任一路失败不影响另一路：只有两路都失败才判该指标本轮失败。
+
+    为什么去掉实时快照（2026-11-22 用户要求）：``hf_GC`` 的日期字段是
+    **北京时间**，周五美盘盘后价会被标成周六（如 11-20 收盘后的 3535.39
+    标成 11-21），周末刷新就往库里塞非交易日日期。日K本身就只含交易日，
+    且收盘价口径与其它卡片一致，因此只保留日K这一路。
     """
-    points: List[Dict[str, Any]] = []
-    errors: List[str] = []
-
-    try:
-        response = await _get_limited(
-            SINA_GOLD_KLINE_URL,
-            params={"symbol": "GC", "_": "1"},
-            headers=SINA_HQ_HEADERS,
-        )
-        m = re.search(r"\(\s*(\[.*\])\s*\)", response.text, re.S)
-        if not m:
-            raise ValueError(f"日K返回格式异常: {response.text[:80]!r}")
-        for row in json.loads(m.group(1)):
-            p = _point(row.get("date"), row.get("close"))
-            if p:
-                points.append(p)
-        if not points:
-            raise ValueError("日K解析后为空")
-    except Exception as e:  # noqa: BLE001 - 单路失败只记日志，另一路继续
-        errors.append(f"日K: {type(e).__name__}: {e}")
-
-    try:
-        response = await _get_limited(
-            SINA_HQ_URL.format(symbols="hf_GC"), headers=SINA_HQ_HEADERS
-        )
-        text = response.content.decode("gbk", errors="ignore")
-        body = text.split('"')[1] if '"' in text else ""
-        fields = body.split(",")
-        if len(fields) < 14:
-            raise ValueError(f"实时快照字段不足({len(fields)})：{text[:80]!r}")
-        p = _point(fields[12].strip(), fields[0].strip())
-        if not p:
-            raise ValueError(f"实时快照不可解析: {body[:120]!r}")
-        points.append(p)
-    except Exception as e:  # noqa: BLE001
-        errors.append(f"实时: {type(e).__name__}: {e}")
-
+    response = await _get_limited(
+        SINA_GOLD_KLINE_URL,
+        params={"symbol": "GC", "_": "1"},
+        headers=SINA_HQ_HEADERS,
+    )
+    m = re.search(r"\(\s*(\[.*\])\s*\)", response.text, re.S)
+    if not m:
+        raise ValueError(f"日K返回格式异常: {response.text[:80]!r}")
+    points = []
+    for row in json.loads(m.group(1)):
+        p = _point(row.get("date"), row.get("close"))
+        if p:
+            points.append(p)
     if not points:
-        raise ValueError("黄金新浪两路均无数据: " + "; ".join(errors))
+        raise ValueError("日K解析后为空")
     return _trim(points, limit)
 
 
 async def _f_btc_sina(series: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-    """BTC/USD：新浪 btc_btcbtcusd 实时快照。
+    """BTC/USD：新浪 btc_btcbtcusd 快照，日期归一到「最近已收盘交易日」。
 
     字段：0=时间, 3=现价, 6=最高, 7=最低, 9=名称, 11=日期(北京)。
-    比特币 7x24 交易，每天落一个点，历史随每日抓取逐步累积。
+
+    比特币本身 7x24 交易，但本页是「全球行情」——与美股/黄金/美债同页
+    对比，用户要求只保留交易日口径（2026-11-22）。所以新浪给的日期字段
+    不用，改按 ``latest_closed_session()`` 归一：周末抓到的价格归到上周五，
+    交易日抓到的归到当日。这样既不会在周末产生新日期，卡片也有值。
     """
     response = await _get_limited(
         SINA_HQ_URL.format(symbols="btc_btcbtcusd"), headers=SINA_HQ_HEADERS
@@ -548,7 +531,7 @@ async def _f_btc_sina(series: Dict[str, Any], limit: int) -> List[Dict[str, Any]
     fields = body.split(",")
     if len(fields) < 12:
         raise ValueError(f"比特币快照字段不足({len(fields)})：{text[:80]!r}")
-    p = _point(fields[11].strip(), fields[3].strip())
+    p = _point(latest_closed_session(), fields[3].strip())
     if not p:
         raise ValueError(f"比特币快照不可解析: {body[:120]!r}")
     return [p]
@@ -602,9 +585,10 @@ SERIES = [
     },
 ]
 
-# 7x24 / 近连续交易的品种：不受美股「最近 5 个交易日已齐」跳过逻辑约束，
-# 每次刷新都抓最新价（历史点按日期落库，重复日期会被覆盖为最新价）。
-LIVE_QUOTE_SYMBOLS = {"GOLD", "BTC"}
+# 黄金/比特币已按美股交易日历归一（黄金走日K、比特币按 latest_closed_session），
+# 周末刷新也只会覆盖最近交易日、不产生新日期。核心指标已齐时只单独刷这两个，
+# 省掉十几个美股来源的往返；定时任务照常驱动，无需手动补数。
+EXTRA_SYMBOLS = {"GOLD", "BTC"}
 
 # 单次抓取任务要预留的开始标记（重置每个 host 的单次请求计数）
 _ALL_SOURCE_URLS = {
@@ -680,8 +664,7 @@ async def fetch_market_points(
 ) -> List[Dict[str, Any]]:
     """并发抓取指标（原始数据，不落库）。
 
-    only_symbols 用于「美股指标已齐、只刷黄金/比特币实时价」的场景，
-    避免为了两个 7x24 品种把十几个美股来源也重跑一遍。
+    only_symbols 可限定只抓部分 symbol（排障用），默认抓全部 SERIES。
     """
     expected = expected or latest_closed_session()
     selected = [s for s in SERIES if not only_symbols or s["symbol"] in only_symbols]
@@ -837,9 +820,9 @@ async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
     sessions = recent_sessions(expected, 5)
     oldest = min(sessions)
 
-    # 美股指标按「最近 5 个交易日是否齐」决定是否抓；黄金/比特币 7x24 交易，
-    # 每次都刷最新价，但只在核心指标已齐时单独抓，避免把美股来源也重跑一遍。
-    live_only = False
+    # 核心美股指标按「最近 5 个交易日是否齐」决定是否抓；黄金/比特币已归到
+    # 交易日口径，核心指标已齐时只单独刷这两个（周末刷新只覆盖最近交易日）。
+    extras_only = False
     if not force:
         try:
             have = await _db_dates_since(oldest)
@@ -848,11 +831,11 @@ async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
             have = {}
         missing = [
             s["symbol"] for s in SERIES
-            if s["symbol"] not in LIVE_QUOTE_SYMBOLS
+            if s["symbol"] not in EXTRA_SYMBOLS
             and not set(sessions) <= (have.get(s["symbol"]) or set())
         ]
         if not missing:
-            live_only = True
+            extras_only = True
             logger.info(f"核心指标最近 5 个交易日已齐（{oldest}~{expected}），仅刷新黄金/比特币")
         else:
             logger.info(f"市场行情待补: {', '.join(missing)}（目标 {expected}）")
@@ -863,7 +846,7 @@ async def refresh_market_data(force: bool = False) -> Dict[str, Any]:
         limiter.begin_run(url)
 
     items = await fetch_market_points(
-        expected, only_symbols=LIVE_QUOTE_SYMBOLS if live_only else None
+        expected, only_symbols=EXTRA_SYMBOLS if extras_only else None
     )
     summary = await asyncio.to_thread(save_market_prices, items)
     return {
