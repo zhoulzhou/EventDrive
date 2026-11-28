@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}EventDrive{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="navbar-brand">
+                <a href="/home">EventDrive</a>
+            </div>
+            <div class="navbar-menu">
+                <a href="/home" class="nav-link">首页</a>
+                <a href="/market" class="nav-link">全球行情</a>
+                <a href="/stock-temp" class="nav-link">股市热度</a>
+                <a href="/stock-trend" class="nav-link">热度趋势</a>
+                <a href="/macro" class="nav-link">宏观指标</a>
+                <a href="/finance" class="nav-link">财务指标</a>
+                <a href="/valuation" class="nav-link">公司估值</a>
+                <a href="/crawl" class="nav-link">抓取控制</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2026 EventDrive. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script src="/static/js/main.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -81,3 +81,12 @@ run_crawl*.py
 check_news.py
 sqlite_query.py
 api_response.json
+
+# Node.js
+node_modules/
+.trae/
+.trae-html-share-packages/
+node-probe/
+
+# Node runtime data (sql.js DB / crawl payloads, accumulates from deploy time)
+data/*.json

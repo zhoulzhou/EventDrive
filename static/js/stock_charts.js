@@ -1,6 +1,6 @@
 /* 股票趋势页图表实现（A 股冷热三层温度计 · 9 张 ECharts）
  * 由 app/templates/stock_temp.html 拆出；当前读数在 stock_temp.html / 股票指标页。
- * 依赖 static/js/main.js 提供的 fetchWithAuth / escapeHtml / debounce。
+ * 依赖 static/js/main.js 提供的 escapeHtml / debounce（全站公开访问，无鉴权）。
  */
 const CH = {
     ink: "#334155", sub: "#94a3b8", grid: "#e8ebf0", axis: "#cbd5e1", slate: "#64748b",
@@ -412,7 +412,7 @@ const CHART_IDS = ["stGreed", "stTurnover"];
 async function loadSeries(force) {
     if (seriesCache && !force) { drawCharts(seriesCache); setTrendMeta(seriesCache, false); return; }
     try {
-        const response = await fetchWithAuth("/api/stock-temp/series");
+        const response = await fetch("/api/stock-temp/series");
         const d = await response.json();
         if (d.status !== "ok") throw new Error(d.message || "获取历史序列失败");
         seriesCache = d;

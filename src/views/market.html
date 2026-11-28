@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+
+{% block title %}全球行情 - EventDrive{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <p class="form-hint" id="metaInfo"></p>
+</div>
+
+<div id="marketGrid" class="sources-grid">
+    <div class="loading">加载中...</div>
+</div>
+
+<div class="chart-section">
+    <div class="chart-header">
+        <h2>历史走势</h2>
+        <div style="display:flex;align-items:center;gap:12px;">
+            <span class="chart-sub">X 轴统一时间 · Y 轴对齐 · 五面板联动</span>
+            <button id="cleanupBtn" type="button" class="cleanup-btn">清洗数据</button>
+        </div>
+    </div>
+    <div id="historyEmpty" class="history-empty" style="position:static;display:none;">加载中...</div>
+    <div class="panel-stack">
+        <div id="historyChart"></div>
+    </div>
+    <div class="chart-legend" id="chartLegend"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/echarts.min.js"></script>
+<script>
+const SERIES_META = {
+    NASDAQ100: { name: '纳斯达克100指数', color: '#2563eb', unit: '' },
+    VIXCLS: { name: 'VIX恐慌指数', color: '#ef4444', unit: '' },
+    DGS2: { name: '美债2年期收益率', color: '#059669', unit: '%' },
+    DGS10: { name: '美债10年期收益率', color: '#f59e0b', unit: '%' },
+    GOLD: { name: '黄金价格（伦敦金）', color: '#b8860b', unit: '美元/盎司' },
+    BTCUSD: { name: '比特币', color: '#f7931a', unit: '美元' },
+};
+const SYMBOL_ORDER = ['NASDAQ100', 'VIXCLS', 'DGS2', 'DGS10', 'GOLD', 'BTCUSD'];
+
+const PANELS = [
+    { syms: ['NASDAQ100'] },
+    { syms: ['VIXCLS'] },
+    { syms: ['DGS2', 'DGS10'] },
+    { syms: ['GOLD'] },
+    { syms: ['BTCUSD'] },
+];
+const PANEL_TOP = 6;
+const PANEL_HEIGHT = 74;
+const PANEL_GAP = 24;
+const AXIS_LEFT = 88;
+const AXIS_RIGHT = 46;
+
+let historyChart = null;
+
+async function loadMarket() {
+    const grid = document.getElementById('marketGrid');
+    grid.innerHTML = '<div class="loading">加载中...</div>';
+    try {
+        const response = await fetch('/api/market');
+        const data = await response.json();
+        if (data.status !== 'ok') {
+            grid.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(data.message || '未知错误')}</p></div>`;
+            return;
+        }
+        document.getElementById('metaInfo').textContent = `数据来源：${data.source} · 更新时间：${data.updated_at}`;
+        grid.innerHTML = data.items.map(item => renderCard(item)).join('');
+        renderAllHistory(data.items);
+    } catch (error) {
+        grid.innerHTML = `<div class="error-state"><h2>加载失败</h2><p>${escapeHtml(error.message)}</p></div>`;
+    }
+}
+
+function renderCard(item) {
+    const isYield = item.unit === '%';
+    const value = item.value != null ? formatValue(item.value, isYield) : '--';
+    const date = item.date ? `数据日期：${item.date}` : '';
+    let changeHtml = '';
+    if (item.change != null) {
+        const cls = item.change >= 0 ? 'up' : 'down';
+        const sign = item.change >= 0 ? '+' : '';
+        const changeText = `${sign}${formatValue(item.change, isYield)}${item.unit}`;
+        const pct = item.change_percent != null ? ` (${sign}${item.change_percent.toFixed(2)}%)` : '';
+        changeHtml = `<div class="market-change ${cls}">${changeText}${pct}</div>`;
+    }
+    let peakHtml = '';
+    if (item.peak_value != null) {
+        const sign = item.peak_change_percent >= 0 ? '+' : '';
+        peakHtml = `<div class="market-peak">当前峰值 ${formatValue(item.peak_value, false)}（${item.peak_date}） · 较峰值 ${sign}${item.peak_change_percent.toFixed(2)}%</div>`;
+    }
+    return `
+        <div class="market-card${item.drawdown_level && item.drawdown_level !== 'normal' ? ' ' + item.drawdown_level : ''}">
+            <div class="market-name">${escapeHtml(item.name)}</div>
+            <div class="market-value">${value}<span class="market-unit">${item.unit}</span></div>
+            ${changeHtml}
+            ${peakHtml}
+            <div class="market-date">${date}</div>
+        </div>
+    `;
+}
+
+function formatVal(v, unit) {
+    if (v == null) return '--';
+    return unit === '%' ? Number(v).toFixed(2) : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function renderAllHistory(items) {
+    const empty = document.getElementById('historyEmpty');
+    const results = await Promise.all(items.map(item =>
+        fetch(`/api/market/history?symbol=${encodeURIComponent(item.symbol)}`).then(r => r.json())
+    ));
+    const series = results.filter(d => d.status === 'ok' && d.points && d.points.length);
+    if (!series.length) {
+        if (historyChart) { historyChart.dispose(); historyChart = null; }
+        empty.style.display = 'flex'; empty.textContent = '暂无历史数据';
+        return;
+    }
+    empty.style.display = 'none'; empty.textContent = '';
+    const valMap = {};
+    series.forEach(s => { valMap[s.symbol] = {}; s.points.forEach(p => valMap[s.symbol][p.date] = p.value); });
+    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.date)))].sort();
+    const eventsMap = {};
+    results.forEach(r => { if (r.status === 'ok' && r.symbol) eventsMap[r.symbol] = r.drawdown_events || []; });
+    drawHistoryChart(allDates, valMap, eventsMap);
+    buildLegend();
+}
+
+function buildDrawdownMarks(events) {
+    const data = [];
+    events.forEach(ev => {
+        data.push({ coord: [ev.peak_date, ev.peak_value], symbol: 'triangle', symbolRotate: 180, symbolSize: 8, itemStyle: { color: '#16a34a' }, label: { show: true, position: 'top', formatter: ev.peak_date, color: '#15803d', fontSize: 9, fontWeight: 'bold' } });
+        data.push({ coord: [ev.low_date, ev.low_value], symbol: 'circle', symbolSize: 8, itemStyle: { color: '#dc2626' }, label: { show: true, position: 'bottom', formatter: ev.low_date, color: '#dc2626', fontSize: 9, fontWeight: 'bold' } });
+    });
+    return { silent: true, data };
+}
+
+function drawHistoryChart(allDates, valMap, eventsMap) {
+    const el = document.getElementById('historyChart');
+    if (historyChart) { historyChart.dispose(); historyChart = null; }
+    historyChart = echarts.init(el);
+    const grids = [], xAxes = [], yAxes = [], chartSeries = [];
+    PANELS.forEach((panel, i) => {
+        const isLast = i === PANELS.length - 1;
+        grids.push({ left: AXIS_LEFT, right: AXIS_RIGHT, top: PANEL_TOP + i * (PANEL_HEIGHT + PANEL_GAP), height: PANEL_HEIGHT, show: true, borderColor: '#e5e7eb', borderWidth: 1 });
+        xAxes.push({ type: 'category', gridIndex: i, data: allDates, boundaryGap: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { show: isLast, color: '#999', fontSize: 10, hideOverlap: true }, splitLine: { show: true, lineStyle: { color: '#eef1f4' } } });
+        yAxes.push({ type: 'value', gridIndex: i, scale: true, splitNumber: 2, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: '#8a9099', fontSize: 10, width: AXIS_LEFT - 12, overflow: 'truncate' }, splitLine: { show: true, lineStyle: { color: '#ecf0f3' } } });
+        panel.syms.forEach(sym => {
+            const meta = SERIES_META[sym];
+            const s = { name: meta.name, type: 'line', xAxisIndex: i, yAxisIndex: i, data: allDates.map(d => (valMap[sym] && valMap[sym][d] != null) ? valMap[sym][d] : null), smooth: 0.3, showSymbol: allDates.length <= 30, symbol: 'circle', symbolSize: 4, lineStyle: { width: 2, color: meta.color }, itemStyle: { color: meta.color } };
+            if (sym === 'NASDAQ100') { s.areaStyle = { color: 'rgba(37, 99, 235, 0.10)' }; s.markPoint = buildDrawdownMarks(eventsMap[sym] || []); }
+            chartSeries.push(s);
+        });
+    });
+    historyChart.setOption({
+        animation: false, grid: grids, xAxis: xAxes, yAxis: yAxes, series: chartSeries,
+        axisPointer: { link: [{ xAxisIndex: 'all' }], lineStyle: { color: 'rgba(37, 99, 235, 0.55)', width: 1.5, type: 'dashed' } },
+        tooltip: {
+            trigger: 'axis', confine: true, backgroundColor: 'rgba(255, 255, 255, 0.97)', borderColor: '#e0e5ea', borderWidth: 1, padding: [8, 12], textStyle: { color: '#333', fontSize: 12 }, extraCssText: 'box-shadow:0 4px 14px rgba(0,0,0,0.12);border-radius:8px;',
+            formatter: params => {
+                const idx = params[0] && params[0].dataIndex;
+                if (idx == null) return '';
+                const date = allDates[idx];
+                const rows = SYMBOL_ORDER.filter(sym => valMap[sym] && valMap[sym][date] != null).map(sym => {
+                    const meta = SERIES_META[sym]; const val = formatVal(valMap[sym][date], meta.unit); const suffix = meta.unit === '%' ? '%' : '';
+                    return `<div class="tip-row"><span class="tip-dot" style="background:${meta.color}"></span><span class="tip-name">${meta.name}</span><span class="tip-val">${val}${suffix}</span></div>`;
+                }).join('');
+                return `<div class="chart-tooltip"><div class="tip-date">${date}</div>${rows}</div>`;
+            },
+        },
+    });
+}
+
+function buildLegend() {
+    const el = document.getElementById('chartLegend');
+    el.innerHTML = SYMBOL_ORDER.map(sym => { const meta = SERIES_META[sym]; return `<span class="legend-item"><i class="legend-dot" style="background:${meta.color}"></i>${escapeHtml(meta.name)}</span>`; }).join('');
+}
+
+function formatValue(num, isYield) {
+    return isYield ? num.toFixed(3) : num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+
+document.getElementById('cleanupBtn').addEventListener('click', async () => {
+    if (!confirm('确认清洗历史走势数据？将删除同日非空指标数不足 3 的记录，减少曲线断点。')) return;
+    const btn = document.getElementById('cleanupBtn'); btn.disabled = true; btn.textContent = '清洗中...';
+    try {
+        const resp = await fetch('/api/market/cleanup', { method: 'POST' });
+        const data = await resp.json();
+        if (data.status === 'ok') alert(data.deleted > 0 ? `已清洗 ${data.deleted} 条记录，请手动刷新页面查看` : '没有需要清洗的数据');
+        else alert('清洗失败：' + (data.message || '未知错误'));
+    } catch (error) { alert('清洗失败：' + error.message); }
+    finally { btn.disabled = false; btn.textContent = '清洗数据'; }
+});
+
+window.addEventListener('resize', () => { if (historyChart) historyChart.resize(); });
+loadMarket();
+</script>
+
+<style>
+#marketGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1100px) { #marketGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { #marketGrid { grid-template-columns: 1fr; } }
+.chart-tooltip .tip-date { font-weight: 600; color: #2563eb; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #eef1f4; }
+.chart-tooltip .tip-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.chart-tooltip .tip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.chart-tooltip .tip-name { color: #666; flex: 1; white-space: nowrap; }
+.chart-tooltip .tip-val { color: #222; font-weight: 600; white-space: nowrap; }
+.cleanup-btn { padding: 0.3rem 0.9rem; font-size: 0.82rem; border: 1px solid #d5dae0; border-radius: 6px; background: #fff; color: #555; cursor: pointer; transition: all 0.15s; }
+.cleanup-btn:hover { border-color: #2563eb; color: #2563eb; }
+.cleanup-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.market-card { background: white; border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08); text-align: center; transition: transform 0.2s, box-shadow 0.2s; }
+.market-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
+.market-name { font-weight: 500; color: #666; margin-bottom: 0.75rem; }
+.market-value { font-size: 2rem; font-weight: 700; color: #333; }
+.market-unit { font-size: 1rem; font-weight: 400; color: #888; margin-left: 0.25rem; }
+.market-change { font-size: 1rem; font-weight: 500; margin-top: 0.5rem; }
+.market-change.up { color: #28a745; } .market-change.down { color: #dc3545; }
+.market-peak { margin-top: 0.5rem; font-size: 0.85rem; color: #888; }
+.market-card.ok { border: 2px solid #28a745; background: #f0faf4; } .market-card.ok .market-value { color: #16a34a; } .market-card.ok .market-peak { color: #16a34a; }
+.market-card.warn { border: 2px solid #eab308; background: #fffbeb; } .market-card.warn .market-value { color: #d97706; } .market-card.warn .market-peak { color: #d97706; }
+.market-card.danger { border: 2px solid #dc3545; background: #fff5f5; } .market-card.danger .market-value { color: #dc3545; } .market-card.danger .market-peak { color: #dc3545; }
+.market-date { margin-top: 0.75rem; font-size: 0.85rem; color: #888; }
+.chart-section { position: relative; margin-top: 2rem; background: white; border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.chart-header h2 { margin: 0; font-size: 1.1rem; color: #333; }
+.chart-header { display: flex; align-items: baseline; gap: 0.75rem; }
+.chart-sub { font-size: 0.85rem; color: #999; }
+.panel-stack { margin-top: 1rem; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+#historyChart { width: 100%; height: 500px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 1.25rem; margin-top: 0.75rem; border-top: 1px solid #eef1f4; padding-top: 0.75rem; }
+.legend-item { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.88rem; color: #555; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.history-empty { display: flex; align-items: center; justify-content: center; color: #999; font-size: 0.9rem; }
+</style>
+{% endblock %}

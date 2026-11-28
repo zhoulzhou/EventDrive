@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block title %}股市热度 - 市场贪婪指数{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/css/stock.css">
+{% endblock %}
+
+{% block content %}
+<div class="page-header st-header">
+    <div class="st-header-text">
+        <h1>股市热度 · 市场贪婪指数</h1>
+    </div>
+    <div class="st-toolbar">
+        <span id="stUpdated" class="st-updated">加载中…</span>
+        <button id="stRefresh" class="btn btn-primary">刷新数据</button>
+    </div>
+</div>
+
+<div id="stNotice"></div>
+<div id="stRoot">
+    <div class="loading">正在加载市场贪婪指数…</div>
+</div>
+<div class="st-crosslink">
+    <a href="/stock-trend">历史曲线与走势图在这里：热度趋势 →</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ==================== 页面渲染：市场贪婪指数 0-100 ==================== */
+const LOCAL_TONES = {
+    blue: "#3b82f6", cyan: "#06b6d4", green: "#22c55e", lime: "#84cc16",
+    amber: "#f59e0b", orange: "#f97316", red: "#ef4444", violet: "#8b5cf6", slate: "#64748b"
+};
+let TONES = Object.assign({}, LOCAL_TONES);
+
+function tone(key) { return TONES[key] || "#6b7280"; }
+
+function tint(hex, alpha) {
+    const h = (hex || "#6b7280").replace("#", "");
+    return "rgba(" + parseInt(h.substring(0, 2), 16) + ", " + parseInt(h.substring(2, 4), 16)
+        + ", " + parseInt(h.substring(4, 6), 16) + ", " + alpha + ")";
+}
+
+function num(v) { return (v === null || v === undefined || isNaN(Number(v))) ? null : Number(v); }
+
+function pctText(p, n) {
+    if (p === null || p === undefined) return "样本不足" + (n ? "（" + n + "/15）" : "");
+    return Number(p).toFixed(1);
+}
+
+function fmtScore(score) {
+    if (score === null) return "—";
+    return Number.isInteger(score) ? String(score) : Number(score).toFixed(1);
+}
+
+/* ---------------- 顶部：读数 + 五档刻度 ---------------- */
+function heroHtml(g) {
+    const v = num(g.value);
+    const zones = g.zones || [];
+    const color = g.color || (v === null ? "#9ca3af" : "#4CC2FF");
+    const marker = v === null ? "" :
+        "<div class=\"st-gauge-marker\" style=\"left:" + Math.max(0, Math.min(100, v)) + "%\">"
+        + "<div class=\"st-gauge-pin\"></div>"
+        + "<div class=\"st-gauge-tip\" style=\"color:" + color + "\">≈ " + v.toFixed(1) + "</div></div>";
+
+    const segs = zones.map(function (z) {
+        const width = Math.max(0, z.hi - z.lo);
+        return "<div class=\"st-gauge-seg\" style=\"flex:0 0 " + width + "%;background:" + z.color + "\""
+            + " title=\"" + escapeHtml(z.lo + "-" + z.hi + " " + z.state) + "\"></div>";
+    }).join("");
+
+    const legend = zones.map(function (z) {
+        return "<div class=\"st-greed-legend-item\">"
+            + "<span class=\"st-greed-legend-dot\" style=\"background:" + z.color + "\"></span>"
+            + "<span class=\"st-greed-legend-range\">" + z.lo + "-" + z.hi + "</span>"
+            + "<span class=\"st-greed-legend-state\">" + escapeHtml(z.state) + "</span>"
+            + "<span class=\"st-greed-legend-desc\">" + escapeHtml(z.desc || "") + "</span></div>";
+    }).join("");
+
+    return "<section class=\"st-gauge-wrap st-greed-hero-wrap\">"
+        + "<div class=\"st-greed-hero\" style=\"border-color:" + tint(color, 0.35) + ";background:" + tint(color, 0.07) + "\">"
+        + "<div class=\"st-greed-main\">"
+        + "<div class=\"st-greed-label\">市场贪婪指数</div>"
+        + "<div class=\"st-greed-value\" style=\"color:" + color + "\">" + (v === null ? "—" : v.toFixed(1))
+        + "<span class=\"st-greed-denom\">/100</span></div>"
+        + "<div class=\"st-greed-state\" style=\"color:" + color + ";background:" + tint(color, 0.14) + "\">"
+        + escapeHtml(g.state || "数据不足") + "</div>"
+        + "<div class=\"st-greed-sub\">" + escapeHtml(g.formula || "") + "</div>"
+        + "<div class=\"st-greed-sub\">" + escapeHtml(g.updated_note || "每日收盘后更新")
+        + " · 分位口径：全部可用历史分位</div>"
+        + "</div></div>"
+        + "<div class=\"st-gauge\"><div class=\"st-gauge-track\">" + segs + "</div>" + marker + "</div>"
+        + "<div class=\"st-greed-legend\">" + legend + "</div>"
+        + "</section>";
+}
+
+/* ---------------- 一句话总结 ---------------- */
+function summaryHtml(g) {
+    if (!g.summary) return "";
+    const warn = g.distortion
+        ? "<div class=\"st-greed-warn\"><b>读数失真提示</b>：" + escapeHtml(g.distortion) + "</div>" : "";
+    return "<section class=\"st-summary st-greed-summary\">"
+        + "<div class=\"st-summary-title\">一句话总结</div>"
+        + "<p class=\"st-summary-main\">" + escapeHtml(g.summary) + "</p>"
+        + warn + "</section>";
+}
+
+/* ---------------- 贪婪指数分项：四列卡片 ---------------- */
+function cardHtml(opt) {
+    const fill = opt.fill === null || opt.fill === undefined ? 0 : Math.max(0, Math.min(100, opt.fill));
+    return "<div class=\"g-card\">"
+        + "<div class=\"g-card-head\"><span class=\"g-card-name\">" + escapeHtml(opt.name) + "</span>"
+        + "<span class=\"g-card-meta\">" + escapeHtml(opt.meta || "") + "</span></div>"
+        + "<div class=\"g-card-score\" style=\"color:" + opt.color + "\">" + opt.scoreText
+        + "<span class=\"g-card-denom\">" + escapeHtml(opt.unit) + "</span></div>"
+        + "<div class=\"g-card-bar\"><span style=\"width:" + fill + "%;background:" + opt.color + "\"></span></div>"
+        + (opt.lines || []).map(function (line) {
+            return "<div class=\"g-card-line\">" + line + "</div>";
+        }).join("")
+        + "</div>";
+}
+
+function componentCards(g) {
+    return (g.components || []).map(function (c) {
+        const score = num(c.score);
+        const color = score === null ? "#94a3b8" : (score >= 90 ? "#ef4444" : "#3b82f6");
+        const cat = c.category === "valuation" ? "估值 12%" : "情绪 88%";
+        const weight = (c.excluded || !c.weight_pct) ? "权重—" : "权重" + c.weight_pct.toFixed(1) + "%";
+        const lines = [];
+        const context = c.context ? "（" + escapeHtml(c.context) + "）" : "";
+        lines.push("读数：" + escapeHtml(c.reading) + context);
+        if (score === null) {
+            lines.push("分位：" + escapeHtml(pctText(c.percentile, c.sample_n)));
+            lines.push("<span class=\"g-muted\">样本不足（" + c.sample_n + " 期），不参与合成</span>");
+        } else {
+            lines.push("分位：" + score.toFixed(1) + "%（全历史 · " + c.sample_n + " 期）");
+            lines.push("贪婪分 = 分位 " + score.toFixed(1) + " = " + score.toFixed(1)
+                + " · 贡献 " + score.toFixed(1) + "×" + c.weight_pct.toFixed(1) + "% = "
+                + Number(c.contribution).toFixed(2));
+        }
+        return cardHtml({
+            name: c.name, meta: cat + " · " + weight,
+            scoreText: fmtScore(score), unit: "/100 贪婪分",
+            color: color, fill: score, lines: lines
+        });
+    }).join("");
+}
+
+function confirmCards(g) {
+    return (g.confirm || []).map(function (c) {
+        const pct = num(c.percentile);
+        const lines = [];
+        const side = pct === null
+            ? "样本不足 " + c.sample_n + " 期"
+            : "冷侧分位≈" + pct.toFixed(1);
+        lines.push("读数：" + escapeHtml(c.reading) + "（" + side + "）");
+        lines.push(pct === null
+            ? "分位：样本不足（" + c.sample_n + " 期）"
+            : "分位：" + pct.toFixed(1) + "%（全历史 · " + c.sample_n + " 期）");
+        lines.push("<span class=\"g-muted\">确认层不加权，只用于极端区闸门</span>");
+        return cardHtml({
+            name: c.name + "（确认层）", meta: "确认层 · 不加权 · 权重—",
+            scoreText: pct === null ? "—" : "≈ " + pct.toFixed(1), unit: "/100 分位",
+            color: pct === null ? "#94a3b8" : "#8b5cf6", fill: pct, lines: lines
+        });
+    }).join("");
+}
+
+function componentsHtml(g) {
+    const gates = g.gates || {};
+    const gate = function (item, kind) {
+        if (!item) return "";
+        const on = !!item.triggered;
+        return "<div class=\"st-gate " + (on ? "st-gate-on " + kind : "") + "\">"
+            + "<div class=\"st-gate-head\"><span class=\"st-gate-name\">" + escapeHtml(item.name) + "</span>"
+            + "<span class=\"st-gate-state\">" + (on ? "已触发" : "未触发") + "</span></div>"
+            + "<div class=\"st-gate-rule\">" + escapeHtml(item.rule) + "</div>"
+            + "<div class=\"st-gate-text\">" + escapeHtml(item.text) + "</div></div>";
+    };
+
+    return "<section class=\"st-overview st-greed-section\">"
+        + "<h2 class=\"st-group-title\">贪婪指数分项<span class=\"st-group-sub\">"
+        + "4 主指标加权合成（情绪 88% + 估值 12%），ERP / 破净率为确认层</span></h2>"
+        + "<div class=\"g-grid\">" + componentCards(g) + confirmCards(g) + "</div>"
+        + "<div class=\"st-gate-row\">" + gate(gates.deep_fear, "cold") + gate(gates.bubble, "hot") + "</div>"
+        + "</section>";
+}
+
+
+/* ---------------- 口径说明 ---------------- */
+function notesHtml(g) {
+    return "<section class=\"st-notes\">"
+        + "<h2 class=\"st-group-title\">口径与用法</h2>"
+        + "<div class=\"st-notes-grid\">"
+        + "<div class=\"st-note\"><h3>加权方式</h3><ul>"
+        + "<li>情绪 = 市场宽度 / 全A换手率 / 两市成交额，<b>三项等权各 1/3</b>，合计 88%。</li>"
+        + "<li>估值 = 沪深300 PE-TTM，占 <b>12%</b>。</li>"
+        + "<li>四个主指标的分位取<b>全部可用历史的分位</b>；某项样本不足 5 期时不参与合成，按可用项重算。</li>"
+        + "<li>贪婪分 = 分位（越高越贪婪）；贡献 = 贪婪分 × 有效权重（缺失项剔除后按比例放大）。</li>"
+        + "</ul></div>"
+        + "<div class=\"st-note\"><h3>五档与确认层</h3><ul>"
+        + "<li>0-10 极端恐慌 · 机会区 / 10-30 恐慌 · 备资金 / 30-70 中性 · 无信号 / 70-90 贪婪 · 不追加 / 90-100 极端贪婪 · 泡沫。</li>"
+        + "<li><b>深度恐慌</b>：贪婪 &lt; 20 且（ERP 分位 &gt; 80 或 破净率分位 &gt; 80）——冷 + 便宜共振。</li>"
+        + "<li><b>泡沫警示</b>：贪婪 &gt; 80 且 ERP 分位 &lt; 20——热 + 贵共振。</li>"
+        + "<li>确认层的 ERP / 破净率用<b>全历史分位</b>（极端区判断），<b>不参与加权</b>，避免慢变量稀释短期情绪。</li>"
+        + "</ul></div>"
+        + "<div class=\"st-note\"><h3>数据口径与失真</h3><ul>"
+        + "<li>市场宽度 = 上涨家数 ÷（上涨 + 下跌），乐咕乐股全A口径。</li>"
+        + "<li>全A换手率 = 两市成交额 ÷ 两市流通市值；成交额与流通市值来自沪深交易所官网。</li>"
+        + "<li>沪深300 PE-TTM 取中证指数官网日频滚动市盈率；ERP = 1/PE − 10 年国债收益率。</li>"
+        + "<li><b>放量杀跌会抬高成交/换手分位</b>：若宽度分位极低而换手分位明显偏高，页面会给出「读数失真」提示，不能把读数回升误读为情绪回暖。</li>"
+        + "</ul></div>"
+        + "<div class=\"st-note st-caveat\"><h3>其他说明</h3><ul>"
+        + "<li>底层 13 项读数仍每日抓取入库，其中 4 项进入贪婪指数、2 项作为确认层；其余作为辅助观测，不再在首页展开。</li>"
+        + "<li>历史曲线与逐日补齐见 <a href=\"/stock-trend\">热度趋势</a> 页；本页只读快照，不做历史回溯。</li>"
+        + "<li>本页只做数据与阈值呈现，<b>不构成任何投资建议</b>。</li>"
+        + "</ul></div>"
+        + "</div>"
+        + "</section>";
+}
+
+function render(data) {
+    TONES = Object.assign({}, LOCAL_TONES, data.tones || {});
+    const g = data.greed || {};
+
+    const errs = Object.keys(data.errors || {});
+    let notice = errs.length
+        ? "<div class=\"st-alert\">本次有 " + errs.length + " 项自动指标更新失败（" + errs.map(escapeHtml).join("、")
+          + "），已展示上次成功读数。可稍后点「刷新数据」重试。</div>"
+        : "";
+    if (data.stale) {
+        notice += "<div class=\"st-alert\">数据已 " + data.data_age_hours + " 小时未落库（最后更新 "
+          + escapeHtml(data.updated_at) + "）。请确认调度器在运行。</div>";
+    }
+    document.getElementById("stNotice").innerHTML = notice;
+    document.getElementById("stUpdated").textContent = "数据更新于 " + (data.updated_at || "—")
+        + (data.refreshed ? "（本次刷新 " + data.refreshed + " 项）" : "");
+
+    document.getElementById("stRoot").innerHTML = heroHtml(g)
+        + summaryHtml(g)
+        + componentsHtml(g)
+        + notesHtml(g);
+}
+
+async function loadStock(force) {
+    const btn = document.getElementById("stRefresh");
+    btn.disabled = true;
+    btn.textContent = force ? "正在抓取…" : "加载中…";
+    try {
+        const response = await fetch(force ? "/api/stock-temp/refresh" : "/api/stock-temp",
+            { method: force ? "POST" : "GET" });
+        const data = await response.json();
+        if (data.status !== "ok") throw new Error(data.message || "获取市场贪婪指数失败");
+        render(data);
+    } catch (error) {
+        document.getElementById("stRoot").innerHTML =
+            "<div class=\"error-state\"><h2>加载失败</h2><p>" + escapeHtml(error.message) + "</p></div>";
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "刷新数据";
+    }
+}
+
+document.getElementById("stRefresh").addEventListener("click", function () { loadStock(true); });
+
+loadStock(false);
+</script>
+{% endblock %}

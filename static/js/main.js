@@ -1,10 +1,5 @@
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('新闻抓取应用已加载');
-    
-    const logoutBtn = document.getElementById('logoutBtn');
-    if (logoutBtn) {
-        logoutBtn.addEventListener('click', handleLogout);
-    }
+    console.log('应用已加载（公开访问，无登录）');
 
     // 高亮当前页面对应的导航 tab
     const path = window.location.pathname;
@@ -15,16 +10,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
-
-async function handleLogout() {
-    try {
-        await fetch('/api/logout', { method: 'POST' });
-        window.location.href = '/login';
-    } catch (error) {
-        console.error('登出失败:', error);
-        window.location.href = '/login';
-    }
-}
 
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -43,13 +28,4 @@ function debounce(func, wait) {
         clearTimeout(timeout);
         timeout = setTimeout(() => func.apply(this, args), wait);
     };
-}
-
-async function fetchWithAuth(url, options = {}) {
-    const response = await fetch(url, options);
-    if (response.status === 401) {
-        window.location.href = '/login';
-        throw new Error('未授权，已重定向到登录页');
-    }
-    return response;
 }

@@ -1,0 +1,20 @@
+{
+  "name": "eventdrive",
+  "version": "1.0.0",
+  "description": "EventDrive - 多源数据仪表盘（纯 Node.js 20）",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "compression": "^1.7.5",
+    "express": "^4.21.2",
+    "iconv-lite": "^0.7.3",
+    "node-cron": "^3.0.3",
+    "nunjucks": "^3.2.4",
+    "sql.js": "^1.12.0"
+  }
+}
